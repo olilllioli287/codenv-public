@@ -1,5 +1,7 @@
 # codenv
 
+English · [繁體中文](README.zh-TW.md)
+
 A macOS app that puts Claude Code in a window that feels like a chat app and can be split up like a terminal. The sidebar manages projects and conversations; on the right, you can split chats, terminals, and web pages into multiple panes so several AIs can work at once.
 
 Claude Code is the main focus, with optional support for Codex, GitHub Copilot, Apple’s built-in models, and local MLX models.
@@ -20,9 +22,9 @@ Claude Code is the main focus, with optional support for Codex, GitHub Copilot, 
 - Split panes horizontally or vertically within a Window, drag to adjust their proportions, and restore the same layout after ⌘ Q.
 - Keyboard controls follow tmux conventions (Ctrl + A prefix), with Mac shortcuts too: ⌘ W closes the current pane; ⌘ ⇧ T restores the last closed pane or entire Window exactly as it was.
 
-**Browser panes and widgets**
+**Browser panes and gadgets**
 - Built-in browser pane (WebKit) supports signing in to websites and uploading files. Use ⌘ + / ⌘ − to zoom; zoom levels are remembered per website.
-- “Widget frame”: group chats in the sidebar inside a purple frame, then attach Gemini, NotebookLM, or any web page beneath them. Press ⌘ ⇧ B to slide the widget out from the right, then press it again to hide it. Hiding it only makes it invisible; the web page doesn’t reload.
+- “Bundle”: group chats in the sidebar inside a purple frame, then attach gadgets beneath them — Gemini, NotebookLM, or any web page. Press ⌘ ⇧ B to slide the gadget out from the right, then press it again to hide it. Hiding it only makes it invisible; the web page doesn’t reload.
 - AIs can use the `codenv-browser` command to read text or take screenshots from browser panes, but they can only read, not interact.
 
 **Multiple AIs working together**
@@ -56,7 +58,7 @@ Claude Code is the main focus, with optional support for Codex, GitHub Copilot, 
 - **Claude Code is the main focus**: first, make the Claude experience solid; other models remain optional as before.
 - **Coding practice area**: expand it with features such as chapter-based exercises, learning from a textbook with an AI tutor, and better run and debug screens.
 - **New features**: keep adding useful everyday features. Suggestions are welcome in issues.
-- **What’s next for widget frames**: widgets can currently host Gemini, NotebookLM, and web pages. The plan is to make widgets interact more with the chats they’re attached to, and to evaluate a Chromium-based browser pane.
+- **What’s next for bundles**: gadgets can currently host Gemini, NotebookLM, and web pages. The plan is to make gadgets interact more with the chats they’re attached to, and to evaluate a Chromium-based browser pane.
 
 ## Requirements
 

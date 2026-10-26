@@ -1,5 +1,7 @@
 # codenv
 
+[English](README.md) · 繁體中文
+
 一個 macOS App，把 Claude Code 放進一個像聊天軟體、又能像終端機一樣分格的視窗裡。側欄管理專案和對話，右邊可以把聊天室、終端機、網頁並排切成好幾格，讓好幾個 AI 一起工作。
 
 目前以 Claude Code 為主，也可以接 Codex、GitHub Copilot、Apple 內建模型和本機 MLX 模型。
