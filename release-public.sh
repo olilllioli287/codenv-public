@@ -14,13 +14,27 @@ git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && echo "$TAG 已經有了
 
 WORK=$(mktemp -d /tmp/codenv-public.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
-mkdir -p "$WORK/dmg" dist
-CODENV_SIGN_IDENTITY=- APP="$WORK/dmg/codenv.app" ./build.sh --no-open --no-register
+mkdir -p "$WORK/dmg" "$WORK/src" dist
+# 在中性的暫存資料夾裡編譯已 commit 的內容：這個資料夾的路徑（含你的使用者名稱）就不會被編進執行檔（#filePath 會把原始碼的完整路徑寫進去）
+git archive HEAD | tar -x -C "$WORK/src"
+CODENV_SIGN_IDENTITY=- APP="$WORK/dmg/codenv.app" "$WORK/src/build.sh" --no-open --no-register
+
+# 檢查：做好的 App 裡面不能有你的家目錄路徑或使用者名稱
+LEAK=0
+for NEEDLE in "$HOME" "$(id -un)"; do
+    [ -n "$NEEDLE" ] || continue
+    while IFS= read -r -d '' F; do
+        HIT=$(strings -a "$F" 2>/dev/null | grep -F -m3 -- "$NEEDLE" || true)
+        if [ -n "$HIT" ]; then echo "發現 \"$NEEDLE\"：${F#$WORK/dmg/}"; echo "$HIT" | sed 's/^/    /'; LEAK=1; fi
+    done < <(find "$WORK/dmg/codenv.app" -type f -print0)
+done
+[ "$LEAK" = 0 ] || { echo "App 裡有你的個人路徑或名稱，沒有做 dmg"; exit 2; }
+echo "檢查：App 裡沒有家目錄路徑或使用者名稱"
 ln -s /Applications "$WORK/dmg/Applications"
 DMG="dist/codenv-$VER.dmg"
 rm -f "$DMG"
 hdiutil create -quiet -volname "codenv $VER" -srcfolder "$WORK/dmg" -ov -format UDZO "$DMG"
-echo "做好：$DMG（$(du -h "$DMG" | cut -f1)）"
+echo "做好：${DMG}（$(du -h "$DMG" | cut -f1)）"
 
 cat <<EOM
 
