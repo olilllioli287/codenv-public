@@ -1,0 +1,5 @@
+#!/bin/zsh
+# codenv:讓程式裡的 system("pause") 在 Mac 上跟 Windows 一樣,停下來等按任意鍵
+print -n "請按任意鍵繼續 . . . "
+read -sk1 2>/dev/null
+print

@@ -1,0 +1,3 @@
+#!/bin/sh
+# codenv:system("title 視窗標題") 在 Windows 會改視窗標題;Mac 上不需要,什麼都不做(不會出現 command not found)
+exit 0

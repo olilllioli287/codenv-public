@@ -1,0 +1,116 @@
+name: Swift
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.0.app/Contents/Developer
+
+jobs:
+  build:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+#    - name: Checkout esctest for testing
+#      uses: actions/checkout@v4
+#      with:
+#        repository: migueldeicaza/esctest
+#        ref: python3
+#        path: esctest
+
+    - name: List all files, because this is driving me insane, this does not repro anywhere but github
+      run: ls -lR
+
+    - name: Xcode Mac Build
+      run: xcodebuild -project TerminalApp/MacTerminal.xcodeproj -scheme MacTerminal
+
+    - name: Xcode iOS Build
+      run: |
+        xcodebuild -project TerminalApp/iOSTerminal.xcodeproj -scheme iOSTerminal -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+
+    - name: Swift Package Build
+      run: swift build -v
+
+    - name: Check generated Unicode widths
+      run: python3 scripts/regen_unicode_width_data.py --check
+
+    - name: Run tests
+      run: swift test --no-parallel -v
+
+    - name: Coverage
+      run: |
+        swift test --no-parallel --enable-code-coverage
+        BINDIR=$(swift build --show-bin-path)
+        xcrun llvm-cov report "$BINDIR/SwiftTermPackageTests.xctest/Contents/MacOS/SwiftTermPackageTests" --instr-profile=.build/debug/codecov/default.profdata -use-color
+
+  thread-sanitizer:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Stage A Thread Sanitizer Tests
+      run: swift test --no-parallel --sanitize=thread --filter "TerminalLocking|SynchronizedOutput|TerminalIOPipeline"
+
+  swiftpm-strict-concurrency:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build SwiftTerm with complete concurrency checking
+      run: >-
+        swift build --target SwiftTerm
+        -Xswiftc -strict-concurrency=complete
+
+  swift6-tools:
+
+    runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build SwiftTerm benchmarks
+      env:
+        BENCHMARK_DISABLE_JEMALLOC: "1"
+      run: swift build --package-path Tools/SwiftTermBenchmarks
+
+    - name: Build RenderBench
+      run: swift build --package-path Tools/RenderBench
+
+    - name: Build and test BidiHarness
+      run: >-
+        xcodebuild
+        -project Tools/BidiHarness/BidiHarness.xcodeproj
+        -scheme BidiHarness
+        -destination 'platform=macOS'
+        test
+        CODE_SIGNING_ALLOWED=NO
+
+  linux-headless:
+
+    runs-on: ubuntu-latest
+    container: swift:6.2-jammy
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build SwiftTerm
+      run: swift build --target SwiftTerm
+
+    - name: Build SwiftTerm with complete concurrency checking
+      run: >-
+        swift build --target SwiftTerm
+        -Xswiftc -strict-concurrency=complete
+
+    - name: Run headless tests
+      run: >-
+        swift test --no-parallel

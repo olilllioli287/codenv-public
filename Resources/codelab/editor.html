@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<!-- 程式碼區的編輯器：Monaco（VS Code 的編輯器，MIT），放在 monaco/vs。跟 Swift（CodeLab.swift）用 window.webkit.messageHandlers.codelab 傳話 -->
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: transparent; }
+  #editor { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+<div id="editor"></div>
+<script>
+  // 介面用繁體中文（右鍵選單、搜尋框）
+  self.MonacoEnvironment = { locale: 'zh-tw' };
+</script>
+<script src="monaco/vs/nls/lang/zh-tw.js"></script>
+<script src="monaco/vs/loader.js"></script>
+<script>
+  const post = (o) => { try { window.webkit.messageHandlers.codelab.postMessage(o); } catch (e) {} };
+  window.onerror = (m, s, l) => post({ type: 'log', text: 'JS 錯誤：' + m + ' @' + l });
+
+  require.config({ paths: { vs: 'monaco/vs' } });
+  require(['vs/editor/editor.main'], function () {
+    const ed = monaco.editor.create(document.getElementById('editor'), {
+      value: '', language: 'cpp', automaticLayout: true, fontSize: 14,
+      minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 4, insertSpaces: true,
+      autoClosingBrackets: 'always', autoClosingQuotes: 'always', formatOnPaste: false,
+      renderWhitespace: 'none', wordWrap: 'off', theme: 'vs-dark', fixedOverflowWidgets: true,
+    });
+    let model = ed.getModel();
+    let suppress = false;          // 程式自己換內容時不要回報「改過了」
+    let path = '';
+
+    const cl = window.cl = {
+      // 打開一個檔案（語言：cpp／python／plaintext）
+      open(p, text, lang) {
+        path = p;
+        suppress = true;
+        const m = monaco.editor.createModel(text, lang || 'plaintext');
+        ed.setModel(m);
+        if (model) model.dispose();
+        model = m;
+        suppress = false;
+        ed.setScrollTop(0);
+        ed.setPosition({ lineNumber: 1, column: 1 });
+      },
+      text() { return model.getValue(); },
+      focus() { ed.focus(); },
+      // 錯誤紅線：[{line, column, severity, message}]（column 0＝整行）
+      markers(list) {
+        const ms = list.map(d => {
+          const len = model.getLineMaxColumn(Math.max(1, Math.min(d.line, model.getLineCount())));
+          const sc = d.column > 0 ? d.column : model.getLineFirstNonWhitespaceColumn(d.line) || 1;
+          return {
+            startLineNumber: d.line, endLineNumber: d.line,
+            startColumn: sc, endColumn: d.column > 0 ? Math.min(len, sc + 1) + 0 : len,
+            message: d.message,
+            severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+          };
+        });
+        monaco.editor.setModelMarkers(model, 'codenv', ms);
+        if (list.length) ed.revealLineInCenterIfOutsideViewport(list[0].line);
+      },
+      theme(dark, bg, fg, font, size) {
+        monaco.editor.defineTheme('codenv', {
+          base: dark ? 'vs-dark' : 'vs', inherit: true, rules: [],
+          colors: { 'editor.background': bg, 'editor.foreground': fg },
+        });
+        monaco.editor.setTheme('codenv');
+        ed.updateOptions({ fontFamily: font, fontSize: size });
+      },
+      focus() { ed.focus(); },
+      gotoLine(n) { ed.revealLineInCenter(n); ed.setPosition({ lineNumber: n, column: 1 }); ed.focus(); },
+    };
+
+    // 改過內容、游標／選取：回報給 Swift（AI 要知道你在看哪一行）
+    ed.onDidChangeModelContent(() => { if (!suppress) post({ type: 'changed' }); });
+    let t = null;
+    ed.onDidChangeCursorSelection(() => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        const s = ed.getSelection();
+        post({ type: 'cursor', line: s.positionLineNumber, selection: model.getValueInRange(s).slice(0, 4000) });
+      }, 200);
+    });
+
+    // 跟舊版 codenv 一樣的快捷鍵：⌘ S／Ctrl+S 存檔、F9 存檔＋檢查、F10 存檔＋執行
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => post({ type: 'save', text: model.getValue() }));
+    ed.addCommand(monaco.KeyMod.WinCtrl | monaco.KeyCode.KeyS, () => post({ type: 'save', text: model.getValue() }));
+    ed.addCommand(monaco.KeyCode.F9, () => post({ type: 'check', text: model.getValue() }));
+    ed.addCommand(monaco.KeyCode.F10, () => post({ type: 'run', text: model.getValue() }));
+
+    post({ type: 'ready' });
+  });
+</script>
+</body>
+</html>

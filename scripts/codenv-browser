@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""codenv 瀏覽器格子：讀格子裡的網頁內容（只能讀，不能點、不能打字）。
+
+  codenv-browser ls                    列出開著的瀏覽器格子（id、側欄名稱、網頁標題、網址）
+  codenv-browser url  [格子]           網址和標題
+  codenv-browser text [格子] [--max N] 網頁上看得到的文字（預設最多 10 萬字）
+  codenv-browser shot [格子] [-o 檔案.png]   目前看得到的範圍截圖（預設存到暫存資料夾，印出路徑）
+
+[格子]：id 開頭幾個字、側欄名稱，或標題裡的字；不寫＝最近點過的那格。
+codenv 要開著。通道是 codenv 開的 Unix socket（不開網路埠），token 每次啟動會換；
+位置在 ~/Library/Application Support/codenv/browser/，CODENV_BROWSER_DIR 可以改（測試用）。
+"""
+import base64, json, os, socket, sys, tempfile, time
+
+DIR = os.environ.get("CODENV_BROWSER_DIR") or os.path.expanduser("~/Library/Application Support/codenv/browser")
+
+
+def die(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def ask(req):
+    try:
+        token = open(os.path.join(DIR, "token")).read().strip()
+        path = open(os.path.join(DIR, "socket")).read().strip()
+    except OSError:
+        die("找不到 codenv 的瀏覽器通道：codenv 沒開，或還沒更新到有瀏覽器格子的版本")
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(30)
+    try:
+        s.connect(path)
+    except OSError:
+        die("連不上 codenv（可能剛關掉）：重開 codenv 再試")
+    req["token"] = token
+    s.sendall((json.dumps(req) + "\n").encode())
+    data = b""
+    while True:
+        chunk = s.recv(1 << 16)
+        if not chunk:
+            break
+        data += chunk
+    s.close()
+    try:
+        r = json.loads(data.decode())
+    except ValueError:
+        die("codenv 回了看不懂的東西")
+    if not r.get("ok"):
+        die(r.get("error") or "失敗")
+    return r
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    cmd, rest = argv[0], argv[1:]
+    opts, pos = {}, []
+    i = 0
+    while i < len(rest):
+        if rest[i] in ("--max", "-o") and i + 1 < len(rest):
+            opts[rest[i]] = rest[i + 1]
+            i += 2
+        else:
+            pos.append(rest[i])
+            i += 1
+    pane = " ".join(pos)
+    if cmd == "ls":
+        r = ask({"cmd": "ls"})
+        if not r["panes"]:
+            print("（沒有開著的瀏覽器格子）")
+        for p in r["panes"]:
+            print(f'{p["id"]}  {p["name"]}｜{p["title"]}\n          {p["url"]}')
+    elif cmd == "url":
+        r = ask({"cmd": "url", "pane": pane})
+        print(f'{r["title"]}\n{r["url"]}')
+    elif cmd == "text":
+        req = {"cmd": "text", "pane": pane}
+        if "--max" in opts:
+            try:
+                req["max"] = int(opts["--max"])
+            except ValueError:
+                die("--max 要是數字")
+        r = ask(req)
+        print(f'# {r["title"]}\n# {r["url"]}\n')
+        print(r["text"])
+    elif cmd == "shot":
+        r = ask({"cmd": "shot", "pane": pane})
+        out = opts.get("-o") or os.path.join(tempfile.gettempdir(), f"codenv-browser-{time.strftime('%Y%m%d-%H%M%S')}.png")
+        with open(out, "wb") as f:
+            f.write(base64.b64decode(r["png"]))
+        print(out)
+    else:
+        die(f"不認得「{cmd}」：只有 ls、url、text、shot（codenv-browser help 看說明）")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -1,0 +1,16 @@
+#!/bin/zsh
+# codenv:讓程式裡的 system("color 0A") 在 Mac 上也能用
+# Windows 的 color 後面是兩個 16 進位數字:背景、文字;這裡只換文字顏色(背景只會塗到之後印的字,看起來會一塊一塊的)
+# 不加數字(system("color"))就恢復原本的顏色
+code=${1:u}
+if [[ -z $code ]]; then
+  print -n '\e[0m'
+  exit 0
+fi
+fg=${code[-1]}
+case $fg in
+  0) n=30 ;; 1) n=34 ;; 2) n=32 ;; 3) n=36 ;; 4) n=31 ;; 5) n=35 ;; 6) n=33 ;; 7) n=37 ;;
+  8) n=90 ;; 9) n=94 ;; A) n=92 ;; B) n=96 ;; C) n=91 ;; D) n=95 ;; E) n=93 ;; F) n=97 ;;
+  *) exit 1 ;;
+esac
+print -n "\e[${n}m"

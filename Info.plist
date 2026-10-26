@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_TW</string>
+	<key>CFBundleDisplayName</key>
+	<string>codenv</string>
+	<key>CFBundleExecutable</key>
+	<string>Workbench</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.olilllioli287.codenv</string>
+	<key>CFBundleName</key>
+	<string>codenv</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>00.02.12</string>
+	<key>CFBundleVersion</key>
+	<string>00.02.12</string>
+	<key>CodenvAgyDefault</key>
+	<false/>
+	<key>CodenvDataFolder</key>
+	<string>codenv</string>
+	<key>CodenvEdition</key>
+	<string>public</string>
+	<key>CodenvFeedbackEmail</key>
+	<string>codenvstudio@gmail.com</string>
+	<key>CodenvUpdateRepo</key>
+	<string>olilllioli287/codenv-public</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+</dict>
+</plist>

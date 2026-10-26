@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 不准跑頁面內嵌的 script：Claude 輸出的內容就算混進 HTML 也不會執行 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; img-src data: blob: file: codenv-img:; font-src 'self' file: data:; media-src data: blob: file:">
+<title>對話</title>
+<link rel="stylesheet" href="chat.css">
+</head>
+<body>
+<div id="wb-root"></div>
+<script src="vendor/marked.umd.js"></script>
+<script src="vendor/highlight.min.js"></script>
+<script src="chat.js"></script>
+</body>
+</html>

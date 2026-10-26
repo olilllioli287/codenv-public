@@ -1,0 +1,3 @@
+#!/bin/sh
+# codenv:讓程式裡的 system("cls") 在 Mac 上跟 Windows 一樣,清除畫面
+clear
