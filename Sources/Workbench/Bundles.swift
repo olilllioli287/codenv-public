@@ -15,7 +15,7 @@ enum GadgetKind: String, CaseIterable {
         switch self {
         case .gemini: return "Gemini"
         case .notebooklm: return "NotebookLM"
-        case .web: return "網頁"
+        case .web: return L("網頁")
         }
     }
     var icon: String {
@@ -234,8 +234,8 @@ struct BundleBox<Rows: View>: View {
                     GadgetIcon(gadget: g, accent: accent, shown: shownGadgets.contains(g.id)) { onOpen(g.id) }
                         .transition(.opacity)
                         .contextMenu {
-                            Button("打開") { onOpen(g.id) }
-                            Button("拿掉這個掛件（記著的網址也刪掉）", role: .destructive) { onRemoveGadget(g.id) }
+                            Button(L("打開")) { onOpen(g.id) }
+                            Button(L("拿掉這個掛件（記著的網址也刪掉）"), role: .destructive) { onRemoveGadget(g.id) }
                         }
                 }
             }
@@ -253,9 +253,9 @@ struct BundleBox<Rows: View>: View {
                 return true
             }
             .contextMenu {
-                Button("解散這個框…") { confirmDissolve = true }
+                Button(L("解散這個框…")) { confirmDissolve = true }
             }
-            .help("掛件：點了在旁邊開一格。拖這一列到組的標題上＝整個框搬過去；把聊天室拖到這裡＝加入這個框")
+            .help(L("掛件：點了在旁邊開一格。拖這一列到組的標題上＝整個框搬過去；把聊天室拖到這裡＝加入這個框"))
         }
         // 外框：從上緣正中間逆時針畫一圈，畫到右邊中間開始放慢、回到起點剛好停
         .overlay(GeometryReader { g in
@@ -264,11 +264,11 @@ struct BundleBox<Rows: View>: View {
         })
         .padding(.leading, CGFloat(depth) * 16 * s + 4)
         .padding(.vertical, 3)
-        .alert("解散這個框？", isPresented: $confirmDissolve) {
-            Button("解散", role: .destructive, action: onDissolve)
-            Button("取消", role: .cancel) {}
+        .alert(L("解散這個框？"), isPresented: $confirmDissolve) {
+            Button(L("解散"), role: .destructive, action: onDissolve)
+            Button(L("取消"), role: .cancel) {}
         } message: {
-            Text("聊天室留在原地；掛件和記著的網址會刪掉。")
+            Text(L("聊天室留在原地；掛件和記著的網址會刪掉。"))
         }
     }
 }

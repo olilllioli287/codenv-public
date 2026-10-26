@@ -46,7 +46,7 @@ enum Handoff {
             DispatchQueue.main.async { if !finished { finished = true; done(r) } }
         }
         DispatchQueue.global(qos: .userInitiated).async {
-            do { try p.run() } catch { return finish(.failure(HandoffError("開不了 claude：\(error.localizedDescription)"))) }
+            do { try p.run() } catch { return finish(.failure(HandoffError(L("開不了 claude：\(error.localizedDescription)")))) }
             let timer = DispatchWorkItem { if p.isRunning { p.terminate() } }
             DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: timer)
             let data = out.fileHandleForReading.readDataToEndOfFile()
@@ -54,11 +54,11 @@ enum Handoff {
             p.waitUntilExit()
             timer.cancel()
             guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                let why = p.terminationReason == .uncaughtSignal ? "超過 5 分鐘還沒寫完" : String(errText.split(separator: "\n").last ?? "沒有回應")
+                let why = p.terminationReason == .uncaughtSignal ? L("超過 5 分鐘還沒寫完") : errText.split(separator: "\n").last.map(String.init) ?? L("沒有回應")
                 return finish(.failure(HandoffError(why)))
             }
             let text = (o["result"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if o["is_error"] as? Bool == true || text.isEmpty { return finish(.failure(HandoffError(text.isEmpty ? "Claude 沒有寫出內容" : text))) }
+            if o["is_error"] as? Bool == true || text.isEmpty { return finish(.failure(HandoffError(text.isEmpty ? L("Claude 沒有寫出內容") : text))) }
             finish(.success(text))
         }
     }

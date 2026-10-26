@@ -72,7 +72,7 @@ final class Store: ObservableObject {
     /// 右側欄顯示的模型名稱：自己選過的照選的；沒選（預設）而 Claude 回報過實際模型的，照實際的（使用者 10/25：輸入框寫 Opus、右側欄卻寫 Sonnet）
     func displayModel(_ id: UUID) -> String {
         guard let c = conversation(id) else { return UsagePool.modelName(nil) }
-        if c.isBrowser { return "瀏覽器" }
+        if c.isBrowser { return L("瀏覽器") }
         let m = c.terminal == true ? nil : c.model
         // 還沒跑起來的：用上次「預設」實際跑出來的模型（Claude 清單說預設是 Sonnet，實際卻可能是 Opus）
         if m == nil || m == "default", let live = liveModel[id] ?? appDefaults.string(forKey: "lastDefaultModel"), !live.isEmpty {

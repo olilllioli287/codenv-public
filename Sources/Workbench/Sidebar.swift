@@ -60,7 +60,7 @@ struct SidebarView: View {
                         Image(systemName: "sidebar.left").font(.system(size: 15 * s))
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("收起側欄（⌃ ⌘ S）：聊天區變寬；上面分頁列最左邊的同一顆按鈕可以再打開")
+                    .help(L("收起側欄（⌃ ⌘ S）：聊天區變寬；上面分頁列最左邊的同一顆按鈕可以再打開"))
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -68,45 +68,45 @@ struct SidebarView: View {
 
                 if let r = update.available {
                     Button(action: { update.showPopup(r) }) {
-                        Label("有新版 \(r.version)", systemImage: "arrow.down.circle.fill").font(.system(size: 12 * s))
+                        Label(L("有新版 \(r.version)"), systemImage: "arrow.down.circle.fill").font(.system(size: 12 * s))
                     }
                     .buttonStyle(.plain).foregroundStyle(Color.accentColor)
                     .padding(.horizontal, 16).padding(.bottom, 8)
-                    .help("看這版的說明、下載或略過")
+                    .help(L("看這版的說明、下載或略過"))
                 }
 
                 if mode == "codelab" {
-                    SidebarButton(icon: "chevron.left.forwardslash.chevron.right", title: "新的練習", action: actions.newCodeLab)
+                    SidebarButton(icon: "chevron.left.forwardslash.chevron.right", title: L("新的練習"), action: actions.newCodeLab)
                         .padding(.horizontal, 8)
-                        .help("開一個新的練習聊天室（程式放 \(Edition.display(Edition.practiceFolder))）：左邊 AI、右邊寫程式和執行")
+                        .help(L("開一個新的練習聊天室（程式放 \(Edition.display(Edition.practiceFolder))）：左邊 AI、右邊寫程式和執行"))
                     codeLabList
                 } else {
-                SidebarButton(icon: "square.and.pencil", title: "新對話", action: actions.newConversation)
+                SidebarButton(icon: "square.and.pencil", title: L("新對話"), action: actions.newConversation)
                     .padding(.horizontal, 8)
-                    .help("新對話（⌘ N）")
+                    .help(L("新對話（⌘ N）"))
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 2) {
-                        sectionHeader(store.groups.isEmpty ? "專案" : "分類", trailing: AnyView(HStack(spacing: 10) {
+                        sectionHeader(store.groups.isEmpty ? L("專案") : L("分類"), trailing: AnyView(HStack(spacing: 10) {
                             if !store.groups.isEmpty {
                                 let folded = store.allGroupsCollapsed
                                 Button(action: { store.setAllGroups(expanded: folded) }) {
                                     Image(systemName: folded ? "chevron.down.2" : "chevron.up.2")
                                 }
                                 .buttonStyle(.plain).foregroundStyle(.secondary)
-                                .help(folded ? "全部展開" : "全部收起（也可以 ⌥ 點任一組的名字）")
+                                .help(folded ? L("全部展開") : L("全部收起（也可以 ⌥ 點任一組的名字）"))
                             }
                             Button(action: { showArchived.toggle(); appDefaults.set(showArchived, forKey: "sidebarShowArchived") }) {
                                 Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
                             }
                             .buttonStyle(.plain).foregroundStyle(showArchived ? Color.accentColor : Color.secondary)
-                            .help(showArchived ? "收起封存的對話" : "顯示封存的對話（一個禮拜沒碰的，灰字列在各組最下面）")
+                            .help(showArchived ? L("收起封存的對話") : L("顯示封存的對話（一個禮拜沒碰的，灰字列在各組最下面）"))
                             Button(action: { NSApp.sendAction(#selector(AppDelegate.showOrganizer), to: nil, from: nil) }) { Image(systemName: "list.bullet.rectangle") }
-                                .buttonStyle(.plain).foregroundStyle(.secondary).help("整理對話（⌘ ⇧ L）：一張表看全部，多選一次改組、封存、刪除")
+                                .buttonStyle(.plain).foregroundStyle(.secondary).help(L("整理對話（⌘ ⇧ L）：一張表看全部，多選一次改組、封存、刪除"))
                             Button(action: { NSApp.sendAction(#selector(AppDelegate.showImporter), to: nil, from: nil) }) { Image(systemName: "square.and.arrow.down") }
-                                .buttonStyle(.plain).foregroundStyle(.secondary).help("從 Claude Code 匯入對話（⌘ ⇧ I）：在 iTerm／tmux 開過的")
+                                .buttonStyle(.plain).foregroundStyle(.secondary).help(L("從 Claude Code 匯入對話（⌘ ⇧ I）：在 iTerm／tmux 開過的"))
                             Button(action: actions.addProject) { Image(systemName: "plus") }
-                                .buttonStyle(.plain).foregroundStyle(.secondary).help("新增專案（選一個資料夾）")
+                                .buttonStyle(.plain).foregroundStyle(.secondary).help(L("新增專案（選一個資料夾）"))
                         }))
                         .background(RoundedRectangle(cornerRadius: 7).fill(topTargeted ? Color.accentColor.opacity(0.25) : .clear))
                         .onDrop(of: [.text], isTargeted: $topTargeted) { items in
@@ -114,7 +114,7 @@ struct SidebarView: View {
                             Self.loadGroupDrop(items) { id in store.setGroupParent(id, to: nil) }
                         }
                         if store.projects.isEmpty {
-                            Text("按 ＋ 選一個資料夾當專案").font(.callout).foregroundStyle(.tertiary).padding(.horizontal, 16).padding(.vertical, 4)
+                            Text(L("按 ＋ 選一個資料夾當專案")).font(.callout).foregroundStyle(.tertiary).padding(.horizontal, 16).padding(.vertical, 4)
                         }
                         if store.groups.isEmpty {
                             ForEach(store.projects) { p in projectBlock(p) }
@@ -124,7 +124,7 @@ struct SidebarView: View {
                         }
 
                         if !store.recent.isEmpty {
-                            sectionHeader("最近項目").padding(.top, 14)
+                            sectionHeader(L("最近項目")).padding(.top, 14)
                             ForEach(store.recent) { c in
                                 ConversationRow(title: c.title, selected: store.selected == c.id, indent: false,
                                                 status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id)) { store.open(c.id) }
@@ -142,29 +142,29 @@ struct SidebarView: View {
         .frame(minWidth: 250)
         // 打開的聊天室在哪一區，側欄就切到哪一區：改由 Store 做（目前的 Session 屬於哪區就是哪區，followSessionArea），
         // 不看選到的對話在哪一組——不然 codelab 那套裡擺了首頁的對話，點它會整套跳走
-        .alert(addingGroup ? (addingParent.map { "新增子組（在「\(store.groupPath($0))」底下）" } ?? "新增一組") : "重新命名這一組", isPresented: Binding(get: { renamingGroup != nil || addingGroup }, set: { if !$0 { renamingGroup = nil; addingGroup = false } })) {
-            TextField("名稱", text: $groupRenameText)
-            Button("好") {
+        .alert(addingGroup ? (addingParent.map { L("新增子組（在「\(store.groupPath($0))」底下）") } ?? L("新增一組")) : L("重新命名這一組"), isPresented: Binding(get: { renamingGroup != nil || addingGroup }, set: { if !$0 { renamingGroup = nil; addingGroup = false } })) {
+            TextField(L("名稱"), text: $groupRenameText)
+            Button(L("好")) {
                 if addingGroup { if !groupRenameText.trimmingCharacters(in: .whitespaces).isEmpty { store.addGroup(named: groupRenameText, parent: addingParent) } }
                 else if let g = renamingGroup { store.renameGroup(g.id, to: groupRenameText) }
                 renamingGroup = nil; addingGroup = false
             }
-            Button("取消", role: .cancel) { renamingGroup = nil; addingGroup = false }
+            Button(L("取消"), role: .cancel) { renamingGroup = nil; addingGroup = false }
         }
-        .alert("掛一個網頁", isPresented: Binding(get: { addingWebFor != nil }, set: { if !$0 { addingWebFor = nil } })) {
-            TextField("網址（https://…）", text: $webURLText)
-            Button("掛上去") {
+        .alert(L("掛一個網頁"), isPresented: Binding(get: { addingWebFor != nil }, set: { if !$0 { addingWebFor = nil } })) {
+            TextField(L("網址（https://…）"), text: $webURLText)
+            Button(L("掛上去")) {
                 var u = webURLText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !u.isEmpty, !u.contains("://") { u = "https://" + u }
                 if let c = addingWebFor, !u.isEmpty, let g = store.addGadget(GadgetKind.of(u), url: u, to: c) { store.openGadget(g.id) }
                 addingWebFor = nil
             }
-            Button("取消", role: .cancel) { addingWebFor = nil }
+            Button(L("取消"), role: .cancel) { addingWebFor = nil }
         }
-        .alert("重新命名對話", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("名稱", text: $renameText)
-            Button("好") { if let r = renaming { store.rename(r.id, to: renameText, byUser: true) }; renaming = nil }
-            Button("取消", role: .cancel) { renaming = nil }
+        .alert(L("重新命名對話"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField(L("名稱"), text: $renameText)
+            Button(L("好")) { if let r = renaming { store.rename(r.id, to: renameText, byUser: true) }; renaming = nil }
+            Button(L("取消"), role: .cancel) { renaming = nil }
         }
     }
 
@@ -177,14 +177,14 @@ struct SidebarView: View {
                     let all = store.conversations(inGroup: g.id)
                     let active = all.filter { !store.isArchived($0) }
                     let archived = showArchived ? all.filter { store.isArchived($0) } : []
-                    sectionHeader("練習", trailing: AnyView(
+                    sectionHeader(L("練習"), trailing: AnyView(
                         Button(action: { showArchived.toggle(); appDefaults.set(showArchived, forKey: "sidebarShowArchived") }) {
                             Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
                         }
                         .buttonStyle(.plain).foregroundStyle(showArchived ? Color.accentColor : Color.secondary)
-                        .help(showArchived ? "收起封存的練習" : "顯示封存的練習")))
+                        .help(showArchived ? L("收起封存的練習") : L("顯示封存的練習"))))
                     if active.isEmpty && archived.isEmpty {
-                        Text("還沒有練習。按上面的「新的練習」開一個。")
+                        Text(L("還沒有練習。按上面的「新的練習」開一個。"))
                             .font(.system(size: 13 * s)).foregroundStyle(.tertiary).padding(.horizontal, 12).padding(.vertical, 6)
                     }
                     ForEach(active) { c in
@@ -202,7 +202,7 @@ struct SidebarView: View {
                             .contextMenu { conversationMenu(c) }
                     }
                 } else {
-                    Button("建立程式碼學習專區") { store.addGroup(named: Store.codeLabGroupName) }
+                    Button(L("建立程式碼學習專區")) { store.addGroup(named: Store.codeLabGroupName) }
                         .padding(12)
                 }
             }
@@ -221,14 +221,14 @@ struct SidebarView: View {
             store.selectedProject = p.id
         }
         .contextMenu {
-            Button("在這個專案開新對話") { store.newConversation(in: p.id) }
-            Button("在 Finder 中顯示") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: p.path) }
+            Button(L("在這個專案開新對話")) { store.newConversation(in: p.id) }
+            Button(L("在 Finder 中顯示")) { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: p.path) }
             Divider()
-            Button("從側欄和 claude 選單清單移除（不會刪資料夾）", role: .destructive) { actions.removeProject(p.id) }
+            Button(L("從側欄和 claude 選單清單移除（不會刪資料夾）"), role: .destructive) { actions.removeProject(p.id) }
         }
         if p.expanded {
             if convs.isEmpty && archived.isEmpty {
-                Text("沒有對話").font(.system(size: 14 * s)).foregroundStyle(.tertiary).padding(.leading, 40).padding(.vertical, 5)
+                Text(L("沒有對話")).font(.system(size: 14 * s)).foregroundStyle(.tertiary).padding(.leading, 40).padding(.vertical, 5)
             }
             ForEach(Self.sideItems(convs)) { item in sideItem(item, depth: 0) }
             // 一個禮拜沒碰的：按上面的封存按鈕才列出來，灰色字
@@ -253,52 +253,52 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func conversationMenu(_ c: Conversation) -> some View {
-        Button("重新命名…") { renameText = c.title; renaming = c }
+        Button(L("重新命名…")) { renameText = c.title; renaming = c }
         if c.isBrowser {
             // 瀏覽器格子：沒有聊天介面／終端機／壓縮／交接／排程
         } else if c.terminal == true {
-            Button("回到聊天介面") { actions.switchMode(c.id, false) }
+            Button(L("回到聊天介面")) { actions.switchMode(c.id, false) }
         } else {
-            Button("用終端機打開（聊天介面還沒做的功能）") { actions.switchMode(c.id, true) }
+            Button(L("用終端機打開（聊天介面還沒做的功能）")) { actions.switchMode(c.id, true) }
         }
         if c.terminal != true && !c.isBrowser {
-            Button("壓縮這段對話（/compact）…") { actions.compact(c.id) }
-            Button("交接") { actions.handoff(c.id) }
+            Button(L("壓縮這段對話（/compact）…")) { actions.compact(c.id) }
+            Button(L("交接")) { actions.handoff(c.id) }
         }
         if c.isBrowser {
             // 原本列在側欄的瀏覽器格子：改成掛在同一串的某段聊天室上，就不再佔聊天室清單的位置
             let chats = store.siblings(of: c).filter { !$0.isBrowser }
             if !chats.isEmpty {
-                Menu("改成掛件，掛在…") {
+                Menu(L("改成掛件，掛在…")) {
                     ForEach(chats) { t in Button(t.title) { store.attachBrowser(c.id, to: t.id) } }
                 }
             }
         } else {
-            Menu("掛件") {
-                Button("掛 Gemini") { if let g = store.addGadget(.gemini, to: c.id) { store.openGadget(g.id) } }
-                Button("掛 NotebookLM") { if let g = store.addGadget(.notebooklm, to: c.id) { store.openGadget(g.id) } }
-                Button("掛網頁…") { webURLText = ""; addingWebFor = c.id }
+            Menu(L("掛件")) {
+                Button(L("掛 Gemini")) { if let g = store.addGadget(.gemini, to: c.id) { store.openGadget(g.id) } }
+                Button(L("掛 NotebookLM")) { if let g = store.addGadget(.notebooklm, to: c.id) { store.openGadget(g.id) } }
+                Button(L("掛網頁…")) { webURLText = ""; addingWebFor = c.id }
                 if c.bundle != nil {
                     Divider()
-                    Button("離開掛件框") { store.setBundle(c.id, nil) }
+                    Button(L("離開掛件框")) { store.setBundle(c.id, nil) }
                 }
             }
         }
-        Button(store.isArchived(c) ? "取消封存" : "封存") { store.setArchived(c.id, !store.isArchived(c)) }
-        Button("移到最上面") { store.shift(c.id, by: -10_000) }
-        Button("上移") { store.shift(c.id, by: -1) }
-        Button("下移") { store.shift(c.id, by: 1) }
-        Button("換工作資料夾…") { actions.changeFolder(c.id) }
-        if c.terminal != true && !c.isBrowser { Button(schedules.has(c.id) ? "排程…（有）" : "排程…") { actions.schedule(c.id) } }
+        Button(store.isArchived(c) ? L("取消封存") : L("封存")) { store.setArchived(c.id, !store.isArchived(c)) }
+        Button(L("移到最上面")) { store.shift(c.id, by: -10_000) }
+        Button(L("上移")) { store.shift(c.id, by: -1) }
+        Button(L("下移")) { store.shift(c.id, by: 1) }
+        Button(L("換工作資料夾…")) { actions.changeFolder(c.id) }
+        if c.terminal != true && !c.isBrowser { Button(schedules.has(c.id) ? L("排程…（有）") : L("排程…")) { actions.schedule(c.id) } }
         if !store.groups.isEmpty {
-            Menu("移到…") {
+            Menu(L("移到…")) {
                 ForEach(store.groupTree(), id: \.group.id) { t in
                     Button((store.groupOf(c) == t.group.id ? "✓ " : "") + String(repeating: "　", count: t.depth) + t.group.name) { store.move(c.id, toGroup: t.group.id) }
                 }
             }
         }
         Divider()
-        Button("刪除對話（Claude 的紀錄還在）", role: .destructive) { actions.deleteConversation(c.id) }
+        Button(L("刪除對話（Claude 的紀錄還在）"), role: .destructive) { actions.deleteConversation(c.id) }
     }
 
     // MARK: 分組（學業、RTS…）：組 → 資料夾 → 對話；一個禮拜沒碰的收在組最下面的「封存」
@@ -342,30 +342,30 @@ struct SidebarView: View {
             .modifier(GroupDrop(target: g.id, depth: depth, edgeAfter: !g.expanded || children.isEmpty, store: store,
                                 targeted: groupTargeted(g), nest: { dropOnGroup(g, $0) }))
             .contextMenu {
-                Button("在這一組開新對話") { store.newConversation(inGroup: g.id) }
+                Button(L("在這一組開新對話")) { store.newConversation(inGroup: g.id) }
                 Divider()
-                Button("全部收起") { store.setAllGroups(expanded: false) }
-                Button("全部展開") { store.setAllGroups(expanded: true) }
+                Button(L("全部收起")) { store.setAllGroups(expanded: false) }
+                Button(L("全部展開")) { store.setAllGroups(expanded: true) }
                 Divider()
-                Button("整理對話…") { NSApp.sendAction(#selector(AppDelegate.showOrganizer), to: nil, from: nil) }
+                Button(L("整理對話…")) { NSApp.sendAction(#selector(AppDelegate.showOrganizer), to: nil, from: nil) }
                 Divider()
-                Button("重新命名這一組…") { groupRenameText = g.name; renamingGroup = g }
-                Button("新增一組…") { groupRenameText = ""; addingParent = nil; addingGroup = true }
-                Button("在這一組底下新增子組…") { groupRenameText = ""; addingParent = g.id; addingGroup = true }
-                Menu("放進…") {
+                Button(L("重新命名這一組…")) { groupRenameText = g.name; renamingGroup = g }
+                Button(L("新增一組…")) { groupRenameText = ""; addingParent = nil; addingGroup = true }
+                Button(L("在這一組底下新增子組…")) { groupRenameText = ""; addingParent = g.id; addingGroup = true }
+                Menu(L("放進…")) {
                     ForEach(store.groupTree().filter { !store.isGroup($0.group.id, within: g.id) && $0.group.name != Store.codeLabGroupName }, id: \.group.id) { t in
                         Button((g.parentID == t.group.id ? "✓ " : "") + String(repeating: "　", count: t.depth) + t.group.name) { store.setGroupParent(g.id, to: t.group.id) }
                     }
                 }
-                if g.parentID != nil { Button("移到最上層") { store.setGroupParent(g.id, to: nil) } }
+                if g.parentID != nil { Button(L("移到最上層")) { store.setGroupParent(g.id, to: nil) } }
                 Divider()
-                Button(g.parentID == nil ? "刪除這一組（對話會回到「其他」，子組往上提，不會刪）" : "刪除這一組（對話和子組回到上一層，不會刪）", role: .destructive) { store.removeGroup(g.id) }
+                Button(g.parentID == nil ? L("刪除這一組（對話會回到「其他」，子組往上提，不會刪）") : L("刪除這一組（對話和子組回到上一層，不會刪）"), role: .destructive) { store.removeGroup(g.id) }
             }
         if g.expanded {
             // 子組先列（像 Finder 資料夾在前），再列這一組自己的對話
             ForEach(children) { c in AnyView(groupBlock(c, depth: depth + 1)) }
             if active.isEmpty && archived.isEmpty && children.isEmpty {
-                Text("沒有對話").font(.system(size: 14 * s)).foregroundStyle(.tertiary).padding(.leading, 36 + CGFloat(depth) * 16 * s).padding(.vertical, 4)
+                Text(L("沒有對話")).font(.system(size: 14 * s)).foregroundStyle(.tertiary).padding(.leading, 36 + CGFloat(depth) * 16 * s).padding(.vertical, 4)
                     // 使用者 10/24：空資料夾拖到「沒有對話」這行也要放得進去（以前只有標題收）
                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     .onDrop(of: [.text], isTargeted: groupTargeted(g)) { dropOnGroup(g, $0) }
@@ -376,7 +376,7 @@ struct SidebarView: View {
             ForEach(archived) { c in
                 ConversationRow(title: c.title, selected: store.selected == c.id, indent: true, dimmed: true) { store.open(c.id) }
                     .padding(.leading, CGFloat(depth) * 16 * s)
-                    .help(folderHint(c) + "\n（封存：一個禮拜沒碰。打開就會回到上面）")
+                    .help(folderHint(c) + "\n" + L("（封存：一個禮拜沒碰。打開就會回到上面）"))
                     .onDrag { Self.dragItem(c.id) }
                     .contextMenu { conversationMenu(c) }
             }
@@ -473,18 +473,18 @@ struct SidebarView: View {
 
     private func folderHint(_ c: Conversation) -> String {
         guard let p = store.project(c.projectID) else { return c.title }
-        return "\(c.title)\n資料夾：\(ClaudeEnvs.tilde(p.path))"
+        return L("\(c.title)\n資料夾：\(ClaudeEnvs.tilde(p.path))")
     }
 
     @ViewBuilder
     private func folderMenu(_ p: Project) -> some View {
-        Button("在這個資料夾開新對話") { store.newConversation(in: p.id) }
-        Button("在 Finder 中顯示") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: p.path) }
-        Menu("這個資料夾的新對話預設放在…") {
+        Button(L("在這個資料夾開新對話")) { store.newConversation(in: p.id) }
+        Button(L("在 Finder 中顯示")) { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: p.path) }
+        Menu(L("這個資料夾的新對話預設放在…")) {
             ForEach(store.groupTree(), id: \.group.id) { t in Button((p.groupID == t.group.id ? "✓ " : "") + String(repeating: "　", count: t.depth) + t.group.name) { store.setDefaultGroup(p.id, to: t.group.id) } }
         }
         Divider()
-        Button("從側欄和 claude 選單清單移除（不會刪資料夾）", role: .destructive) { actions.removeProject(p.id) }
+        Button(L("從側欄和 claude 選單清單移除（不會刪資料夾）"), role: .destructive) { actions.removeProject(p.id) }
     }
 
     private func sectionHeader(_ title: String, trailing: AnyView? = nil) -> some View {
@@ -508,17 +508,17 @@ struct IconRail: View {
     @ObservedObject private var collab = CollabBoardModel.shared
     var body: some View {
         VStack(spacing: 14) {
-            RailIcon(name: "house.fill", help: "首頁", active: mode != "codelab") { mode = "home" }
-            RailIcon(name: "chevron.left.forwardslash.chevron.right", help: "程式碼學習專區：左邊 Claude、右邊寫程式和執行", active: mode == "codelab") { mode = "codelab" }
+            RailIcon(name: "house.fill", help: L("首頁"), active: mode != "codelab") { mode = "home" }
+            RailIcon(name: "chevron.left.forwardslash.chevron.right", help: L("程式碼學習專區：左邊 Claude、右邊寫程式和執行"), active: mode == "codelab") { mode = "codelab" }
             Spacer()
-            RailIcon(name: "bubble.left.and.bubble.right", help: "協作看板：目標、兩個 Claude 互傳的訊息", active: collab.open, action: toggleCollab)
+            RailIcon(name: "bubble.left.and.bubble.right", help: L("協作看板：目標、兩個 Claude 互傳的訊息"), active: collab.open, action: toggleCollab)
                 .overlay(alignment: .topTrailing) {
                     // 看板沒開時：有一對來回太多次亮橘點，有目標在等你（提議待同意、輪到你的步驟）亮藍點
                     if !collab.open && (!collab.warnings.isEmpty || collab.waitingOnYou > 0) {
                         Circle().fill(collab.warnings.isEmpty ? Color.accentColor : .orange).frame(width: 8, height: 8).offset(x: -4, y: 4)
                     }
                 }
-            RailIcon(name: "gearshape", help: "設定（⌘ ,）", active: false, action: openSettings)
+            RailIcon(name: "gearshape", help: L("設定（⌘ ,）"), active: false, action: openSettings)
         }
         .padding(.top, 44)
         .padding(.bottom, 14)
@@ -610,11 +610,11 @@ struct ConversationRow: View {
             HStack {
                 Text(title).lineLimit(1).truncationMode(.tail)
                     .foregroundStyle(dimmed ? Color.secondary.opacity(0.7) : Color.primary)
-                if scheduled { Image(systemName: "clock").font(.system(size: 10 * s)).foregroundStyle(.secondary).help("有排程") }
+                if scheduled { Image(systemName: "clock").font(.system(size: 10 * s)).foregroundStyle(.secondary).help(L("有排程")) }
                 Spacer()
                 // 狀態：工作中轉圈、等你回覆是藍色小標籤、做完沒看過是小藍點（跟 Codex 一樣一次只顯示一種）
                 if status == .waiting {
-                    Text("等你").font(.system(size: 11 * s, weight: .medium)).foregroundStyle(.white)
+                    Text(L("等你")).font(.system(size: 11 * s, weight: .medium)).foregroundStyle(.white)
                         .padding(.horizontal, 6).padding(.vertical, 1)
                         .background(Capsule().fill(Color.blue))
                 } else if status == .working {
@@ -656,7 +656,7 @@ struct GroupHeader: View {
                         .foregroundStyle(archiveOpen ? AnyShapeStyle(Color.accentColor) : archivedCount > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.quaternary))
                         .frame(width: 16 * s, height: 16 * s).contentShape(Rectangle())
                         .onTapGesture { if archivedCount > 0 || archiveOpen { onArchive() } }
-                        .help(archivedCount > 0 ? (archiveOpen ? "收起這一組封存的對話" : "展開這一組封存的對話（\(archivedCount) 段）") : "這一組沒有封存的對話")
+                        .help(archivedCount > 0 ? (archiveOpen ? L("收起這一組封存的對話") : L("展開這一組封存的對話（\(archivedCount) 段）")) : L("這一組沒有封存的對話"))
                 }
                 Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 10 * s, weight: .bold)).foregroundStyle(.tertiary).frame(width: 12)
                 Text(name).font(.system(size: 15 * s, weight: .semibold))

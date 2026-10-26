@@ -4,12 +4,12 @@ import AppKit
 /// 對話裡程式碼區塊的顏色（⌘ , 外觀頁「程式碼顏色」）。七類：關鍵字、型別、函式、字串、數字、屬性、註解
 enum CodeColors {
     static let kinds: [(key: String, name: String)] = [
-        ("keyword", "關鍵字（import、class、let）"), ("type", "型別、類別名稱"), ("function", "函式名稱"),
-        ("string", "字串"), ("number", "數字、常數"), ("attr", "屬性、參數名稱"), ("comment", "註解"),
+        ("keyword", L("關鍵字（import、class、let）")), ("type", L("型別、類別名稱")), ("function", L("函式名稱")),
+        ("string", L("字串")), ("number", L("數字、常數")), ("attr", L("屬性、參數名稱")), ("comment", L("註解")),
     ]
     static let schemes: [(id: String, name: String)] = [
-        ("claude", "跟 Claude Code 終端機一樣"), ("iterm", "iTerm 原本的對應"),
-        ("github", "GitHub Dark"), ("monokai", "Monokai"), ("dracula", "Dracula"), ("custom", "自訂"),
+        ("claude", L("跟 Claude Code 終端機一樣")), ("iterm", L("iTerm 原本的對應")),
+        ("github", "GitHub Dark"), ("monokai", "Monokai"), ("dracula", "Dracula"), ("custom", L("自訂")),
     ]
 
     /// 這個配色在目前（深／淺色）調色盤下的實際顏色；nil＝不另外指定（畫面照 iTerm 的 ANSI 對應）
@@ -67,8 +67,8 @@ struct CodeColorsSection: View {
 
     var body: some View {
         let cur = current
-        return Section("程式碼顏色（對話裡的程式碼區塊）") {
-            Picker("配色", selection: $p.codeScheme) {
+        return Section(L("程式碼顏色（對話裡的程式碼區塊）")) {
+            Picker(L("配色"), selection: $p.codeScheme) {
                 ForEach(CodeColors.schemes, id: \.id) { s in Text(s.name).tag(s.id) }
             }
             ForEach(CodeColors.kinds, id: \.key) { k in

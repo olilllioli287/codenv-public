@@ -189,7 +189,7 @@ final class CopilotBridge {
     private func reply(_ method: String, _ r: [String: Any]?, _ err: [String: Any]?) {
         switch method {
         case "initialize":
-            if let err { fail("Copilot 開不起來：" + (err["message"] as? String ?? "")); return }
+            if let err { fail(L("Copilot 開不起來：") + (err["message"] as? String ?? "")); return }
             if let s = Self.sessionID(for: session) {
                 loading = true
                 call("session/load", ["sessionId": s, "cwd": directory, "mcpServers": []])
@@ -201,7 +201,7 @@ final class CopilotBridge {
             if let err {
                 // 接不回去（例如紀錄被刪了）：開一段新的
                 if method == "session/load" { call("session/new", ["cwd": directory, "mcpServers": []]) }
-                else { fail("Copilot 開不了對話：" + (err["message"] as? String ?? "")) }
+                else { fail(L("Copilot 開不了對話：") + (err["message"] as? String ?? "")) }
                 return
             }
             let s = r?["sessionId"] as? String ?? Self.sessionID(for: session)
@@ -216,14 +216,14 @@ final class CopilotBridge {
             busy = false
             let reason = r?["stopReason"] as? String
             if let err {
-                fail("Copilot：" + (err["message"] as? String ?? "送不出去"))
+                fail(L("Copilot：") + (err["message"] as? String ?? L("送不出去")))
             } else if reason == "cancelled" {
                 emit?(["type": "user", "message": ["role": "user", "content": "[Request interrupted by user]"]])
                 emit?(["type": "result", "subtype": "error_during_execution", "is_error": true, "duration_ms": ms()])
             } else {
                 var out: [String: Any] = ["type": "result", "subtype": "success", "is_error": false, "duration_ms": ms()]
-                if reason == "refusal" { out["subtype"] = "error_during_execution"; out["is_error"] = true; out["result"] = "Copilot 拒絕回答" }
-                if reason == "max_tokens" || reason == "max_turn_requests" { out["result"] = "Copilot 到了長度上限，停在這裡" }
+                if reason == "refusal" { out["subtype"] = "error_during_execution"; out["is_error"] = true; out["result"] = L("Copilot 拒絕回答") }
+                if reason == "max_tokens" || reason == "max_turn_requests" { out["result"] = L("Copilot 到了長度上限，停在這裡") }
                 emit?(out)
             }
             tools.removeAll(); toolOutput.removeAll(); toolDone.removeAll()

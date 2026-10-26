@@ -28,7 +28,7 @@ struct SessionPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Session 和 Window").font(.system(size: 14)).foregroundStyle(.secondary)
+            Text(L("Session 和 Window")).font(.system(size: 14)).foregroundStyle(.secondary)
                 .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 6)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -52,9 +52,9 @@ struct SessionPanel: View {
             }
             .frame(height: listHeight)
             Divider().opacity(0.4).padding(.vertical, 4).padding(.horizontal, 12)
-            action("新 Session…", key: "", m.onNew)
-            action("幫這個 Session 改名…", key: "Ctrl+A $", m.onRename)
-            if m.canClose { action("關掉這個 Session（對話留在側欄）", key: "", m.onCloseSession) }
+            action(L("新 Session…"), key: "", m.onNew)
+            action(L("幫這個 Session 改名…"), key: "Ctrl+A $", m.onRename)
+            if m.canClose { action(L("關掉這個 Session（對話留在側欄）"), key: "", m.onCloseSession) }
             Spacer().frame(height: 8)
         }
         .frame(width: 320)

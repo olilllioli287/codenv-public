@@ -86,7 +86,7 @@ final class UsageMonitor: ObservableObject {
                 if let copilotOut, let c = Self.parseCopilot(copilotOut) { self.copilotBuckets = c.buckets; self.copilotNote = c.note }
                 let parsed = out.map(Self.parse) ?? []
                 if parsed.isEmpty {
-                    self.error = "查不到用量"
+                    self.error = L("查不到用量")
                 } else {
                     self.buckets = parsed
                     self.updated = Date()
@@ -175,7 +175,7 @@ final class UsageMonitor: ObservableObject {
             for key in ["primary", "secondary"] {
                 guard let w = l[key] as? [String: Any], let used = (w["usedPercent"] as? NSNumber)?.doubleValue else { continue }
                 let mins = (w["windowDurationMins"] as? NSNumber)?.intValue ?? 0
-                let span = mins == 300 ? "5 小時" : mins == 10080 ? "每週" : mins >= 1440 ? "\(mins / 1440) 天" : mins > 0 ? "\(mins / 60) 小時" : key
+                let span = mins == 300 ? L("5 小時") : mins == 10080 ? L("每週") : mins >= 1440 ? L("\(mins / 1440) 天") : mins > 0 ? L("\(mins / 60) 小時") : key
                 let resets = (w["resetsAt"] as? NSNumber).map { when(Date(timeIntervalSince1970: $0.doubleValue)) } ?? ""
                 out.append(UsageBucket(label: [name, span].compactMap { $0 }.joined(separator: " "), used: Int(used.rounded()), resets: resets))
             }
@@ -197,7 +197,7 @@ final class UsageMonitor: ObservableObject {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let resets = (o["quota_reset_date_utc"] as? String).flatMap { iso.date(from: $0) }.map(when) ?? (o["quota_reset_date"] as? String ?? "")
-        return ([UsageBucket(label: "每月", used: Int((100 - pct).rounded()), resets: resets)], "剩 \(left)／\(total) 次")
+        return ([UsageBucket(label: L("每月"), used: Int((100 - pct).rounded()), resets: resets)], L("剩 \(left)／\(total) 次"))
     }
 
     /// 重置時間：今天、明天寫字，其他寫日期
@@ -218,9 +218,9 @@ final class UsageMonitor: ObservableObject {
             func g(_ i: Int) -> String? { Range(m.range(at: i), in: text).map { String(text[$0]) } }
             guard let what = g(1), let used = g(2).flatMap(Int.init) else { continue }
             let label: String
-            if what == "session" { label = "5 小時" }
-            else if what.hasPrefix("week (all") { label = "每週" }
-            else if what.hasPrefix("week ("), let name = what.split(separator: "(").last?.dropLast() { label = "\(name) 每週" }
+            if what == "session" { label = L("5 小時") }
+            else if what.hasPrefix("week (all") { label = L("每週") }
+            else if what.hasPrefix("week ("), let name = what.split(separator: "(").last?.dropLast() { label = L("\(name) 每週") }
             else { label = what }
             if hidden.contains(where: { label.hasPrefix($0) }) { continue }
             out.append(UsageBucket(label: label, used: used, resets: g(3).map { friendly($0, zone: g(4)) } ?? ""))
@@ -238,7 +238,7 @@ final class UsageMonitor: ObservableObject {
             guard f.count >= 3, let left = Int(f[2].replacingOccurrences(of: "%", with: "")) else { continue }
             // 名字要短，右側欄窄（「Gemini 4 Argon 每週」會被截掉）
             let group = f[0] == "Gemini Models" ? "Gemini" : f[0] == "Claude and GPT models" ? "Claude" : f[0].replacingOccurrences(of: "Gemini 4 ", with: "")
-            let span = f[1].contains("Five Hour") ? "5 小時" : f[1].contains("Weekly") ? "每週" : f[1]
+            let span = f[1].contains("Five Hour") ? L("5 小時") : f[1].contains("Weekly") ? L("每週") : f[1]
             var resets = ""
             if f.count >= 4, let d = iso.date(from: f[3]) { resets = when(d) }
             out.append(UsageBucket(label: "\(group) \(span)", used: 100 - left, resets: resets))
@@ -268,11 +268,11 @@ enum UsagePool: String, CaseIterable {
     var title: String {
         switch self {
         case .cc: "Claude Code"
-        case .gemini: "Gemini（agy）"
-        case .claudeAgy: "agy 裡的 Claude／GPT"
-        case .codex: "ChatGPT（Codex）"
+        case .gemini: L("Gemini（agy）")
+        case .claudeAgy: L("agy 裡的 Claude／GPT")
+        case .codex: L("ChatGPT（Codex）")
         case .copilot: "GitHub Copilot"
-        case .local: "本機模型"
+        case .local: L("本機模型")
         }
     }
     /// 名字左邊的圖示（跟模型清單分頁同一套）
@@ -282,14 +282,14 @@ enum UsagePool: String, CaseIterable {
     static func modelName(_ model: String?) -> String {
         guard let m = model, !m.isEmpty else {
             let k = ModelChoice.known, d = k.first { $0.value == "default" }
-            return k.first { $0.resolved == d?.resolved && $0.value != "default" }?.name ?? "Claude（預設）"
+            return k.first { $0.resolved == d?.resolved && $0.value != "default" }?.name ?? L("Claude（預設）")
         }
         if m.hasPrefix("agy:") { return AgyBridge.name(String(m.dropFirst(4))) }
         if m.hasPrefix("codex:") { return CodexBridge.name(String(m.dropFirst(6))) }
         if m.hasPrefix("copilot:") { return CopilotBridge.name(String(m.dropFirst(8))) }
         if m.hasPrefix("local:apple:") { return AppleBridge.name(String(m.dropFirst(12))) }
         if m.hasPrefix("local:mlx:") { return LocalBridge.name(String(m.dropFirst(10))) }
-        if m.hasPrefix("local:") { return LocalModel.all.first { "local:" + $0.id.uuidString == m }?.name ?? "本機模型" }
+        if m.hasPrefix("local:") { return LocalModel.all.first { "local:" + $0.id.uuidString == m }?.name ?? L("本機模型") }
         let k = ModelChoice.known
         if m == "default" { return modelName(nil) }
         return k.first { $0.value == m }?.name ?? m
@@ -332,9 +332,9 @@ extension UsageMonitor {
     /// 這組底下的附註（Codex 的免費重置次數、Copilot 剩幾次）
     func note(_ pool: UsagePool) -> String? {
         switch pool {
-        case .codex: return codexResets > 0 ? "另有 \(codexResets) 次免費全部重置" : nil
+        case .codex: return codexResets > 0 ? L("另有 \(codexResets) 次免費全部重置") : nil
         case .copilot: return copilotNote.isEmpty ? nil : copilotNote
-        case .local: return "本機模型：在這台 Mac 上跑，不花額度"
+        case .local: return L("本機模型：在這台 Mac 上跑，不花額度")
         default: return nil
         }
     }
@@ -397,7 +397,7 @@ struct UsageRowView: View {
                 }
             }
             .frame(height: 5)
-            if !b.resets.isEmpty { Text(b.resets + " 重置").font(.system(size: 11 * s)).foregroundStyle(.tertiary) }
+            if !b.resets.isEmpty { Text(L("\(b.resets) 重置")).font(.system(size: 11 * s)).foregroundStyle(.tertiary) }
         }
     }
     /// 剩兩成以下紅，其他綠
@@ -417,18 +417,18 @@ struct UsagePanel: View {
                 // 點「用量剩餘」：置中打開完整用量頁（每一組都列）
                 Button(action: { UsageSheet.toggle() }) {
                     HStack(spacing: 4) {
-                        Text("用量剩餘").font(.system(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary)
+                        Text(L("用量剩餘")).font(.system(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary)
                         Image(systemName: "chevron.right").font(.system(size: 9 * s, weight: .semibold)).foregroundStyle(.tertiary)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("看全部的用量（Claude、Gemini、ChatGPT、Copilot）")
+                .help(L("看全部的用量（Claude、Gemini、ChatGPT、Copilot）"))
                 Spacer()
                 if m.loading { ProgressView().controlSize(.mini) }
                 else {
                     Button(action: { m.refresh() }) { Image(systemName: "arrow.clockwise").font(.system(size: 11 * s)) }
-                        .buttonStyle(.plain).foregroundStyle(.tertiary).help("現在重新查")
+                        .buttonStyle(.plain).foregroundStyle(.tertiary).help(L("現在重新查"))
                 }
             }
             // 只列目前這個分頁裡每一格用到的額度池（換模型、換分頁就跟著變）
@@ -437,20 +437,20 @@ struct UsagePanel: View {
                 // 使用者 10/24：這個池是哪些格、哪個模型在用
                 ForEach(store.modelsInCurrentWindow(p.pool), id: \.model) { u in
                     // 聊天室名字放下一行（使用者 10/25：括號被拆在兩行中間不好讀）
-                    Text("使用中：\(u.model)\n（\(u.titles.joined(separator: "、"))）")
+                    Text(L("使用中：\(u.model)\n（\(u.titles.joined(separator: "、"))）"))
                         .font(.system(size: 11 * s)).foregroundStyle(.secondary).lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let n = m.note(p.pool) { Text(n).font(.system(size: 11 * s)).foregroundStyle(.tertiary) }
             }
             if m.buckets.isEmpty && !m.loading {
-                Text(m.error ?? "查詢中…").font(.system(size: 12 * s)).foregroundStyle(.tertiary)
+                Text(m.error ?? L("查詢中…")).font(.system(size: 12 * s)).foregroundStyle(.tertiary)
             }
             ContextBlock(store: store, compact: compact)
             ActivityBlock(store: store)
             Spacer(minLength: 0)
             if let u = m.updated {
-                Text("更新於 " + u.formatted(date: .omitted, time: .shortened)).font(.system(size: 10 * s)).foregroundStyle(.tertiary)
+                Text(L("更新於 \(u.formatted(date: .omitted, time: .shortened))")).font(.system(size: 10 * s)).foregroundStyle(.tertiary)
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
@@ -477,12 +477,12 @@ struct UsageFullPage: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("全部的用量").font(.system(size: 16 * s, weight: .semibold))
+                Text(L("全部的用量")).font(.system(size: 16 * s, weight: .semibold))
                 Spacer()
                 if m.loading { ProgressView().controlSize(.small) }
                 else {
                     Button(action: { m.refresh() }) { Image(systemName: "arrow.clockwise").font(.system(size: 12 * s)) }
-                        .buttonStyle(.plain).foregroundStyle(.secondary).help("現在重新查")
+                        .buttonStyle(.plain).foregroundStyle(.secondary).help(L("現在重新查"))
                 }
             }
             ForEach(UsagePool.allCases, id: \.self) { p in
@@ -501,7 +501,7 @@ struct UsageFullPage: View {
                 }
             }
             if let u = m.updated {
-                Text("更新於 " + u.formatted(date: .omitted, time: .shortened) + "　按 Esc 或點外面關掉").font(.system(size: 10 * s)).foregroundStyle(.tertiary).padding(.top, 4)
+                Text(L("更新於 \(u.formatted(date: .omitted, time: .shortened))　按 Esc 或點外面關掉")).font(.system(size: 10 * s)).foregroundStyle(.tertiary).padding(.top, 4)
             }
         }
         .padding(18)

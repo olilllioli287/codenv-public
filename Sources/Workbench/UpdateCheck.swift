@@ -104,13 +104,13 @@ final class UpdateCheck: ObservableObject {
     private func handle(_ rel: Release?, manual: Bool) {
         guard let rel else {
             log("fetch failed")
-            if manual { info("查不到更新資訊", "可能沒有網路，或 GitHub 暫時連不上。晚一點再試一次。") }
+            if manual { info(L("查不到更新資訊"), L("可能沒有網路，或 GitHub 暫時連不上。晚一點再試一次。")) }
             return
         }
         guard Self.isNewer(rel.version, than: Edition.version) else {
             log("not newer remote=\(rel.version) local=\(Edition.version)")
             available = nil
-            if manual { info("已經是最新版", "目前是 \(Edition.version)。") }
+            if manual { info(L("已經是最新版"), L("目前是 \(Edition.version)。")) }
             return
         }
         if skipped == rel.tag {
@@ -148,11 +148,11 @@ final class UpdateCheck: ObservableObject {
         var choice = answer
         if choice == nil {
             let alert = NSAlert()
-            alert.messageText = "codenv 有新版 \(rel.version)"
-            alert.informativeText = "你現在用的是 \(Edition.version)。\n\n" + (notes.isEmpty ? "（這版沒有寫說明）" : String(notes.prefix(1200)) + (notes.count > 1200 ? "…" : ""))
-            alert.addButton(withTitle: "下載")
-            alert.addButton(withTitle: "略過這版")
-            alert.addButton(withTitle: "之後再說")
+            alert.messageText = L("codenv 有新版 \(rel.version)")
+            alert.informativeText = L("你現在用的是 \(Edition.version)。\n\n") + (notes.isEmpty ? L("（這版沒有寫說明）") : String(notes.prefix(1200)) + (notes.count > 1200 ? "…" : ""))
+            alert.addButton(withTitle: L("下載"))
+            alert.addButton(withTitle: L("略過這版"))
+            alert.addButton(withTitle: L("之後再說"))
             switch alert.runModal() {
             case .alertFirstButtonReturn: choice = "下載"
             case .alertSecondButtonReturn: choice = "略過"

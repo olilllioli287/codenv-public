@@ -45,9 +45,9 @@ final class SessionActivity: ObservableObject {
                 case "Bash":
                     // 丟到背景跑的會馬上有結果，之後改由背景清單顯示
                     if input["run_in_background"] as? Bool == true { continue }
-                    list.append(RunningItem(id: tid, text: (input["command"] as? String) ?? "指令", since: Date(), background: false, kind: "bash"))
+                    list.append(RunningItem(id: tid, text: (input["command"] as? String) ?? L("指令"), since: Date(), background: false, kind: "bash"))
                 case "Task", "Agent":
-                    list.append(RunningItem(id: tid, text: (input["description"] as? String) ?? "子代理", since: Date(), background: false, kind: "agent"))
+                    list.append(RunningItem(id: tid, text: (input["description"] as? String) ?? L("子代理"), since: Date(), background: false, kind: "agent"))
                 default: break
                 }
             }
@@ -121,7 +121,7 @@ final class SessionActivity: ObservableObject {
                 if parts.count == 2 { g.ahead = Int(parts[0].dropFirst()) ?? 0; g.behind = Int(parts[1].dropFirst()) ?? 0 }
             } else if !line.hasPrefix("#") { g.changed += 1 }
         }
-        if g.branch == "(detached)" { g.branch = "（沒有在分支上）" }
+        if g.branch == "(detached)" { g.branch = L("（沒有在分支上）") }
         return g
     }
 }
@@ -138,22 +138,22 @@ struct ActivityBlock: View {
             VStack(alignment: .leading, spacing: 6) {
                 // 資料夾改放在每一格最下面的路徑列（PathBar），這裡不再列
                 if let g = activity.git[dir] ?? nil {
-                    row("分支") {
+                    row(L("分支")) {
                         HStack(spacing: 6) {
                             Text(g.branch).fontWeight(.semibold).lineLimit(1).truncationMode(.middle)
-                            if g.ahead > 0 { Text("↑\(g.ahead)").foregroundStyle(.secondary).help("有 \(g.ahead) 個 commit 還沒推上去") }
-                            if g.behind > 0 { Text("↓\(g.behind)").foregroundStyle(.secondary).help("遠端多了 \(g.behind) 個 commit") }
+                            if g.ahead > 0 { Text("↑\(g.ahead)").foregroundStyle(.secondary).help(L("有 \(g.ahead) 個 commit 還沒推上去")) }
+                            if g.behind > 0 { Text("↓\(g.behind)").foregroundStyle(.secondary).help(L("遠端多了 \(g.behind) 個 commit")) }
                         }
                     }
                     if g.changed > 0 {
-                        Text("\(g.changed) 個檔案改過還沒 commit").font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+                        Text(L("\(g.changed) 個檔案改過還沒 commit")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
                     }
                 }
                 // 使用者 10/24：列這個分頁每一格在跑的，像終端機那樣用樹狀：main（主對話）、shell、agent
                 let ids = (store.currentWindow?.root?.leaves ?? []).filter { store.conversation($0) != nil }
                 let live = ids.filter { (store.status[$0] ?? .idle) != .idle || !activity.running($0).isEmpty }
                 if !live.isEmpty {
-                    Text("正在跑").font(.system(size: 12 * s)).padding(.top, 4)
+                    Text(L("正在跑")).font(.system(size: 12 * s)).padding(.top, 4)
                     TimelineView(.periodic(from: .now, by: 1)) { ctx in
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(live, id: \.self) { tree($0, now: ctx.date) }
@@ -183,9 +183,9 @@ struct ActivityBlock: View {
         let c = store.conversation(id)
         let st = store.status[id] ?? .idle
         let lines: [(id: String, kind: String, note: String?, text: String?, since: Date?)] =
-            (st == .idle ? [] : [("main", "main", st == .waiting ? "等你回覆" : "工作中", nil, store.busySince[id])])
+            (st == .idle ? [] : [("main", "main", st == .waiting ? L("等你回覆") : L("工作中"), nil, store.busySince[id])])
             + activity.running(id).map { it in
-                (it.id, it.kind == "bash" ? "shell" : it.kind, it.background ? "背景" : nil,
+                (it.id, it.kind == "bash" ? "shell" : it.kind, it.background ? L("背景") : nil,
                  it.text.replacingOccurrences(of: "\n", with: " "), it.since)
             }
         VStack(alignment: .leading, spacing: 1) {

@@ -89,7 +89,7 @@ struct DirPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(m.removing ? "要從清單移除哪一個？（資料夾本身不會刪）" : "選擇 Claude Code 的工作目錄")
+            Text(m.removing ? L("要從清單移除哪一個？（資料夾本身不會刪）") : L("選擇 Claude Code 的工作目錄"))
                 .font(.system(size: 14)).foregroundStyle(.secondary)
                 .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 8)
             ScrollView {
@@ -108,7 +108,7 @@ struct DirPickerView: View {
                                 Text("\(n))").font(.system(size: 14, design: .monospaced)).foregroundStyle(.secondary).frame(width: 26, alignment: .trailing)
                                 Text(ClaudeEnvs.tilde(p)).font(.system(size: 15)).lineLimit(1).truncationMode(.middle)
                                     .foregroundStyle(ok ? .primary : .tertiary)
-                                if !ok { Text("（不存在）").font(.system(size: 12)).foregroundStyle(.tertiary) }
+                                if !ok { Text(L("（不存在）")).font(.system(size: 12)).foregroundStyle(.tertiary) }
                                 Spacer()
                                 if m.removing { Image(systemName: "minus.circle").foregroundStyle(.red.opacity(0.8)) }
                             }
@@ -119,7 +119,7 @@ struct DirPickerView: View {
                         .disabled(!ok && !m.removing)
                         .contextMenu {
                             if let set = m.setGroup {
-                                Menu("這個資料夾的新對話放在…") {
+                                Menu(L("這個資料夾的新對話放在…")) {
                                     ForEach(m.topGroups, id: \.id) { g in
                                         Button((m.groupOfPath?(p) == g.id ? "✓ " : "") + g.name) { set(p, g.id); m.objectWillChange.send() }
                                     }
@@ -133,11 +133,11 @@ struct DirPickerView: View {
             .frame(height: min(420, CGFloat(m.dirs.count) * 32 + CGFloat(m.sections.filter { !$0.name.isEmpty }.count) * 24 + 4))
             Divider().opacity(0.4).padding(.horizontal, 12).padding(.vertical, 6)
             HStack(spacing: 4) {
-                key("n", "新增") { m.onAdd?() }
-                key("d", m.removing ? "不移除了" : "從清單移除") { m.removing.toggle() }
-                if let c = m.current { key(".", "用目前目錄 " + ClaudeEnvs.tilde(c)) { m.onPick?(c) } }
+                key("n", L("新增")) { m.onAdd?() }
+                key("d", m.removing ? L("不移除了") : L("從清單移除")) { m.removing.toggle() }
+                if let c = m.current { key(".", L("用目前目錄 \(ClaudeEnvs.tilde(c))")) { m.onPick?(c) } }
                 Spacer(minLength: 0)
-                key("q", "取消") { m.onCancel?() }
+                key("q", L("取消")) { m.onCancel?() }
             }
             .padding(.horizontal, 10).padding(.bottom, 10)
         }
@@ -234,8 +234,8 @@ final class DirPicker {
         o.canChooseDirectories = true
         o.canChooseFiles = false
         o.canCreateDirectories = true
-        o.prompt = "加到清單"
-        o.message = "選一個資料夾加到清單（跟 iTerm 打 claude 的清單是同一份）"
+        o.prompt = L("加到清單")
+        o.message = L("選一個資料夾加到清單（跟 iTerm 打 claude 的清單是同一份）")
         o.directoryURL = Edition.projectsRoot
         // 先收起選單（不然點選資料夾視窗會被當成「點外面」），選完再打開
         let current = model.current, pick = lastPick

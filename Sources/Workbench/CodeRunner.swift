@@ -55,7 +55,7 @@ enum CodeRunner {
                 let (code, out) = shell(["g++"] + gppFlags + ["-fsyntax-only", name], dir: dir)
                 (diags, text) = parseGcc(out, file: name, failed: code != 0)
             } else {
-                text = "只支援 C／C++ 和 Python 檔"
+                text = L("只支援 C／C++ 和 Python 檔")
             }
             DispatchQueue.main.async { done(diags, text) }
         }
@@ -76,7 +76,7 @@ enum CodeRunner {
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
-        do { try p.run() } catch { return (-1, "開不了 \(args[0])：\(error.localizedDescription)") }
+        do { try p.run() } catch { return (-1, L("開不了 \(args[0])：\(error.localizedDescription)")) }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         return (p.terminationStatus, String(decoding: data, as: UTF8.self))
@@ -105,7 +105,7 @@ enum CodeRunner {
                     keep = false
                 }
                 if keep {
-                    let text = "第 \(ln) 行：" + (kind == "note" ? "（說明）" : kind == "warning" ? "warning: " : "error: ") + ns.substring(with: m.range(at: 5))
+                    let text = L("第 \(ln) 行：") + (kind == "note" ? L("（說明）") : kind == "warning" ? "warning: " : "error: ") + ns.substring(with: m.range(at: 5))
                     if kind != "note" { diags.append(CodeDiagnostic(line: ln, column: col, severity: kind == "warning" ? "warning" : "error", message: text)) }
                     lines.append(text)
                     continue
@@ -121,14 +121,14 @@ enum CodeRunner {
         if failed && !diags.contains(where: { $0.severity == "error" }) {
             return (diags, msg.trimmingCharacters(in: .whitespacesAndNewlines) + windowsHint(msg))
         }
-        if hidden > 0 { lines.append("（另外有 \(hidden) 個 warning，常常是上面的 error 連帶造成的，修好 error 後通常會一起消失；沒消失的話再按 F9 會顯示）") }
+        if hidden > 0 { lines.append(L("（另外有 \(hidden) 個 warning，常常是上面的 error 連帶造成的，修好 error 後通常會一起消失；沒消失的話再按 F9 會顯示）")) }
         return (diags, lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) + windowsHint(msg))
     }
 
     /// 用到 Windows 才有的檔案（Mac 上沒有）時，多一行中文說明（conio.h compat 裡有，不用提示）
     private static func windowsHint(_ msg: String) -> String {
         if msg.contains("'windows.h' file not found") {
-            return "\n→ windows.h 是 Windows 才有的。Sleep(毫秒) 可以改成 this_thread::sleep_for(chrono::milliseconds(毫秒))，要 #include <thread>"
+            return "\n" + L("→ windows.h 是 Windows 才有的。Sleep(毫秒) 可以改成 this_thread::sleep_for(chrono::milliseconds(毫秒))，要 #include <thread>")
         }
         return ""
     }
@@ -152,16 +152,16 @@ enum CodeRunner {
     /// Python 常見的語法錯誤，用中文說明
     private static func pyHint(_ msg: String) -> String {
         let hints = [
-            ("expected an indented block", "冒號（:）那行的下一行要縮排：在行首按 Tab"),
-            ("unexpected indent", "這一行不該縮排：把行首的空白刪掉，跟上一行對齊"),
-            ("unindent does not match", "這一行的縮排跟上面對不齊：同一層的程式要用一樣多的空白"),
-            ("inconsistent use of tabs and spaces", "Tab 和空白混在一起（常見於別人給的檔案）：統一改成空白"),
-            ("expected ':'", "if／for／while／def／class 那行最後要加冒號（:）"),
-            ("unterminated string literal", "引號只有開頭、沒有結尾：這一行少了一個 \" 或 '"),
-            ("EOL while scanning string literal", "引號只有開頭、沒有結尾：這一行少了一個 \" 或 '"),
-            ("unexpected EOF while parsing", "程式最後少了 ) ] } 或引號的結尾"),
-            ("was never closed", "括號或引號只有開頭、沒有結尾：找那一行少的 ) ] } 或引號"),
-            ("invalid syntax", "常見原因：上一行少了 ) 或 ]，引號沒關，或 if／for／def 那行最後少了冒號（:）"),
+            ("expected an indented block", L("冒號（:）那行的下一行要縮排：在行首按 Tab")),
+            ("unexpected indent", L("這一行不該縮排：把行首的空白刪掉，跟上一行對齊")),
+            ("unindent does not match", L("這一行的縮排跟上面對不齊：同一層的程式要用一樣多的空白")),
+            ("inconsistent use of tabs and spaces", L("Tab 和空白混在一起（常見於別人給的檔案）：統一改成空白")),
+            ("expected ':'", L("if／for／while／def／class 那行最後要加冒號（:）")),
+            ("unterminated string literal", L("引號只有開頭、沒有結尾：這一行少了一個 \" 或 '")),
+            ("EOL while scanning string literal", L("引號只有開頭、沒有結尾：這一行少了一個 \" 或 '")),
+            ("unexpected EOF while parsing", L("程式最後少了 ) ] } 或引號的結尾")),
+            ("was never closed", L("括號或引號只有開頭、沒有結尾：找那一行少的 ) ] } 或引號")),
+            ("invalid syntax", L("常見原因：上一行少了 ) 或 ]，引號沒關，或 if／for／def 那行最後少了冒號（:）")),
         ]
         return hints.first { msg.contains($0.0) }?.1 ?? ""
     }

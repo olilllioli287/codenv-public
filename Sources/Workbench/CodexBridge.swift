@@ -190,7 +190,7 @@ final class CodexBridge {
                     let p = Self.policy(mode)
                     call("thread/start", ["cwd": directory, "model": model, "approvalPolicy": p.approval, "sandbox": p.sandbox])
                 } else {
-                    fail("Codex 開不了對話：" + (err["message"] as? String ?? ""))
+                    fail(L("Codex 開不了對話：") + (err["message"] as? String ?? ""))
                 }
                 return
             }
@@ -200,7 +200,7 @@ final class CodexBridge {
             emit?(["type": "system", "subtype": "init", "model": model, "cwd": directory, "session_id": session.uuidString.lowercased()])
             next()
         case "turn/start":
-            if let err { starting = nil; fail("Codex：" + (err["message"] as? String ?? "送不出去")); next(); return }
+            if let err { starting = nil; fail(L("Codex：") + (err["message"] as? String ?? L("送不出去"))); next(); return }
             if let t = (r?["turn"] as? [String: Any])?["id"] as? String, turnID == nil { turnID = t }
         default:
             if let err, method != "turn/interrupt" { emit?(["type": "system", "subtype": "api_retry", "attempt": 0, "error": err["message"] ?? ""]) }
@@ -268,7 +268,7 @@ final class CodexBridge {
             var out: [String: Any] = ["type": "result", "subtype": status == "completed" ? "success" : "error_during_execution",
                                       "is_error": status != "completed",
                                       "duration_ms": (t["durationMs"] as? NSNumber)?.intValue ?? Int(Date().timeIntervalSince(started) * 1000)]
-            if status == "failed" { out["result"] = "Codex：" + Self.errorText((t["error"] as? [String: Any])?["message"] as? String) }
+            if status == "failed" { out["result"] = L("Codex：") + Self.errorText((t["error"] as? [String: Any])?["message"] as? String) }
             if status == "interrupted" { emit?(["type": "user", "message": ["role": "user", "content": "[Request interrupted by user]"]]) }
             turnID = nil
             texts.removeAll(); thinkingOpen.removeAll(); pendingChange.removeAll()
@@ -284,7 +284,7 @@ final class CodexBridge {
 
     /// 錯誤訊息常常是一整段 JSON：挑出裡面的 message
     static func errorText(_ s: String?) -> String {
-        guard let s else { return "發生錯誤" }
+        guard let s else { return L("發生錯誤") }
         if let d = s.data(using: .utf8), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
            let m = (o["error"] as? [String: Any])?["message"] as? String { return m }
         return s

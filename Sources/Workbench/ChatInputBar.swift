@@ -235,12 +235,12 @@ private final class AttachmentChip: NSView {
         iv.wantsLayer = true
         iv.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.25).cgColor
         addSubview(iv)
-        let x = NSButton(title: "", image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "拿掉")!, target: self, action: #selector(remove))
+        let x = NSButton(title: "", image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: L("拿掉"))!, target: self, action: #selector(remove))
         x.isBordered = false
         x.contentTintColor = .white
         x.frame = NSRect(x: w - 22, y: Self.height - 22, width: 18, height: 18)
         addSubview(x)
-        let tag = NSTextField(labelWithString: edited ? "#\(number) 已編輯" : "#\(number)")
+        let tag = NSTextField(labelWithString: edited ? L("#\(number) 已編輯") : "#\(number)")
         tag.font = .systemFont(ofSize: 12, weight: .bold)
         tag.textColor = .white
         tag.wantsLayer = true
@@ -252,7 +252,7 @@ private final class AttachmentChip: NSView {
         // 編輯過：橘框（跟 image-shelf 一樣）
         layer?.borderWidth = edited ? 2 : 1
         layer?.borderColor = (edited ? NSColor.systemOrange : NSColor.white.withAlphaComponent(0.25)).cgColor
-        toolTip = "點一下編輯（畫框、箭頭、文字）"
+        toolTip = L("點一下編輯（畫框、箭頭、文字）")
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc private func remove() { onRemove?() }
@@ -286,12 +286,12 @@ private final class FileChip: NSView {
         layer?.borderWidth = 1
         layer?.borderColor = fg.withAlphaComponent(0.22).cgColor
         layer?.backgroundColor = fg.withAlphaComponent(0.06).cgColor
-        let x = NSButton(title: "", image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "拿掉")!, target: self, action: #selector(remove))
+        let x = NSButton(title: "", image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: L("拿掉"))!, target: self, action: #selector(remove))
         x.isBordered = false
         x.contentTintColor = fg.withAlphaComponent(0.7)
         x.frame = NSRect(x: bounds.width - 22, y: bounds.height - 22, width: 18, height: 18)
         addSubview(x)
-        toolTip = url.path + "\n點一下在 Finder 顯示"
+        toolTip = url.path + "\n" + L("點一下在 Finder 顯示")
     }
     required init?(coder: NSCoder) { fatalError() }
     /// 副檔名（.pdf）；資料夾、沒有副檔名的回空字串
@@ -475,7 +475,7 @@ final class ChatInputBar: NSView {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
-        textView.placeholder = "輸入 / 開啟指令選單"
+        textView.placeholder = L("輸入 / 開啟指令選單")
         textView.registerForDraggedTypes(ChatTextView.dropTypes)
         // 整個輸入框都能收（框裡的空白、按鈕旁邊、鎖住時也一樣），不是只有文字那一條
         registerForDraggedTypes(ChatTextView.dropTypes)
@@ -507,12 +507,12 @@ final class ChatInputBar: NSView {
         modelButton.font = .systemFont(ofSize: 12, weight: .medium)
         modelButton.target = self
         modelButton.action = #selector(showModels)
-        modelButton.toolTip = "換模型"
+        modelButton.toolTip = L("換模型")
         box.addSubview(modelButton)
         modeButton.isBordered = false
         modeButton.target = self
         modeButton.action = #selector(cycleModePressed)
-        modeButton.toolTip = "權限模式（⇧ Tab 切換）：每次都問 → 改檔不問 → 只規劃 → 自動"
+        modeButton.toolTip = L("權限模式（⇧ Tab 切換）：每次都問 → 改檔不問 → 只規劃 → 自動")
         box.addSubview(modeButton)
         lockView.wantsLayer = true
         lockView.isHidden = true
@@ -657,7 +657,7 @@ final class ChatInputBar: NSView {
         let row = inner.minY
         sendButton.frame = NSRect(x: inner.maxX - 28, y: row, width: 28, height: 28)
         // 空的輸入框只提示 / 指令選單（使用者 10/23：不要按鍵說明；Claude 在忙時也一樣）
-        let want = "輸入 / 開啟指令選單"
+        let want = L("輸入 / 開啟指令選單")
         if textView.placeholder != want { textView.placeholder = want }
         // 太窄（例如右下角讓給桌寵之後）：先收模式按鈕、再收模型按鈕（⇧ Tab 照樣能換）
         if lockView.isHidden {
@@ -697,9 +697,9 @@ final class ChatInputBar: NSView {
 
     private func updateButton() {
         let name = busy ? "stop.circle.fill" : "arrow.up.circle.fill"
-        sendButton.image = NSImage(systemSymbolName: name, accessibilityDescription: busy ? "停止" : "送出")?
+        sendButton.image = NSImage(systemSymbolName: name, accessibilityDescription: L(busy ? "停止" : "送出"))?
             .withSymbolConfiguration(.init(pointSize: 22, weight: .regular))
-        sendButton.toolTip = busy ? "停止（Esc）" : "送出（⌘ Enter）"
+        sendButton.toolTip = L(busy ? "停止（Esc）" : "送出（⌘ Enter）")
         let empty = textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
         sendButton.alphaValue = busy || !empty ? 1 : 0.35
     }

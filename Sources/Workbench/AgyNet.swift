@@ -76,5 +76,5 @@ enum AgyNet {
         func get() -> Bool { l.lock(); defer { l.unlock() }; return v }
     }
 
-    static let offlineMessage = "現在連不上 Google，網路恢復後再送（這則留在輸入框）。斷網時叫 agy，它會以為沒登入、一直開瀏覽器登入頁，所以先不開。"
+    static let offlineMessage = L("現在連不上 Google，網路恢復後再送（這則留在輸入框）。斷網時叫 agy，它會以為沒登入、一直開瀏覽器登入頁，所以先不開。")
 }

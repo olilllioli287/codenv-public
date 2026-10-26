@@ -134,7 +134,7 @@ final class ChatSession {
             let args = AgyBridge.arguments(model: run, mode: permissionMode ?? Prefs.shared.permissionMode,
                                            conversation: AgyBridge.conversation(for: claudeSession))
             // 系統說沒網路就先不開 agy（不然它會開瀏覽器登入頁）；只看已知狀態，不卡主執行緒。ChatPane 送出前已經擋過一次
-            guard AgyBridge.enabled else { onExit?(-1, "agy 功能是關著的（設定 ⌘ , → 對話 → agy）。打開前會先請你看一段 Google 的條款說明。"); return false }
+            guard AgyBridge.enabled else { onExit?(-1, L("agy 功能是關著的（設定 ⌘ , → 對話 → agy）。打開前會先請你看一段 Google 的條款說明。")); return false }
             guard AgyNet.quickOK else { onExit?(-1, AgyNet.offlineMessage); return false }
             let b = AgyBridge(session: claudeSession, model: run)
             b.cancelled = agyCancelled
@@ -279,7 +279,7 @@ final class ChatSession {
             }
         }
         do { try p.run() } catch {
-            onExit?(-1, "開不了 \(bridge == nil ? "claude" : "agy")：\(error.localizedDescription)")
+            onExit?(-1, L("開不了 \(bridge == nil ? "claude" : "agy")：\(error.localizedDescription)"))
             return false
         }
         process = p
@@ -541,11 +541,11 @@ enum PermissionMode {
     /// 輸入框上那顆按鈕的字
     static func label(_ m: String) -> String {
         switch m {
-        case "acceptEdits": return "⏵⏵ 改檔不問"
-        case "plan": return "⏸ 只規劃"
-        case "auto": return "⏵⏵ 自動"
-        case "bypassPermissions": return "⏵⏵ 全部不問"
-        default: return "每次都問"
+        case "acceptEdits": return L("⏵⏵ 改檔不問")
+        case "plan": return L("⏸ 只規劃")
+        case "auto": return L("⏵⏵ 自動")
+        case "bypassPermissions": return L("⏵⏵ 全部不問")
+        default: return L("每次都問")
         }
     }
 }
@@ -574,7 +574,7 @@ struct ModelChoice: Codable, Equatable {
     /// 上次 Claude 回報的清單（還沒開過程序時先用這份）
     static var known: [ModelChoice] {
         if let d = appDefaults.data(forKey: "modelChoices"), let l = try? JSONDecoder().decode([ModelChoice].self, from: d), !l.isEmpty { return l }
-        return [ModelChoice(value: "default", resolved: "", name: "預設", detail: ""),
+        return [ModelChoice(value: "default", resolved: "", name: L("預設"), detail: ""),
                 ModelChoice(value: "opus", resolved: "", name: "Opus", detail: ""),
                 ModelChoice(value: "fable", resolved: "", name: "Fable", detail: ""),
                 ModelChoice(value: "sonnet", resolved: "", name: "Sonnet", detail: ""),
@@ -600,7 +600,7 @@ struct LocalModel: Codable, Equatable, Identifiable {
 }
 
 enum Effort {
-    static let names = ["low": "低", "medium": "中", "high": "高", "xhigh": "很高", "max": "最高"]
+    static let names = ["low": L("低"), "medium": L("中"), "high": L("高"), "xhigh": L("很高"), "max": L("最高")]
     static let order = ["low", "medium", "high", "xhigh", "max"]
     static func name(_ v: String) -> String { names[v] ?? v }
 }

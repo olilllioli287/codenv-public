@@ -48,6 +48,8 @@ final class Prefs: ObservableObject {
     /// 從關到開要先看警告（Prefs.confirmEnableAgy），所以設定頁的開關不直接改這個值
     /// 公版：開 App 30 秒後、之後每 24 小時去 GitHub 看有沒有新版（UpdateCheck.swift）；沒有更新來源的私人版用不到
     @Published var autoCheckUpdates: Bool { didSet { d.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
+    /// 介面語言：system（跟系統：中文就繁中、其他英文）／zh／en；改了要重開才生效（I18n.swift 啟動時決定一次）
+    @Published var language: String { didSet { d.set(language, forKey: "language") } }
     @Published var agyEnabled: Bool { didSet { d.set(agyEnabled, forKey: "agyEnabled"); Self.syncAgyMarker(agyEnabled) } }
     /// 程式碼學習專區的預設版面（CodeLabView.Mode）：1＝右上程式碼右下結果、2＝F10 整塊換成執行畫面、3＝F10 跳出執行視窗、4＝不用 AI
     @Published var codeLabLayout: Int { didSet { d.set(codeLabLayout, forKey: "codeLabLayout") } }
@@ -72,6 +74,7 @@ final class Prefs: ObservableObject {
         autoImportLive = d.bool(forKey: "autoImportLive")
         allModels = d.bool(forKey: "allModels")
         codeLabLayout = d.object(forKey: "codeLabLayout") as? Int ?? 1
+        language = d.string(forKey: "language") ?? "system"
         autoCheckUpdates = d.object(forKey: "autoCheckUpdates") as? Bool ?? true
         let agy = d.object(forKey: "agyEnabled") as? Bool ?? Edition.agyDefault
         agyEnabled = agy
@@ -97,8 +100,8 @@ final class Prefs: ObservableObject {
         while true {
             let a = NSAlert()
             a.alertStyle = .warning
-            a.messageText = "打開 agy 功能前，請先看這段"
-            a.informativeText = """
+            a.messageText = L("打開 agy 功能前，請先看這段")
+            a.informativeText = L("""
             Google 的 Antigravity 官方 FAQ（https://antigravity.google/docs/faq/）寫著：
 
             "Antigravity CLI headless mode (`agy -p`) is intended for direct scripting and CI workflows. Wrapping `agy` inside third-party coding agents or applications, or automating account rotation, is not supported under consumer plans."
@@ -106,10 +109,10 @@ final class Prefs: ObservableObject {
             "Using third-party software, tools, or services to access Antigravity is a violation of our Terms of Service … Such actions can result in suspension or termination of your account."
 
             codenv 的 Gemini 聊天室、灰字建議、用量查詢、看板 @agy 自動做事，都是用別的程式去呼叫 agy。打開之後，你的 Google 帳號可能被停權，風險由你自己承擔；這個開關不會讓這樣的用法變成合規。
-            """
-            a.addButton(withTitle: "取消")
-            a.addButton(withTitle: "我了解風險，仍要打開")
-            a.addButton(withTitle: "看 FAQ 原文")
+            """)
+            a.addButton(withTitle: L("取消"))
+            a.addButton(withTitle: L("我了解風險，仍要打開"))
+            a.addButton(withTitle: L("看 FAQ 原文"))
             switch a.runModal() {
             case .alertSecondButtonReturn: return true
             case .alertThirdButtonReturn: if let u = URL(string: "https://antigravity.google/docs/faq/") { NSWorkspace.shared.open(u) }

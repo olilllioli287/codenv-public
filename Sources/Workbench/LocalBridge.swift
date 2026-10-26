@@ -33,7 +33,7 @@ final class LocalServer {
         }
         // 一次只開得了一個本機模型：別的聊天室的模型正在回答（users 含自己這一輪，所以 > 1），不要把它半路關掉
         if process?.isRunning == true, let other = self.model, users > 1 {
-            done("另一個聊天室的 \(LocalBridge.name(other)) 正在回答。本機模型一次只能開一個，等它答完再送")
+            done(L("另一個聊天室的 \(LocalBridge.name(other)) 正在回答。本機模型一次只能開一個，等它答完再送"))
             return
         }
         stop()
@@ -55,7 +55,7 @@ final class LocalServer {
     """
 
     private func launch(_ model: String, _ done: @escaping (String?) -> Void) {
-        guard FileManager.default.isExecutableFile(atPath: Self.python) else { done("找不到 \(Self.python)（mlx_lm 的 Python 環境）"); return }
+        guard FileManager.default.isExecutableFile(atPath: Self.python) else { done(L("找不到 \(Self.python)（mlx_lm 的 Python 環境）")); return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: Self.python)
         var args = ["-c", Self.launcher]
@@ -85,10 +85,10 @@ final class LocalServer {
                 guard let self, self.process === proc else { return }
                 self.process = nil
                 self.ready = false
-                self.flush("本機模型伺服器結束了：" + self.logTail.split(separator: "\n").suffix(3).joined(separator: "\n"))
+                self.flush(L("本機模型伺服器結束了：") + self.logTail.split(separator: "\n").suffix(3).joined(separator: "\n"))
             }
         }
-        do { try p.run() } catch { done("開不了本機模型伺服器：\(error.localizedDescription)"); return }
+        do { try p.run() } catch { done(L("開不了本機模型伺服器：\(error.localizedDescription)")); return }
         process = p
         self.model = model
         ready = false
@@ -103,7 +103,7 @@ final class LocalServer {
         probe { [weak self] ok in
             guard let self, self.process === p else { return }
             if ok { self.ready = true; self.flush(nil); return }
-            if tries > 120 { self.stop(); self.flush("本機模型伺服器 60 秒還沒開好"); return }
+            if tries > 120 { self.stop(); self.flush(L("本機模型伺服器 60 秒還沒開好")); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.wait(p, tries: tries + 1) }
         }
     }
@@ -140,7 +140,7 @@ final class LocalServer {
         if let p = process { process = nil; p.terminate() }
         ready = false
         model = nil
-        if !waiters.isEmpty { flush("本機模型伺服器被關掉了") }
+        if !waiters.isEmpty { flush(L("本機模型伺服器被關掉了")) }
     }
 }
 
@@ -374,7 +374,7 @@ final class LocalBridge {
                 self.lastTokens = 0
             } else {
                 // 這次不壓（下一輪還超過會再試）；照原樣送，紀錄不動
-                self.emit?(["type": "system", "subtype": "status", "status": "compact_failed", "message": "自動壓縮沒成功，照原樣繼續：" + (err ?? "")])
+                self.emit?(["type": "system", "subtype": "status", "status": "compact_failed", "message": L("自動壓縮沒成功，照原樣繼續：") + (err ?? "")])
                 self.lastTokens = 0
             }
             self.next()
@@ -392,7 +392,7 @@ final class LocalBridge {
     /// 問模型一次（一輪裡可能好幾次：每做完一批工具就再問）
     private func ask() {
         rounds += 1
-        guard rounds <= 40 else { fail("本機模型這一輪叫了太多次工具，先停在這裡"); return }
+        guard rounds <= 40 else { fail(L("本機模型這一輪叫了太多次工具，先停在這裡")); return }
         let t = turn
         LocalServer.shared.ensure(model) { [weak self] err in
             guard let self, self.turn == t else { return }
@@ -468,7 +468,7 @@ final class LocalBridge {
         }, onDone: { [weak self] err in
             guard let self, self.turn == t else { return }
             self.sse = nil
-            if let err { self.fail("本機模型：" + err); return }
+            if let err { self.fail(L("本機模型：") + err); return }
             release()
             self.replied(pending.keys.sorted().compactMap { pending[$0] })
         })
@@ -894,7 +894,7 @@ final class SSE: NSObject, URLSessionDataDelegate {
         session.finishTasksAndInvalidate()
         if let e = error as? URLError, e.code == .cancelled { return }
         if let error { onDone(error.localizedDescription); return }
-        if status != 200 { onDone("伺服器回 \(status)：" + String(decoding: body.prefix(300), as: UTF8.self)); return }
+        if status != 200 { onDone(L("伺服器回 \(status)：") + String(decoding: body.prefix(300), as: UTF8.self)); return }
         onDone(nil)
     }
 }

@@ -35,7 +35,7 @@ struct ModelRow: Identifiable, Equatable {
 
 enum ModelTab: String, CaseIterable {
     case claude, gemini, chatgpt, copilot, local
-    var title: String { switch self { case .claude: "Claude"; case .gemini: "Gemini"; case .chatgpt: "ChatGPT"; case .copilot: "Copilot"; case .local: "本機" } }
+    var title: String { switch self { case .claude: "Claude"; case .gemini: "Gemini"; case .chatgpt: "ChatGPT"; case .copilot: "Copilot"; case .local: L("本機") } }
     /// 單色圖示（OpenAI、Copilot、本機）：跟著文字顏色上色
     var monochrome: Bool { self == .chatgpt || self == .copilot || self == .local }
     /// 圖示：Resources/icons 裡的 SVG（LobeHub Icons，MIT）；本機用系統圖示
@@ -150,7 +150,7 @@ struct ModelPanel: View {
                 // 這整塊（強度名字＋模型名稱）點了就換模型
                 Button(action: { m.showingModels = true; m.onSizeChange?() }) {
                     VStack(spacing: 4) {
-                        Text(m.isLocal ? "本機模型" : (m.shownLevel.map(Effort.name) ?? "預設"))
+                        Text(m.isLocal ? L("本機模型") : (m.shownLevel.map(Effort.name) ?? L("預設")))
                             .font(.system(size: 20, weight: .semibold)).foregroundStyle(Color.accentColor)
                         HStack(spacing: 3) {
                             Text(m.modelName).font(.system(size: 14))
@@ -163,12 +163,12 @@ struct ModelPanel: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(HoverPlain())
-                .help("換模型")
+                .help(L("換模型"))
                 Button(action: { m.effort = nil; m.onEffort?(nil) }) {
                     Image(systemName: "arrow.counterclockwise").font(.system(size: 15, weight: .medium))
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
-                .help("回到 Claude 的設定")
+                .help(L("回到 Claude 的設定"))
                 .opacity(m.effort == nil ? 0.3 : 1)
                 .disabled(m.effort == nil)
                 .padding(.top, 4)
@@ -183,24 +183,24 @@ struct ModelPanel: View {
         let isMax = e == "max"
         let can = e != nil && e != m.defaultEffort && !isMax
         return HStack(spacing: 8) {
-            Text(m.defaultNote ?? "預設：" + (m.defaultEffort.map(Effort.name) ?? "Claude 內建"))
+            Text(m.defaultNote ?? L("預設：\(m.defaultEffort.map(Effort.name) ?? L("Claude 內建"))"))
                 .font(.caption).foregroundStyle(.secondary)
             Spacer()
-            Button("設為預設") { if let e { m.onSetDefault?(e) } }
+            Button(L("設為預設")) { if let e { m.onSetDefault?(e) } }
                 .controlSize(.small)
                 .disabled(!can)
-                .help(isMax ? "「最高」Claude Code 只能每次手動選，不能存成預設"
-                      : "存進 ~/.claude/settings.json：新對話和沒調過強度的對話都用這個；終端機的 Claude Code 也會跟著用")
+                .help(L(isMax ? "「最高」Claude Code 只能每次手動選，不能存成預設"
+                      : "存進 ~/.claude/settings.json：新對話和沒調過強度的對話都用這個；終端機的 Claude Code 也會跟著用"))
         }
         .padding(.top, 2)
     }
 
     private var modelList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("選取模型").font(.system(size: 14)).foregroundStyle(.secondary)
+            Text(L("選取模型")).font(.system(size: 14)).foregroundStyle(.secondary)
                 .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 8)
             HStack {
-                Text("當前模型").font(.system(size: 15, weight: .semibold))
+                Text(L("當前模型")).font(.system(size: 15, weight: .semibold))
                 Spacer()
                 Text(m.currentText).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -227,7 +227,7 @@ struct ModelPanel: View {
                     if m.shownTab == .local {
                         Divider().opacity(0.4).padding(.vertical, 4).padding(.horizontal, 12)
                         Button(action: { m.onLocalSettings?() }) {
-                            Text("設定本機模型…").font(.system(size: 14)).foregroundStyle(.secondary)
+                            Text(L("設定本機模型…")).font(.system(size: 14)).foregroundStyle(.secondary)
                                 .padding(.horizontal, 18).padding(.vertical, 7)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
@@ -279,7 +279,7 @@ struct ModelPanel: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(t == .local ? "本機模型" : t.title + " 的模型")
+                .help(t == .local ? L("本機模型") : L("\(t.title) 的模型"))
             }
             Spacer(minLength: 0)
         }

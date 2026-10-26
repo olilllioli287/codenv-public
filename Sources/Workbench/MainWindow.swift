@@ -152,9 +152,9 @@ final class MainWindowController: NSWindowController {
             guard let self else { return [:] }
             var out: [pid_t: String] = [:]
             for (id, p) in self.workspace.panes {
-                let title = self.store.conversation(id)?.title ?? "聊天室"
+                let title = self.store.conversation(id)?.title ?? L("聊天室")
                 if let c = p as? ChatPane, let pid = c.session.pid { out[pid] = title }
-                else if let t = p as? TerminalPane, t.terminal.process.shellPid > 0 { out[t.terminal.process.shellPid] = title + "（終端機）" }
+                else if let t = p as? TerminalPane, t.terminal.process.shellPid > 0 { out[t.terminal.process.shellPid] = title + L("（終端機）") }
             }
             return out
         }
@@ -231,21 +231,21 @@ final class MainWindowController: NSWindowController {
 
     func confirmClosePane() {
         guard let f = store.currentWindow?.focused else { return }
-        confirm("關掉這格？", "「\(store.conversation(f)?.title ?? "")」會留在側欄，之後可以再打開。") { [weak self] in self?.store.closePane() }
+        confirm(L("關掉這格？"), L("「\(store.conversation(f)?.title ?? "")」會留在側欄，之後可以再打開。")) { [weak self] in self?.store.closePane() }
     }
 
     func confirmCloseWindow() {
         guard let w = store.currentWindow else { return }
-        confirm("關掉整個 Window「\(store.displayName(w))」？", "裡面的對話都會留在側欄。") { [weak self] in self?.store.closeWindow() }
+        confirm(L("關掉整個 Window「\(store.displayName(w))」？"), L("裡面的對話都會留在側欄。")) { [weak self] in self?.store.closeWindow() }
     }
 
     func renameWindow() {
         guard let w = store.currentWindow else { return }
-        ask("Window 新名字", current: w.renamed ? w.name : "") { [weak self] t in self?.store.renameWindow(t) }
+        ask(L("Window 新名字"), current: w.renamed ? w.name : "") { [weak self] t in self?.store.renameWindow(t) }
     }
 
     func renameSession() {
-        ask("Session 新名字", current: store.currentSessionLayout?.name ?? "") { [weak self] t in self?.store.renameSession(t) }
+        ask(L("Session 新名字"), current: store.currentSessionLayout?.name ?? "") { [weak self] t in self?.store.renameSession(t) }
     }
 
     /// Ctrl+A s／w：列出所有 Session 和 Window 來選（像 tmux 的 choose-tree）
@@ -350,14 +350,14 @@ final class MainWindowController: NSWindowController {
             }
         }
         m.addItem(.separator())
-        let new = NSMenuItem(title: "新 Session…", action: #selector(newSessionAction), keyEquivalent: "")
+        let new = NSMenuItem(title: L("新 Session…"), action: #selector(newSessionAction), keyEquivalent: "")
         new.target = self
         m.addItem(new)
-        let ren = NSMenuItem(title: "幫這個 Session 改名…（Ctrl+A $）", action: #selector(renameSessionAction), keyEquivalent: "")
+        let ren = NSMenuItem(title: L("幫這個 Session 改名…（Ctrl+A $）"), action: #selector(renameSessionAction), keyEquivalent: "")
         ren.target = self
         m.addItem(ren)
         if store.areaSessions.count > 1 {
-            let close = NSMenuItem(title: "關掉這個 Session（對話留在側欄）", action: #selector(closeSessionAction), keyEquivalent: "")
+            let close = NSMenuItem(title: L("關掉這個 Session（對話留在側欄）"), action: #selector(closeSessionAction), keyEquivalent: "")
             close.target = self
             m.addItem(close)
         }
@@ -371,7 +371,7 @@ final class MainWindowController: NSWindowController {
         store.selectSession(ids[0])
     }
     @objc private func newSessionAction() {
-        ask("新 Session 的名字", current: "") { [weak self] t in
+        ask(L("新 Session 的名字"), current: "") { [weak self] t in
             guard let self else { return }
             self.store.newSession(named: t)
             if let pid = self.currentProject { let c = self.store.createConversation(in: pid); self.store.show(c.id) }
@@ -379,7 +379,7 @@ final class MainWindowController: NSWindowController {
     }
     @objc private func renameSessionAction() { renameSession() }
     @objc private func closeSessionAction() {
-        confirm("關掉 Session「\(store.currentSessionLayout?.name ?? "")」？", "裡面的對話都會留在側欄。") { [weak self] in self?.store.closeSession() }
+        confirm(L("關掉 Session「\(store.currentSessionLayout?.name ?? "")」？"), L("裡面的對話都會留在側欄。")) { [weak self] in self?.store.closeSession() }
     }
 
     /// Ctrl+A Ctrl+A：中文指令選單（跟 tmux-kit 的選單一樣的意思）
@@ -387,29 +387,29 @@ final class MainWindowController: NSWindowController {
         guard let v = window?.contentView else { return }
         let m = NSMenu()
         let items: [(String, String, () -> Void)] = [
-            ("往右切開（空的格子）", "|", { [weak self] in self?.split(vertical: false) }),
-            ("往下切開（空的格子）", "-", { [weak self] in self?.split(vertical: true) }),
-            ("關掉這格", "x", { [weak self] in self?.confirmClosePane() }),
-            ("放大／還原這格", "z", { [weak self] in self?.store.toggleZoom() }),
-            ("新 Window", "c", { [weak self] in self?.newWindow() }),
-            ("下一個 Window", "n", { [weak self] in self?.store.selectWindow(offset: 1) }),
-            ("上一個 Window", "p", { [weak self] in self?.store.selectWindow(offset: -1) }),
-            ("幫 Window 改名", ",", { [weak self] in self?.renameWindow() }),
-            ("關掉整個 Window", "&", { [weak self] in self?.confirmCloseWindow() }),
-            ("列出 Session 和 Window", "s", { [weak self] in self?.showTree() }),
-            ("幫 Session 改名", "$", { [weak self] in self?.renameSession() }),
-            ("新 Session", "", { [weak self] in self?.newSessionAction() }),
-            ("開／關右下角的桌寵位置", "b", { PetSlot.enabled.toggle() }),
-            ("視窗整理（設定）", "", { [weak self] in self?.openSettings() }),
+            (L("往右切開（空的格子）"), "|", { [weak self] in self?.split(vertical: false) }),
+            (L("往下切開（空的格子）"), "-", { [weak self] in self?.split(vertical: true) }),
+            (L("關掉這格"), "x", { [weak self] in self?.confirmClosePane() }),
+            (L("放大／還原這格"), "z", { [weak self] in self?.store.toggleZoom() }),
+            (L("新 Window"), "c", { [weak self] in self?.newWindow() }),
+            (L("下一個 Window"), "n", { [weak self] in self?.store.selectWindow(offset: 1) }),
+            (L("上一個 Window"), "p", { [weak self] in self?.store.selectWindow(offset: -1) }),
+            (L("幫 Window 改名"), ",", { [weak self] in self?.renameWindow() }),
+            (L("關掉整個 Window"), "&", { [weak self] in self?.confirmCloseWindow() }),
+            (L("列出 Session 和 Window"), "s", { [weak self] in self?.showTree() }),
+            (L("幫 Session 改名"), "$", { [weak self] in self?.renameSession() }),
+            (L("新 Session"), "", { [weak self] in self?.newSessionAction() }),
+            (L("開／關右下角的桌寵位置"), "b", { PetSlot.enabled.toggle() }),
+            (L("視窗整理（設定）"), "", { [weak self] in self?.openSettings() }),
         ]
         for (t, k, f) in items {
-            let item = NSMenuItem(title: k.isEmpty ? t : "\(t)　　Ctrl+A \(k)", action: #selector(runBlock(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: k.isEmpty ? t : L("\(t)　　Ctrl+A \(k)"), action: #selector(runBlock(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = BlockBox(f)
             m.addItem(item)
         }
         m.addItem(.separator())
-        let hint = m.addItem(withTitle: "換格 Ctrl+A h j k l　調大小 Ctrl+A Ctrl+h j k l　第幾個 Window Ctrl+A 1～9", action: nil, keyEquivalent: "")
+        let hint = m.addItem(withTitle: L("換格 Ctrl+A h j k l　調大小 Ctrl+A Ctrl+h j k l　第幾個 Window Ctrl+A 1～9"), action: nil, keyEquivalent: "")
         hint.isEnabled = false
         m.popUp(positioning: nil, at: NSPoint(x: v.bounds.midX - 160, y: v.bounds.midY + 180), in: v)
     }
@@ -490,13 +490,13 @@ final class MainWindowController: NSWindowController {
 
     // MARK: 小對話框（Enter 確定、Esc 取消；輸入法開著也能按）
 
-    func confirm(_ title: String, _ info: String, button: String = "關掉", _ ok: @escaping () -> Void) {
+    func confirm(_ title: String, _ info: String, button: String = L("關掉"), _ ok: @escaping () -> Void) {
         guard let window else { return }
         let a = NSAlert()
         a.messageText = title
         a.informativeText = info
         a.addButton(withTitle: button)
-        a.addButton(withTitle: "取消")
+        a.addButton(withTitle: L("取消"))
         a.beginSheetModal(for: window) { r in if r == .alertFirstButtonReturn { ok() } }
     }
 
@@ -507,8 +507,8 @@ final class MainWindowController: NSWindowController {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         field.stringValue = current
         a.accessoryView = field
-        a.addButton(withTitle: "好")
-        a.addButton(withTitle: "取消")
+        a.addButton(withTitle: L("好"))
+        a.addButton(withTitle: L("取消"))
         a.window.initialFirstResponder = field
         a.beginSheetModal(for: window) { r in if r == .alertFirstButtonReturn { done(field.stringValue) } }
     }
@@ -520,8 +520,8 @@ final class MainWindowController: NSWindowController {
         p.canChooseDirectories = true
         p.canChooseFiles = false
         p.allowsMultipleSelection = false
-        p.message = "選一個資料夾當專案（對話會在這個資料夾裡開 Claude Code）"
-        p.prompt = "加入專案"
+        p.message = L("選一個資料夾當專案（對話會在這個資料夾裡開 Claude Code）")
+        p.prompt = L("加入專案")
         p.directoryURL = Edition.projectsRoot
         guard let window else { return }
         p.beginSheetModal(for: window) { [weak self] r in
@@ -536,7 +536,7 @@ final class MainWindowController: NSWindowController {
     /// 壓縮這段對話（/compact）：先確認，因為很早以前的細節之後只剩摘要
     func compact(_ id: UUID) {
         guard let c = store.conversation(id), c.terminal != true, !c.isBrowser else { return }
-        confirm("壓縮「\(c.title)」？", "Claude 會把前面的內容濃縮成一份摘要，之後每一輪會快很多、也比較省額度。很早以前的細節之後只剩摘要（原本的紀錄檔還在，不會刪）。", button: "壓縮") { [weak self] in
+        confirm(L("壓縮「\(c.title)」？"), L("Claude 會把前面的內容濃縮成一份摘要，之後每一輪會快很多、也比較省額度。很早以前的細節之後只剩摘要（原本的紀錄檔還在，不會刪）。"), button: L("壓縮")) { [weak self] in
             guard let self, let pane = self.workspace.pane(for: c) as? ChatPane else { return }
             self.store.show(id)
             pane.compact()
@@ -550,9 +550,9 @@ final class MainWindowController: NSWindowController {
     func handoff(_ id: UUID) {
         guard let c = store.conversation(id), c.terminal != true, !c.isBrowser, !handingOff.contains(id), let dir = store.project(c.projectID)?.path else { return }
         guard Store.claudeHasSession(c.claudeSession, path: dir) else {
-            return confirm("「\(c.title)」還沒有對話紀錄", "先跟 Claude 聊幾句再交接。", button: "好") {}
+            return confirm(L("「\(c.title)」還沒有對話紀錄"), L("先跟 Claude 聊幾句再交接。"), button: L("好")) {}
         }
-        confirm("交接「\(c.title)」？", "Claude 會讀完這段對話寫一份交接（大約半分鐘到幾分鐘，會用到額度），寫好後開一個新聊天室、把交接當第一則訊息送出，新的沿用這個名字、畫面上這一格換成新的。原本的對話改名成「今天日期_原名稱」收進封存（側欄上面的封存按鈕看得到），紀錄不會改。", button: "交接") { [weak self] in
+        confirm(L("交接「\(c.title)」？"), L("Claude 會讀完這段對話寫一份交接（大約半分鐘到幾分鐘，會用到額度），寫好後開一個新聊天室、把交接當第一則訊息送出，新的沿用這個名字、畫面上這一格換成新的。原本的對話改名成「今天日期_原名稱」收進封存（側欄上面的封存按鈕看得到），紀錄不會改。"), button: L("交接")) { [weak self] in
             self?.startHandoff(c, directory: dir)
         }
     }
@@ -560,14 +560,14 @@ final class MainWindowController: NSWindowController {
     func startHandoff(_ c: Conversation, directory: String) {
         handingOff.insert(c.id)
         let oldPane = workspace.panes[c.id] as? ChatPane
-        oldPane?.notice("正在寫交接…（寫好會開新聊天室，這一格換成新的）")
+        oldPane?.notice(L("正在寫交接…（寫好會開新聊天室，這一格換成新的）"))
         Handoff.write(session: c.claudeSession, directory: directory, model: c.model, effort: c.effort) { [weak self] r in
             guard let self else { return }
             self.handingOff.remove(c.id)
             switch r {
             case .failure(let e):
-                if let p = self.workspace.panes[c.id] as? ChatPane { p.notice("交接沒寫成：\(e.message)") }
-                else { self.confirm("交接沒寫成", e.message, button: "好") {} }
+                if let p = self.workspace.panes[c.id] as? ChatPane { p.notice(L("交接沒寫成：\(e.message)")) }
+                else { self.confirm(L("交接沒寫成"), e.message, button: L("好")) {} }
             case .success(let text):
                 guard let old = self.store.conversation(c.id) else { return }
                 var n = self.store.createConversation(in: old.projectID)
@@ -626,12 +626,12 @@ final class MainWindowController: NSWindowController {
         let busy = convs.filter { store.status[$0.id] != nil || live[$0.claudeSession] != nil }
         let targets = convs.filter { c in !busy.contains { $0.id == c.id } }
         guard !targets.isEmpty else {
-            confirm("沒有可以刪的", "選的對話都還在跑（工作台或終端機裡），先停下來再刪。", button: "好") {}
+            confirm(L("沒有可以刪的"), L("選的對話都還在跑（工作台或終端機裡），先停下來再刪。"), button: L("好")) {}
             return
         }
-        let names = targets.prefix(5).map { "・\($0.title)" }.joined(separator: "\n") + (targets.count > 5 ? "\n…還有 \(targets.count - 5) 段" : "")
-        let skip = busy.isEmpty ? "" : "\n\n（\(busy.count) 段正在跑，先跳過）"
-        confirm("刪除 \(targets.count) 段對話？", "\(names)\n\nClaude 的紀錄檔會丟進垃圾桶，需要時可以從垃圾桶救回。\(skip)", button: "丟進垃圾桶") { [weak self] in
+        let names = targets.prefix(5).map { L("・\($0.title)") }.joined(separator: "\n") + (targets.count > 5 ? L("\n…還有 \(targets.count - 5) 段") : "")
+        let skip = busy.isEmpty ? "" : L("\n\n（\(busy.count) 段正在跑，先跳過）")
+        confirm(L("刪除 \(targets.count) 段對話？"), L("\(names)\n\nClaude 的紀錄檔會丟進垃圾桶，需要時可以從垃圾桶救回。\(skip)"), button: L("丟進垃圾桶")) { [weak self] in
             guard let self else { return }
             for c in targets {
                 let path = self.store.project(c.projectID)?.path ?? NSHomeDirectory()
@@ -681,8 +681,8 @@ extension MainWindowController {
                 skipped.append(title)
             }
         }
-        var n = stopped.isEmpty ? "" : "已停止：" + stopped.joined(separator: "、") + "。"
-        if !skipped.isEmpty { n += "沒在 codenv 開著、沒動：" + skipped.joined(separator: "、") + "。" }
+        var n = stopped.isEmpty ? "" : L("已停止：\(stopped.joined(separator: "、"))。")
+        if !skipped.isEmpty { n += L("沒在 codenv 開著、沒動：\(skipped.joined(separator: "、"))。") }
         CollabBoardModel.shared.notice = n
         CollabBoardModel.shared.dismissed[p.id] = p.count
     }
@@ -697,15 +697,15 @@ extension MainWindowController {
         let args = CommandLine.arguments
         let fake = args.firstIndex(of: "--schedule-fake-send").flatMap { args.contains("--state-dir") && $0 + 1 < args.count ? args[$0 + 1] : nil }
         sched.deliver = { [weak self] s, message, _ in
-            guard let self, let c = self.store.conversation(s.conversation) else { return "失敗：對話已經刪掉了" }
-            if c.terminal == true { return "失敗：這段對話用終端機打開，排程只能送聊天介面" }
-            if c.isBrowser { return "失敗：這是瀏覽器格子，排程只能送聊天介面" }
+            guard let self, let c = self.store.conversation(s.conversation) else { return L("失敗：對話已經刪掉了") }
+            if c.terminal == true { return L("失敗：這段對話用終端機打開，排程只能送聊天介面") }
+            if c.isBrowser { return L("失敗：這是瀏覽器格子，排程只能送聊天介面") }
             let open = self.workspace.panes[c.id] as? ChatPane
             if open == nil {
-                if s.whenClosed == "wait" { return "等待" }
-                if s.whenClosed == "skip" { return "跳過：聊天室沒開著" }
+                if s.whenClosed == "wait" { return L("等待") }
+                if s.whenClosed == "skip" { return L("跳過：聊天室沒開著") }
             }
-            guard let p = open ?? self.workspace.pane(for: c) as? ChatPane else { return "失敗：聊天室開不起來" }
+            guard let p = open ?? self.workspace.pane(for: c) as? ChatPane else { return L("失敗：聊天室開不起來") }
             if let fake {
                 let line = "[\(c.title)] opened=\(open != nil) \(message.replacingOccurrences(of: "\n", with: "⏎"))\n"
                 if let h = FileHandle(forWritingAtPath: fake) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); h.closeFile() }

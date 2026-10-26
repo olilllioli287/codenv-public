@@ -78,18 +78,18 @@ struct OrganizerView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) {
-                Text("對話").tag(0)
-                Text("資料夾").tag(1)
+                Text(L("對話")).tag(0)
+                Text(L("資料夾")).tag(1)
             }
             .pickerStyle(.segmented).labelsHidden().frame(width: 220).padding(.top, 12).padding(.bottom, 8)
             if tab == 0 { conversationsTab } else { foldersTab }
         }
         .frame(minWidth: 760, minHeight: 460)
         .onAppear { model.loadSizes(store) }
-        .alert("重新命名對話", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("名稱", text: $renameText)
-            Button("好") { if let r = renaming { store.rename(r, to: renameText, byUser: true) }; renaming = nil }
-            Button("取消", role: .cancel) { renaming = nil }
+        .alert(L("重新命名對話"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField(L("名稱"), text: $renameText)
+            Button(L("好")) { if let r = renaming { store.rename(r, to: renameText, byUser: true) }; renaming = nil }
+            Button(L("取消"), role: .cancel) { renaming = nil }
         }
     }
 
@@ -99,34 +99,34 @@ struct OrganizerView: View {
         let list = rows
         return VStack(spacing: 0) {
             HStack(spacing: 10) {
-                TextField("搜尋標題或資料夾", text: $search).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
+                TextField(L("搜尋標題或資料夾"), text: $search).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
                 Picker("", selection: $filter) {
-                    Text("全部").tag("all")
-                    Text("沒封存的").tag("active")
-                    Text("封存的").tag("archived")
-                    Text("空的（沒傳過訊息）").tag("empty")
+                    Text(L("全部")).tag("all")
+                    Text(L("沒封存的")).tag("active")
+                    Text(L("封存的")).tag("archived")
+                    Text(L("空的（沒傳過訊息）")).tag("empty")
                     Divider()
                     ForEach(store.groupTree(), id: \.group.id) { t in Text(store.groupPath(t.group.id)).tag(t.group.id.uuidString) }
                 }
                 .labelsHidden().frame(width: 150)
                 Spacer()
-                Text("\(list.count) 段" + (selection.isEmpty ? "" : "，選了 \(selection.count) 段")).foregroundStyle(.secondary)
+                Text(L("\(list.count) 段") + (selection.isEmpty ? "" : L("，選了 \(selection.count) 段"))).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 14).padding(.bottom, 8)
 
             Table(list, selection: $selection, sortOrder: $sortOrder) {
-                TableColumn("標題", value: \.title) { r in
+                TableColumn(L("標題"), value: \.title) { r in
                     HStack(spacing: 6) {
                         if r.busy { Circle().fill(Color.blue).frame(width: 6, height: 6) }
                         Text(r.title).lineLimit(1).foregroundStyle(r.archived ? .secondary : .primary)
                     }
                 }
                 .width(min: 180, ideal: 320)
-                TableColumn("組", value: \.group) { r in Text(r.group).lineLimit(1) }.width(min: 70, ideal: 110)
-                TableColumn("資料夾", value: \.folder) { r in Text(r.folder).lineLimit(1).truncationMode(.head).foregroundStyle(.secondary) }.width(min: 90, ideal: 230)
-                TableColumn("最後使用", value: \.lastUsed) { r in Text(Self.relative(r.lastUsed)).foregroundStyle(.secondary) }.width(min: 70, ideal: 90)
-                TableColumn("紀錄大小", value: \.size) { r in Text(Self.bytes(r.size)).monospacedDigit().foregroundStyle(.secondary) }.width(min: 60, ideal: 75)
-                TableColumn("封存", value: \.archivedKey) { r in Text(r.archived ? "封存" : "").foregroundStyle(.secondary) }.width(min: 40, ideal: 50)
+                TableColumn(L("組"), value: \.group) { r in Text(r.group).lineLimit(1) }.width(min: 70, ideal: 110)
+                TableColumn(L("資料夾"), value: \.folder) { r in Text(r.folder).lineLimit(1).truncationMode(.head).foregroundStyle(.secondary) }.width(min: 90, ideal: 230)
+                TableColumn(L("最後使用"), value: \.lastUsed) { r in Text(Self.relative(r.lastUsed)).foregroundStyle(.secondary) }.width(min: 70, ideal: 90)
+                TableColumn(L("紀錄大小"), value: \.size) { r in Text(Self.bytes(r.size)).monospacedDigit().foregroundStyle(.secondary) }.width(min: 60, ideal: 75)
+                TableColumn(L("封存"), value: \.archivedKey) { r in Text(r.archived ? L("封存") : "").foregroundStyle(.secondary) }.width(min: 40, ideal: 50)
             }
             .contextMenu(forSelectionType: UUID.self) { ids in
                 actions(for: ids)
@@ -135,20 +135,20 @@ struct OrganizerView: View {
             }
 
             HStack(spacing: 10) {
-                Menu("移到…") {
+                Menu(L("移到…")) {
                     ForEach(store.groupTree(), id: \.group.id) { t in Button(store.groupPath(t.group.id)) { for id in selection { store.move(id, toGroup: t.group.id) } } }
                 }
                 .fixedSize()
-                Button("封存") { for id in selection { store.setArchived(id, true) } }
-                Button("取消封存") { for id in selection { store.setArchived(id, false) } }
-                Button("重新命名…") { if let id = selection.first, let c = store.conversation(id) { renameText = c.title; renaming = id } }
+                Button(L("封存")) { for id in selection { store.setArchived(id, true) } }
+                Button(L("取消封存")) { for id in selection { store.setArchived(id, false) } }
+                Button(L("重新命名…")) { if let id = selection.first, let c = store.conversation(id) { renameText = c.title; renaming = id } }
                     .disabled(selection.count != 1)
                 Spacer()
-                Button("刪除…", role: .destructive) { delete(Array(selection)); selection = selection.filter { store.conversation($0) != nil } }
+                Button(L("刪除…"), role: .destructive) { delete(Array(selection)); selection = selection.filter { store.conversation($0) != nil } }
             }
             .disabled(selection.isEmpty)
             .padding(12)
-            Text("點兩下打開。刪除會把 Claude 的紀錄檔丟進垃圾桶（可以從垃圾桶救回）；正在跑的不會刪。")
+            Text(L("點兩下打開。刪除會把 Claude 的紀錄檔丟進垃圾桶（可以從垃圾桶救回）；正在跑的不會刪。"))
                 .font(.caption).foregroundStyle(.secondary).padding(.bottom, 10)
         }
     }
@@ -156,15 +156,15 @@ struct OrganizerView: View {
     @ViewBuilder
     private func actions(for ids: Set<UUID>) -> some View {
         if ids.count == 1, let id = ids.first {
-            Button("打開") { open(id) }
-            Button("重新命名…") { if let c = store.conversation(id) { renameText = c.title; renaming = id } }
+            Button(L("打開")) { open(id) }
+            Button(L("重新命名…")) { if let c = store.conversation(id) { renameText = c.title; renaming = id } }
             Divider()
         }
-        Menu("移到…") { ForEach(store.groupTree(), id: \.group.id) { t in Button(store.groupPath(t.group.id)) { for id in ids { store.move(id, toGroup: t.group.id) } } } }
-        Button("封存") { for id in ids { store.setArchived(id, true) } }
-        Button("取消封存") { for id in ids { store.setArchived(id, false) } }
+        Menu(L("移到…")) { ForEach(store.groupTree(), id: \.group.id) { t in Button(store.groupPath(t.group.id)) { for id in ids { store.move(id, toGroup: t.group.id) } } } }
+        Button(L("封存")) { for id in ids { store.setArchived(id, true) } }
+        Button(L("取消封存")) { for id in ids { store.setArchived(id, false) } }
         Divider()
-        Button("刪除…", role: .destructive) { delete(Array(ids)) }
+        Button(L("刪除…"), role: .destructive) { delete(Array(ids)) }
     }
 
     // MARK: 資料夾
@@ -180,16 +180,16 @@ struct OrganizerView: View {
                         Text(ClaudeEnvs.tilde(p.path)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     }
                     Spacer()
-                    Text("\(n) 段").foregroundStyle(.secondary).monospacedDigit()
+                    Text(L("\(n) 段")).foregroundStyle(.secondary).monospacedDigit()
                     if !store.groups.isEmpty {
-                        Picker("新對話放在", selection: Binding(get: { p.groupID ?? store.fallbackGroupID ?? UUID() }, set: { store.setDefaultGroup(p.id, to: $0) })) {
+                        Picker(L("新對話放在"), selection: Binding(get: { p.groupID ?? store.fallbackGroupID ?? UUID() }, set: { store.setDefaultGroup(p.id, to: $0) })) {
                             ForEach(store.groupTree(), id: \.group.id) { t in Text(store.groupPath(t.group.id)).tag(t.group.id) }
                         }
                         .frame(width: 190)
                     }
                     Button("Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: p.path) }
                     Button(role: .destructive) { removeFolder(p.id) } label: { Image(systemName: "minus.circle") }
-                        .buttonStyle(.borderless).help("從側欄和 claude 選單清單移除（不會刪資料夾，也不會刪對話紀錄）")
+                        .buttonStyle(.borderless).help(L("從側欄和 claude 選單清單移除（不會刪資料夾，也不會刪對話紀錄）"))
                 }
                 .padding(.vertical, 3)
             }
@@ -198,9 +198,9 @@ struct OrganizerView: View {
 
     static func relative(_ d: Date) -> String {
         let t = Date().timeIntervalSince(d)
-        if t < 3600 { return "\(max(1, Int(t / 60))) 分鐘前" }
-        if t < 86400 { return "\(Int(t / 3600)) 小時前" }
-        if t < 86400 * 60 { return "\(Int(t / 86400)) 天前" }
+        if t < 3600 { return L("\(max(1, Int(t / 60))) 分鐘前") }
+        if t < 86400 { return L("\(Int(t / 3600)) 小時前") }
+        if t < 86400 * 60 { return L("\(Int(t / 86400)) 天前") }
         let f = DateFormatter(); f.dateFormat = "yyyy/M/d"
         return f.string(from: d)
     }
@@ -220,7 +220,7 @@ final class OrganizerWindowController: NSWindowController {
     let model = OrganizerModel()
     init(store: Store, open: @escaping (UUID) -> Void, delete: @escaping ([UUID]) -> Void, removeFolder: @escaping (UUID) -> Void) {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        w.title = "整理對話"
+        w.title = L("整理對話")
         w.isReleasedWhenClosed = false
         w.setFrameAutosaveName(appDefaults === UserDefaults.standard ? "OrganizerWindow" : "")
         super.init(window: w)

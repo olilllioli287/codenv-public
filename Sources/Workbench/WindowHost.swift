@@ -34,12 +34,12 @@ final class PaneFrame: NSView {
         header.textColor = .secondaryLabelColor
         header.lineBreakMode = .byTruncatingTail
         closeButton.isBordered = false
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "關掉這格")?.withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L("關掉這格"))?.withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
         closeButton.contentTintColor = .tertiaryLabelColor
         closeButton.target = self
         closeButton.action = #selector(close)
-        closeButton.toolTip = "關掉這格（Ctrl+A x）；對話會留在側欄"
-        grip.toolTip = "按住標題拖到上面的分頁列：變成新的分頁"
+        closeButton.toolTip = L("關掉這格（Ctrl+A x）；對話會留在側欄")
+        grip.toolTip = L("按住標題拖到上面的分頁列：變成新的分頁")
         grip.onDrag = { [weak self] ph, p in self?.onHeaderDrag?(ph, p) }
         grip.onClick = { [weak self] in self?.onHeaderClick?() }
         addSubview(content)
@@ -425,26 +425,26 @@ final class TabBar: NSView {
         wantsLayer = true
         // 收起／打開左邊的側欄（⌃ ⌘ S）：聊天區太擠的時候整條收到最左邊
         sideButton.isBordered = false
-        sideButton.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "側欄")?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+        sideButton.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: L("側欄"))?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
         sideButton.contentTintColor = .secondaryLabelColor
         sideButton.target = self
         sideButton.action = #selector(toggleSidebar)
-        sideButton.toolTip = "收起／打開側欄（⌃ ⌘ S）"
+        sideButton.toolTip = L("收起／打開側欄（⌃ ⌘ S）")
         addSubview(sideButton)
-        dragHandle.toolTip = "按住拖動視窗，點兩下放大"
+        dragHandle.toolTip = L("按住拖動視窗，點兩下放大")
         addSubview(dragHandle)
         sessionButton.bezelStyle = .inline
         sessionButton.isBordered = false
         sessionButton.target = self
         sessionButton.action = #selector(showSessions)
-        sessionButton.toolTip = "換 Session（Ctrl+A s）"
+        sessionButton.toolTip = L("換 Session（Ctrl+A s）")
         addSubview(sessionButton)
         plus.isBordered = false
-        plus.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新 Window")?.withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
+        plus.image = NSImage(systemSymbolName: "plus", accessibilityDescription: L("新 Window"))?.withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
         plus.contentTintColor = .secondaryLabelColor
         plus.target = self
         plus.action = #selector(newTab)
-        plus.toolTip = "新 Window（Ctrl+A c）"
+        plus.toolTip = L("新 Window（Ctrl+A c）")
         addSubview(plus)
         tearGhost.isHidden = true
         addSubview(tearGhost)
@@ -506,7 +506,7 @@ final class TabBar: NSView {
         buttons.forEach { $0.removeFromSuperview() }
         buttons = tabs.enumerated().map { i, t in
             let b = TabButton(index: i, title: t.isEmpty ? "[\(i + 1)]" : "[\(i + 1)] \(t)", selected: i == current, accent: accent)
-            b.toolTip = "點兩下改名（Ctrl+A ,）"
+            b.toolTip = L("點兩下改名（Ctrl+A ,）")
             b.onClick = { [weak self] in self?.onSelect?(i) }
             b.onDoubleClick = { [weak self] in self?.onRename?(i) }
             b.onClose = { [weak self] in self?.onClose?(i) }
@@ -663,7 +663,7 @@ final class TabBar: NSView {
 /// 分頁列最後面的「＋ 名字」虛線預覽
 /// 標題拖到另一格上面時蓋在那格的提示：淡淡的底色＋框＋「放開＝互換位置」
 private final class SwapMark: NSView {
-    private let label = NSTextField(labelWithString: "放開＝互換位置")
+    private let label = NSTextField(labelWithString: L("放開＝互換位置"))
     init(accent: NSColor) {
         super.init(frame: .zero)
         wantsLayer = true
@@ -732,11 +732,11 @@ private final class TabButton: NSView {
         label.lineBreakMode = .byTruncatingTail
         addSubview(label)
         x.isBordered = false
-        x.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "關掉這個 Window")?.withSymbolConfiguration(.init(pointSize: 9, weight: .medium))
+        x.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L("關掉這個 Window"))?.withSymbolConfiguration(.init(pointSize: 9, weight: .medium))
         x.contentTintColor = .tertiaryLabelColor
         x.target = self
         x.action = #selector(closeTab)
-        x.toolTip = "關掉這個 Window（Ctrl+A &）"
+        x.toolTip = L("關掉這個 Window（Ctrl+A &）")
         x.isHidden = !selected
         addSubview(x)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
@@ -805,7 +805,7 @@ final class WindowHost: NSViewController {
     let workspace: Workspace
     let tabBar = TabBar()
     private let body = NSView()
-    private let placeholder = NSTextField(labelWithString: "左邊選一個對話，或按「新對話」（⌘ N）")
+    private let placeholder = NSTextField(labelWithString: L("左邊選一個對話，或按「新對話」（⌘ N）"))
     private var frames: [UUID: PaneFrame] = [:]
     private var shownKey = ""
     private var bag: Set<AnyCancellable> = []

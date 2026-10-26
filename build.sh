@@ -28,6 +28,8 @@ rsync -a Resources/codelab "$APP/Contents/Resources/"
 # 程式碼學習專區的 compat（Windows 寫的程式在 Mac 上也能跑；CodeRunner.swift 用）
 rm -rf "$APP/Contents/Resources/compat"
 rsync -a Resources/compat "$APP/Contents/Resources/"
+rm -rf "$APP/Contents/Resources/i18n"
+rsync -a Resources/i18n "$APP/Contents/Resources/"   # 英文介面的對照表（I18n.swift 用）
 rm -rf "$APP/Contents/Resources/icons"
 rsync -a Resources/icons "$APP/Contents/Resources/"   # 模型選單分頁的圖示（Claude、Gemini）
 

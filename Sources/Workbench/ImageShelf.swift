@@ -175,9 +175,9 @@ final class ImageShelfOverlay: NSView {
             tile.layer?.borderColor = (item.edited ? NSColor.systemOrange : (isLight ? NSColor.black.withAlphaComponent(0.25) : NSColor.white.withAlphaComponent(0.35))).cgColor
             tile.layer?.masksToBounds = true
             let name = item.label ?? "#\(item.n)"
-            tile.toolTip = "\(item.label ?? "Image #\(item.n)")：點一下標註"
+            tile.toolTip = L("\(item.label ?? "Image #\(item.n)")：點一下標註")
             content.addSubview(tile)
-            let badge = NSTextField(labelWithString: item.edited ? " \(name) 已編輯 " : " \(name) ")
+            let badge = NSTextField(labelWithString: item.edited ? L(" \(name) 已編輯 ") : " \(name) ")
             badge.font = .boldSystemFont(ofSize: m.tileRows <= 2 ? 9 : 11)
             badge.textColor = .white
             badge.drawsBackground = true

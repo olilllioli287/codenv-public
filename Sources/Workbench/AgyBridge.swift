@@ -160,7 +160,7 @@ final class AgyBridge {
             let ok = r["status"] as? String == "SUCCESS"
             var out: [String: Any] = ["type": "result", "subtype": ok ? "success" : "error_during_execution", "is_error": !ok,
                                       "duration_ms": Int(Date().timeIntervalSince(started) * 1000)]   // agy 自己算的會把排隊等待也算進去
-            if !ok { out["result"] = (r["error"] as? String).map { "Gemini：" + $0 } ?? "Gemini 回報錯誤" }
+            if !ok { out["result"] = (r["error"] as? String).map { L("Gemini：") + $0 } ?? L("Gemini 回報錯誤") }
             // 有時候被拒的工具步驟照樣回「完成」，只在結果裡列出被拒的動作：卡片標回「沒有權限」
             var notes: [[String: Any]] = []
             for a in (r["denied_actions"] as? [[String: Any]] ?? []).compactMap({ $0["action"] as? String }) {
@@ -274,7 +274,7 @@ final class AgyBridge {
         if !deniedHint {
             deniedHint = true
             out.append(["type": "system", "subtype": "permission_denied",
-                        "tool_name": "\(raw)。agy 不能跳出詢問：要讓它改檔，按 ⇧ Tab 換成「改檔不問」；連指令也要跑，換成「自動」（下一則訊息生效）"])
+                        "tool_name": L("\(raw)。agy 不能跳出詢問：要讓它改檔，按 ⇧ Tab 換成「改檔不問」；連指令也要跑，換成「自動」（下一則訊息生效）")])
         }
         return out
     }

@@ -74,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         Prefs.shared.applyAppearance()
         UpdateCheck.shared.start(directory: store.directory)
+        I18n.startDumpIfAsked()
         if args.contains("--state-dir"), let i = args.firstIndex(of: "--feedback-dump"), i + 1 < args.count {
             let log = args.firstIndex(of: "--feedback-log").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
             Feedback.dump(to: args[i + 1], logFile: log)
@@ -1304,6 +1305,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
             }
         }
+        // --settings-snapshot "秒數:頁:檔案"：打開設定視窗（頁＝windows、chat、appearance、pet、keys、local、schedules、data）拍成 PNG。測英文介面有沒有漏翻用
+        for (i, a) in args.enumerated() where a == "--settings-snapshot" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 2).map(String.init)
+            guard parts.count == 3, let sec = Double(parts[0]) else { continue }
+            let tab = parts[1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                appDefaults.set(tab, forKey: "settingsTab")      // 測試實例的偏好，不是正式的
+                self?.showSettings()
+                guard let w = self?.settings?.window else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    guard let v = w.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                    v.cacheDisplay(in: v.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: parts[2]))
+                }
+            }
+        }
         // --web-snapshot "秒數:檔案"：目前聊天室的網頁拍成 PNG（背景測試時 screencapture 拍不到網頁內容）
         for (i, a) in args.enumerated() where a == "--web-snapshot" && i + 1 < args.count {
             let parts = args[i + 1].split(separator: ":", maxSplits: 1)
@@ -1351,10 +1368,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let busy = store.status.keys.compactMap { store.conversation($0)?.title }
         guard !busy.isEmpty, !CommandLine.arguments.contains("--background") else { return .terminateNow }
         let a = NSAlert()
-        a.messageText = "還有 \(busy.count) 段對話在進行"
-        a.informativeText = busy.prefix(5).joined(separator: "、") + "\n\n結束的話 Claude 會停在做到一半的地方，下次打開可以接著問。"
-        a.addButton(withTitle: "取消")
-        a.addButton(withTitle: "結束")
+        a.messageText = L("還有 \(busy.count) 段對話在進行")
+        a.informativeText = L("\(busy.prefix(5).joined(separator: "、"))\n\n結束的話 Claude 會停在做到一半的地方，下次打開可以接著問。")
+        a.addButton(withTitle: L("取消"))
+        a.addButton(withTitle: L("結束"))
         return a.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
     }
 
@@ -1488,63 +1505,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let appItem = NSMenuItem(); menu.addItem(appItem)
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "關於 codenv", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: L("關於 codenv"), action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "設定…", action: #selector(showSettings), keyEquivalent: ",")
-        if Edition.updateRepo != nil { appMenu.addItem(withTitle: "檢查更新…", action: #selector(checkForUpdates), keyEquivalent: "") }
+        appMenu.addItem(withTitle: L("設定…"), action: #selector(showSettings), keyEquivalent: ",")
+        if Edition.updateRepo != nil { appMenu.addItem(withTitle: L("檢查更新…"), action: #selector(checkForUpdates), keyEquivalent: "") }
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "隱藏 codenv", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "結束 codenv", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L("隱藏 codenv"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: L("結束 codenv"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
         let fileItem = NSMenuItem(); menu.addItem(fileItem)
-        let fileMenu = NSMenu(title: "檔案")
-        fileMenu.addItem(withTitle: "新對話", action: #selector(newConversation), keyEquivalent: "n")
-        fileMenu.addItem(withTitle: "新瀏覽器", action: #selector(newBrowser), keyEquivalent: "B")   // 大寫＝⌘ ⇧ B
-        let add = fileMenu.addItem(withTitle: "新增專案…", action: #selector(addProject), keyEquivalent: "o")
+        let fileMenu = NSMenu(title: L("檔案"))
+        fileMenu.addItem(withTitle: L("新對話"), action: #selector(newConversation), keyEquivalent: "n")
+        fileMenu.addItem(withTitle: L("新瀏覽器"), action: #selector(newBrowser), keyEquivalent: "B")   // 大寫＝⌘ ⇧ B
+        let add = fileMenu.addItem(withTitle: L("新增專案…"), action: #selector(addProject), keyEquivalent: "o")
         add.keyEquivalentModifierMask = [.command, .shift]
-        let imp = fileMenu.addItem(withTitle: "從 Claude Code 匯入對話…", action: #selector(showImporter), keyEquivalent: "i")
+        let imp = fileMenu.addItem(withTitle: L("從 Claude Code 匯入對話…"), action: #selector(showImporter), keyEquivalent: "i")
         imp.keyEquivalentModifierMask = [.command, .shift]
-        let org = fileMenu.addItem(withTitle: "整理對話…", action: #selector(showOrganizer), keyEquivalent: "l")
+        let org = fileMenu.addItem(withTitle: L("整理對話…"), action: #selector(showOrganizer), keyEquivalent: "l")
         org.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: "關閉這格（只剩一格時關掉這個 Window）", action: #selector(closeSideWindow), keyEquivalent: "w")
-        fileMenu.addItem(withTitle: "新 Window", action: #selector(newTabWindow), keyEquivalent: "t")
-        fileMenu.addItem(withTitle: "重新打開剛關掉的格子或 Window", action: #selector(reopenWindow), keyEquivalent: "T")   // 大寫＝⌘ ⇧ T
+        fileMenu.addItem(withTitle: L("關閉這格（只剩一格時關掉這個 Window）"), action: #selector(closeSideWindow), keyEquivalent: "w")
+        fileMenu.addItem(withTitle: L("新 Window"), action: #selector(newTabWindow), keyEquivalent: "t")
+        fileMenu.addItem(withTitle: L("重新打開剛關掉的格子或 Window"), action: #selector(reopenWindow), keyEquivalent: "T")   // 大寫＝⌘ ⇧ T
         fileItem.submenu = fileMenu
 
         let editItem = NSMenuItem(); menu.addItem(editItem)
-        let editMenu = NSMenu(title: "編輯")
-        editMenu.addItem(withTitle: "復原", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")   // 大寫＝要按 ⇧（⌘ ⇧ Z）
+        let editMenu = NSMenu(title: L("編輯"))
+        editMenu.addItem(withTitle: L("復原"), action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: L("重做"), action: Selector(("redo:")), keyEquivalent: "Z")   // 大寫＝要按 ⇧（⌘ ⇧ Z）
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "剪下", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "拷貝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "貼上", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "全選", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: L("剪下"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: L("拷貝"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: L("貼上"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: L("全選"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
 
         let viewItem = NSMenuItem(); menu.addItem(viewItem)
-        let viewMenu = NSMenu(title: "顯示方式")
-        let side = viewMenu.addItem(withTitle: "收起／打開側欄", action: #selector(toggleSidebar), keyEquivalent: "s")
+        let viewMenu = NSMenu(title: L("顯示方式"))
+        let side = viewMenu.addItem(withTitle: L("收起／打開側欄"), action: #selector(toggleSidebar), keyEquivalent: "s")
         side.keyEquivalentModifierMask = [.command, .control]
-        viewMenu.addItem(withTitle: "桌寵位置（Ctrl+A b）", action: #selector(togglePetSlot), keyEquivalent: "")
+        viewMenu.addItem(withTitle: L("桌寵位置（Ctrl+A b）"), action: #selector(togglePetSlot), keyEquivalent: "")
         viewMenu.addItem(.separator())
-        viewMenu.addItem(withTitle: "放大文字", action: #selector(zoomIn), keyEquivalent: "=")
-        viewMenu.addItem(withTitle: "縮小文字", action: #selector(zoomOut), keyEquivalent: "-")
-        viewMenu.addItem(withTitle: "文字實際大小", action: #selector(zoomReset), keyEquivalent: "0")
+        viewMenu.addItem(withTitle: L("放大文字"), action: #selector(zoomIn), keyEquivalent: "=")
+        viewMenu.addItem(withTitle: L("縮小文字"), action: #selector(zoomOut), keyEquivalent: "-")
+        viewMenu.addItem(withTitle: L("文字實際大小"), action: #selector(zoomReset), keyEquivalent: "0")
         viewItem.submenu = viewMenu
 
         let winItem = NSMenuItem(); menu.addItem(winItem)
-        let winMenu = NSMenu(title: "視窗")
-        winMenu.addItem(withTitle: "縮到 Dock", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        let winMenu = NSMenu(title: L("視窗"))
+        winMenu.addItem(withTitle: L("縮到 Dock"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         winItem.submenu = winMenu
         NSApp.windowsMenu = winMenu
 
         if Feedback.available {
             let helpItem = NSMenuItem(); menu.addItem(helpItem)
-            let helpMenu = NSMenu(title: "說明")
-            helpMenu.addItem(withTitle: "回報問題…", action: #selector(showFeedback), keyEquivalent: "")
+            let helpMenu = NSMenu(title: L("說明"))
+            helpMenu.addItem(withTitle: L("回報問題…"), action: #selector(showFeedback), keyEquivalent: "")
             helpItem.submenu = helpMenu
             NSApp.helpMenu = helpMenu
         }

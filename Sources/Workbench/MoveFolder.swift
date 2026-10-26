@@ -63,21 +63,21 @@ extension MainWindowController {
     func changeFolder(_ id: UUID) {
         guard let window, let c = store.conversation(id), let old = store.project(c.projectID)?.path else { return }
         if store.status[id] != nil || (workspace.panes[id] == nil && ClaudeSessions.live()[c.claudeSession] != nil) {
-            confirm("這段對話還在跑", "等它停下來（或按停止）再換資料夾。", button: "好") {}
+            confirm(L("這段對話還在跑"), L("等它停下來（或按停止）再換資料夾。"), button: L("好")) {}
             return
         }
         let o = NSOpenPanel()
         o.canChooseDirectories = true
         o.canChooseFiles = false
         o.canCreateDirectories = true
-        o.prompt = "換到這裡"
-        o.message = "「\(c.title)」之後在哪個資料夾工作（現在是 \(ClaudeEnvs.tilde(old))）"
+        o.prompt = L("換到這裡")
+        o.message = L("「\(c.title)」之後在哪個資料夾工作（現在是 \(ClaudeEnvs.tilde(old))）")
         o.directoryURL = URL(fileURLWithPath: old).deletingLastPathComponent()
         o.beginSheetModal(for: window) { [weak self] r in
             guard let self, r == .OK, let new = o.url?.path, new != old else { return }
-            self.confirm("把「\(c.title)」換到 \(ClaudeEnvs.tilde(new))？",
-                         "會先停掉這段對話的 Claude，把紀錄搬過去（舊的那份丟垃圾桶，救得回來），再從新資料夾接回。側欄的分組不變。",
-                         button: "換資料夾") { [weak self] in self?.moveConversation(id, to: new) }
+            self.confirm(L("把「\(c.title)」換到 \(ClaudeEnvs.tilde(new))？"),
+                         L("會先停掉這段對話的 Claude，把紀錄搬過去（舊的那份丟垃圾桶，救得回來），再從新資料夾接回。側欄的分組不變。"),
+                         button: L("換資料夾")) { [weak self] in self?.moveConversation(id, to: new) }
         }
     }
 
@@ -89,10 +89,10 @@ extension MainWindowController {
         do {
             try ConversationMover.move(session: c.claudeSession, from: old, to: new)
         } catch ConversationMover.Failure.exists(let p) {
-            confirm("沒有搬", "新資料夾那邊已經有同一段對話的紀錄（\(ClaudeEnvs.tilde(p))），怕蓋掉就先不動。", button: "好") {}
+            confirm(L("沒有搬"), L("新資料夾那邊已經有同一段對話的紀錄（\(ClaudeEnvs.tilde(p))），怕蓋掉就先不動。"), button: L("好")) {}
             host.invalidate(id); return
         } catch {
-            confirm("沒有搬", "複製紀錄失敗，原本的紀錄沒動：\(error.localizedDescription)", button: "好") {}
+            confirm(L("沒有搬"), L("複製紀錄失敗，原本的紀錄沒動：\(error.localizedDescription)"), button: L("好")) {}
             host.invalidate(id); return
         }
         let pid = store.projects.first(where: { $0.path == new })?.id ?? store.addProject(path: new).id

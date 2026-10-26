@@ -118,7 +118,7 @@ final class CollabBoardModel: ObservableObject {
     /// 手動模式（使用者自己在終端機開 agy、貼 prompt、把回答貼回來）的 owner 名字 → 對應的模型。執行器一律不碰這兩個名字
     static let manualTarget = ["手動flash": "gemini3.8flash", "手動argon": "gemini4.0argon"]
     static func isManual(_ owner: String?) -> Bool { manualTarget[owner ?? ""] != nil }
-    static func manualLabel(_ owner: String?) -> String { "手動 " + (manualTarget[owner ?? ""].flatMap { agyNick[$0] } ?? "") }
+    static func manualLabel(_ owner: String?) -> String { L("手動 \(manualTarget[owner ?? ""].flatMap { agyNick[$0] } ?? "")") }
     /// 在等使用者的：Claude 提議的目標、輪到「你」的步驟
     var waitingOnYou: Int {
         goals.filter { $0.status == "proposed" }.count + goals.filter { $0.status == "active" && $0.current?.owner == Self.user }.count
@@ -631,10 +631,10 @@ struct CollabBoardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("協作看板").font(.system(size: 14 * s, weight: .semibold))
+                Text(L("協作看板")).font(.system(size: 14 * s, weight: .semibold))
                 Spacer()
                 Button { m.open = false } label: { Image(systemName: "xmark").font(.system(size: 11 * s)) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help("關掉看板")
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help(L("關掉看板"))
             }
             .padding(.horizontal, 12).frame(height: WindowHost.barHeight)
             Divider()
@@ -644,8 +644,8 @@ struct CollabBoardView: View {
                 Text(n).font(.system(size: 11 * s)).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 6)
             }
             Picker("", selection: $m.tab) {
-                Text(m.waitingOnYou > 0 ? "目標（等你 \(m.waitingOnYou)）" : "目標").tag("goals")
-                Text("往來").tag("messages")
+                Text(L(m.waitingOnYou > 0 ? "目標（等你 \(m.waitingOnYou)）" : "目標")).tag("goals")
+                Text(L("往來")).tag("messages")
             }
             .pickerStyle(.segmented).labelsHidden().padding(.horizontal, 12).padding(.vertical, 8)
             if m.tab == "messages" { messageList } else { goalList }
@@ -656,9 +656,9 @@ struct CollabBoardView: View {
             if let id = d.goalID { m.updateGoal(id, title: t, done: done) } else { m.addGoal(title: t, done: done, steps: steps) }
             editing = nil
         } cancel: { editing = nil } }
-        .confirmationDialog("刪掉目標「\(deleting?.title ?? "")」？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("刪掉", role: .destructive) { if let g = deleting { m.deleteGoal(g.id) }; deleting = nil }
-        } message: { Text("步驟會一起刪掉，救不回來。") }
+        .confirmationDialog(L("刪掉目標「\(deleting?.title ?? "")」？"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button(L("刪掉"), role: .destructive) { if let g = deleting { m.deleteGoal(g.id) }; deleting = nil }
+        } message: { Text(L("步驟會一起刪掉，救不回來。")) }
     }
 
     private var warnings: some View {
@@ -667,13 +667,13 @@ struct CollabBoardView: View {
                 Image(systemName: "chevron.right").font(.system(size: 10 * s, weight: .semibold))
                     .rotationEffect(.degrees(warningsOpen ? 90 : 0))
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 11 * s)).foregroundStyle(.orange)
-                Text("\(m.warnings.count) 對 Claude 來回太多次").font(.system(size: 12 * s, weight: .medium))
+                Text(L("\(m.warnings.count) 對 Claude 來回太多次")).font(.system(size: 12 * s, weight: .medium))
                 Spacer()
             }
             .padding(.horizontal, 12).padding(.vertical, 7)
             .contentShape(Rectangle())
             .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { warningsOpen.toggle() } }
-            .help(warningsOpen ? "收起" : "展開看是哪幾對")
+            .help(L(warningsOpen ? "收起" : "展開看是哪幾對"))
             if warningsOpen { ForEach(m.warnings) { p in warning(p) } }
         }
         .background(Color.orange.opacity(0.12))
@@ -681,10 +681,10 @@ struct CollabBoardView: View {
 
     private func warning(_ p: CollabPair) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("\(p.a) 和 \(p.b) 已經來回 \(p.count) 次，中間你都沒說話").font(.system(size: 12 * s, weight: .medium))
+            Text(L("\(p.a) 和 \(p.b) 已經來回 \(p.count) 次，中間你都沒說話")).font(.system(size: 12 * s, weight: .medium))
             HStack {
-                Button("兩邊都暫停") { pause(p) }
-                Button("知道了") { m.dismissed[p.id] = p.count }
+                Button(L("兩邊都暫停")) { pause(p) }
+                Button(L("知道了")) { m.dismissed[p.id] = p.count }
             }.controlSize(.small)
         }
         .padding(.horizontal, 12).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
@@ -695,7 +695,7 @@ struct CollabBoardView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
                 if m.messages.isEmpty {
-                    Text("還沒有 Claude 互傳的訊息").font(.system(size: 12 * s)).foregroundStyle(.secondary).padding(.top, 20)
+                    Text(L("還沒有 Claude 互傳的訊息")).font(.system(size: 12 * s)).foregroundStyle(.secondary).padding(.top, 20)
                 }
                 ForEach(m.messages.reversed()) { msg in row(msg) }
             }
@@ -728,8 +728,8 @@ struct CollabBoardView: View {
         .contentShape(Rectangle())
         .onTapGesture { if open { expanded.remove(msg.id) } else { expanded.insert(msg.id) } }
         .contextMenu {
-            if let c = msg.conversation { Button("打開這段對話") { openConversation(c) } }
-            Button("拷貝內容") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(msg.body, forType: .string) }
+            if let c = msg.conversation { Button(L("打開這段對話")) { openConversation(c) } }
+            Button(L("拷貝內容")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(msg.body, forType: .string) }
         }
     }
 
@@ -745,22 +745,22 @@ struct CollabBoardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Button { editing = GoalDraft() } label: { Label("新目標", systemImage: "plus") }.controlSize(.small)
+                    Button { editing = GoalDraft() } label: { Label(L("新目標"), systemImage: "plus") }.controlSize(.small)
                     Spacer()
-                    Text("Claude 用 codenv-todo 寫").font(.system(size: 10 * s)).foregroundStyle(.tertiary)
+                    Text(L("Claude 用 codenv-todo 寫")).font(.system(size: 10 * s)).foregroundStyle(.tertiary)
                 }
                 let proposed = m.goals.filter { $0.status == "proposed" }
                 let active = m.goals.filter { $0.status == "active" }
                 let done = m.goals.filter { $0.status == "done" }
                 if proposed.isEmpty && active.isEmpty {
-                    Text("還沒有進行中的目標").font(.system(size: 12 * s)).foregroundStyle(.secondary).padding(.vertical, 8)
+                    Text(L("還沒有進行中的目標")).font(.system(size: 12 * s)).foregroundStyle(.secondary).padding(.vertical, 8)
                 }
                 ForEach(proposed) { g in goalCard(g) }
                 ForEach(active) { g in goalCard(g) }
                 if !done.isEmpty {
                     DisclosureGroup(isExpanded: $showDone) {
                         VStack(alignment: .leading, spacing: 8) { ForEach(done.reversed().prefix(20)) { g in goalCard(g) } }.padding(.top, 6)
-                    } label: { Text("已完成（\(done.count)）").font(.system(size: 11 * s, weight: .medium)).foregroundStyle(.secondary) }
+                    } label: { Text(L("已完成（\(done.count)）")).font(.system(size: 11 * s, weight: .medium)).foregroundStyle(.secondary) }
                 }
                 Divider().padding(.vertical, 4)
                 ForEach(CollabBoardModel.columns, id: \.key) { c in
@@ -768,7 +768,7 @@ struct CollabBoardView: View {
                     // 舊的三欄有東西才顯示（交件、驗收改用目標的步驟）
                     if c.key == "locked" || !items.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("\(c.title)（\(items.count)）").font(.system(size: 11 * s, weight: .medium)).foregroundStyle(.secondary)
+                            Text(L("\(c.title)（\(items.count)）")).font(.system(size: 11 * s, weight: .medium)).foregroundStyle(.secondary)
                             ForEach(items) { t in todoRow(t) }
                         }
                     }
@@ -784,23 +784,23 @@ struct CollabBoardView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(g.title).font(.system(size: 13 * s, weight: .semibold)).textSelection(.enabled)
                 Spacer()
-                Text((["proposed": "提議中", "active": "進行中", "done": "完成"][g.status] ?? g.status) + " · " + g.progress)
+                Text("\(["proposed": L("提議中"), "active": L("進行中"), "done": L("完成")][g.status] ?? g.status) · \(g.progress)")
                     .font(.system(size: 10.5 * s)).foregroundStyle(.secondary)
             }
             if let d = g.done, !d.isEmpty {
-                Text("怎樣算完成：" + d).font(.system(size: 11 * s)).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(L("怎樣算完成：\(d)")).font(.system(size: 11 * s)).foregroundStyle(.secondary).textSelection(.enabled)
             }
             if g.status == "proposed" {
                 HStack(spacing: 6) {
-                    Text("\(g.by ?? "Claude") 提議的").font(.system(size: 11 * s)).foregroundStyle(.secondary)
+                    Text(L("\(g.by ?? "Claude") 提議的")).font(.system(size: 11 * s)).foregroundStyle(.secondary)
                     Spacer()
-                    Button("同意") { m.setGoalStatus(g.id, "active") }
-                    Button("不要") { deleting = g }
+                    Button(L("同意")) { m.setGoalStatus(g.id, "active") }
+                    Button(L("不要")) { deleting = g }
                 }.controlSize(.small)
             }
             ForEach(g.steps) { st in stepRow(g, st, current: st.id == cur && g.status == "active") }
             if g.status != "done" {
-                TextField("加步驟（內容@負責人）", text: Binding(get: { newStep[g.id] ?? "" }, set: { newStep[g.id] = $0 }))
+                TextField(L("加步驟（內容@負責人）"), text: Binding(get: { newStep[g.id] ?? "" }, set: { newStep[g.id] = $0 }))
                     .textFieldStyle(.plain).font(.system(size: 11.5 * s)).padding(.leading, 20 * s)
                     .onSubmit { m.addStep(goal: g.id, line: newStep[g.id] ?? ""); newStep[g.id] = "" }
             }
@@ -809,9 +809,9 @@ struct CollabBoardView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(g.status == "done" ? 0.03 : 0.06)))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(g.status == "proposed" ? Color.accentColor.opacity(0.6) : .clear, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
         .contextMenu {
-            Button("改標題、完成標準…") { editing = GoalDraft(goalID: g.id, title: g.title, done: g.done ?? "") }
+            Button(L("改標題、完成標準…")) { editing = GoalDraft(goalID: g.id, title: g.title, done: g.done ?? "") }
             Divider()
-            Button("刪掉目標…") { deleting = g }
+            Button(L("刪掉目標…")) { deleting = g }
         }
     }
 
@@ -823,7 +823,7 @@ struct CollabBoardView: View {
                 Image(systemName: icon).font(.system(size: 12 * s))
                     .foregroundStyle(st.state == "done" ? Color.green : st.state == "blocked" ? Color.red : st.state == "doing" ? Color.accentColor : Color.secondary)
             }
-            .buttonStyle(.plain).help(st.state == "done" ? "改回待做" : "完成")
+            .buttonStyle(.plain).help(L(st.state == "done" ? "改回待做" : "完成"))
             VStack(alignment: .leading, spacing: 2) {
                 Text(st.text).font(.system(size: 12 * s)).strikethrough(st.state == "done", color: .secondary)
                     .foregroundStyle(st.state == "done" ? .secondary : .primary).textSelection(.enabled)
@@ -833,29 +833,29 @@ struct CollabBoardView: View {
             if let o = st.owner, let nick = CollabBoardModel.agyNick[o] {
                 // @agy 的步驟：小標籤標出是哪個模型（進行中的經過時間、結果在下面那一行）
                 Text(nick).font(.system(size: 10 * s, weight: .medium)).padding(.horizontal, 6).padding(.vertical, 1)
-                    .background(Capsule().fill(color(o).opacity(0.18))).foregroundStyle(color(o)).help("@\(o)：背景的 agy 自動做")
+                    .background(Capsule().fill(color(o).opacity(0.18))).foregroundStyle(color(o)).help(L("@\(o)：背景的 agy 自動做"))
             }
             else if let o = st.owner, CollabBoardModel.isManual(o) {
                 // 手動：框線標籤（不是填色），跟自動的分得出來
                 Text(CollabBoardModel.manualLabel(o)).font(.system(size: 10 * s, weight: .medium)).padding(.horizontal, 6).padding(.vertical, 1)
-                    .overlay(Capsule().strokeBorder(color(o).opacity(0.6), lineWidth: 1)).foregroundStyle(color(o)).help("@\(o)：你自己開 agy、貼 prompt、把回答貼回來；不算每天上限")
+                    .overlay(Capsule().strokeBorder(color(o).opacity(0.6), lineWidth: 1)).foregroundStyle(color(o)).help(L("@\(o)：你自己開 agy、貼 prompt、把回答貼回來；不算每天上限"))
             }
             else if let o = st.owner { Text(o).font(.system(size: 10.5 * s, weight: mine ? .semibold : .regular)).foregroundStyle(mine ? Color.accentColor : color(o)) }
-            else if st.state != "done" { Text("沒人領").font(.system(size: 10.5 * s)).foregroundStyle(.tertiary).help("Claude 有空時會用 codenv-todo 領走；也可以右鍵指定負責人") }
+            else if st.state != "done" { Text(L("沒人領")).font(.system(size: 10.5 * s)).foregroundStyle(.tertiary).help(L("Claude 有空時會用 codenv-todo 領走；也可以右鍵指定負責人")) }
         }
         .padding(.vertical, 2).padding(.horizontal, 4)
         // 輪到你的那一步：底色標出來
         .background(RoundedRectangle(cornerRadius: 5).fill(current && mine ? Color.accentColor.opacity(0.15) : .clear))
         .contextMenu {
-            ForEach([("todo", "待做"), ("doing", "進行中"), ("done", "完成"), ("blocked", "卡住")].filter { $0.0 != st.state }, id: \.0) { k, t in
+            ForEach([("todo", L("待做")), ("doing", L("進行中")), ("done", L("完成")), ("blocked", L("卡住"))].filter { $0.0 != st.state }, id: \.0) { k, t in
                 Button(t) { m.setStep(goal: g.id, step: st.id, state: k) }
             }
-            Menu("負責人") {
+            Menu(L("負責人")) {
                 ForEach(m.owners, id: \.self) { o in Button(o) { m.setOwner(goal: g.id, step: st.id, owner: o) } }
-                Button("（不指定）") { m.setOwner(goal: g.id, step: st.id, owner: nil) }
+                Button(L("（不指定）")) { m.setOwner(goal: g.id, step: st.id, owner: nil) }
             }
             Divider()
-            Button("刪掉這一步") { m.deleteStep(goal: g.id, step: st.id) }
+            Button(L("刪掉這一步")) { m.deleteStep(goal: g.id, step: st.id) }
         }
     }
 
@@ -869,34 +869,34 @@ struct CollabBoardView: View {
         // 看板很窄：資訊一行、按鈕另一行，每個字都不折行（不然「複製 prompt」會被擠成直排）
         return VStack(alignment: .leading, spacing: 2) {
           HStack(spacing: 6) {
-            if (st.attempt ?? 1) > 1 { Text("第 \(st.attempt ?? 1) 次").foregroundStyle(.orange).lineLimit(1).fixedSize() }
+            if (st.attempt ?? 1) > 1 { Text(L("第 \(st.attempt ?? 1) 次")).foregroundStyle(.orange).lineLimit(1).fixedSize() }
             if st.state == "doing" {
                 // 每秒更新經過時間
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     let t = st.at.flatMap { CollabBoardModel.parse($0) }
-                    Text("進行中 " + (t.map { Self.elapsed(ctx.date.timeIntervalSince($0)) } ?? "")).foregroundStyle(Color.accentColor)
+                    Text(L("進行中 \(t.map { Self.elapsed(ctx.date.timeIntervalSince($0)) } ?? "")")).foregroundStyle(Color.accentColor)
                 }
             } else if st.state == "todo" && !manual {
-                Text(m.agy.pausedUntil != nil ? "暫停中" : "等執行器").foregroundStyle(.tertiary)
+                Text(L(m.agy.pausedUntil != nil ? "暫停中" : "等執行器")).foregroundStyle(.tertiary)
             }
           }
           HStack(spacing: 10) {
             if let r = st.result, !r.isEmpty, st.state != "doing" {
                 // 兩個彈窗各掛在自己的按鈕上（同一個 view 掛兩個 popover，macOS 上可能只有一個有效）。
                 // 關掉時只清自己的（開著 A 又點 B 的「結果」時，A 被關不能把剛設好的 B 清掉）
-                Button("結果") { resultOf = st }.buttonStyle(.link).help("看 agy 寫的結果")
+                Button(L("結果")) { resultOf = st }.buttonStyle(.link).help(L("看 agy 寫的結果"))
                     .popover(item: Binding(get: { resultOf?.id == st.id ? resultOf : nil }, set: { if $0 == nil, resultOf?.id == st.id { resultOf = nil } else if $0 != nil { resultOf = $0 } })) { r in
                         AgyResultView(step: r)
                     }
             }
             if manual && st.state != "done" && g.status == "active" {
-                Button(copied == st.id ? "已複製" : "複製 prompt") {
+                Button(L(copied == st.id ? "已複製" : "複製 prompt")) {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(CollabBoardModel.manualPrompt(st), forType: .string)
                     copied = st.id
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if copied == st.id { copied = nil } }
-                }.buttonStyle(.link).help("複製要貼給 agy 的內容（退回重做時，會連原因和上次的結果一起複製）")
-                Button("交回…") { returning = st }.buttonStyle(.link).help("把 agy 的回答貼回來，這一步就完成")
+                }.buttonStyle(.link).help(L("複製要貼給 agy 的內容（退回重做時，會連原因和上次的結果一起複製）"))
+                Button(L("交回…")) { returning = st }.buttonStyle(.link).help(L("把 agy 的回答貼回來，這一步就完成"))
                     .popover(item: Binding(get: { returning?.id == st.id ? returning : nil }, set: { if $0 == nil, returning?.id == st.id { returning = nil } else if $0 != nil { returning = $0 } })) { r in
                         ManualReturnView(step: r) { text in
                             let ok = m.returnManual(goal: g.id, step: r.id, text: text)
@@ -915,7 +915,7 @@ struct CollabBoardView: View {
     }
     private static func elapsed(_ sec: TimeInterval) -> String {
         let n = max(0, Int(sec))
-        return n >= 3600 ? "\(n / 3600) 時 \(n % 3600 / 60) 分" : n >= 60 ? "\(n / 60) 分 \(n % 60) 秒" : "\(n) 秒"
+        return n >= 3600 ? L("\(n / 3600) 時 \(n % 3600 / 60) 分") : n >= 60 ? L("\(n / 60) 分 \(n % 60) 秒") : L("\(n) 秒")
     }
 
     /// 看板頂端一行：今天各模型用了幾件；暫停中（斷網、登入、額度）也寫在這
@@ -926,14 +926,14 @@ struct CollabBoardView: View {
             let order = ["gemini4.0argon", "gemini3.8flash"]
             let line = order.compactMap { k -> String? in
                 guard let nick = CollabBoardModel.agyNick[k] else { return nil }
-                return "\(nick) \(a.counts[k] ?? 0)／\(a.limits[k] ?? (k == "gemini4.0argon" ? 5 : 30))"
-            }.joined(separator: "、")
+                return L("\(nick) \(a.counts[k] ?? 0)／\(a.limits[k] ?? (k == "gemini4.0argon" ? 5 : 30))")
+            }.joined(separator: L("、"))
             VStack(alignment: .leading, spacing: 2) {
-                Text("今天 " + line).font(.system(size: 11 * s)).foregroundStyle(.secondary)
+                Text(L("今天 \(line)")).font(.system(size: 11 * s)).foregroundStyle(.secondary)
                 if let u = a.pausedUntil {
                     let f = DateFormatter()
                     let _ = f.dateFormat = "HH:mm"
-                    Text("暫停到 \(f.string(from: u))：\(a.pauseReason)").font(.system(size: 11 * s)).foregroundStyle(.orange)
+                    Text(L("暫停到 \(f.string(from: u))：\(a.pauseReason)")).font(.system(size: 11 * s)).foregroundStyle(.orange)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading)
@@ -944,14 +944,14 @@ struct CollabBoardView: View {
     private func todoRow(_ t: CollabTodo) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Button { m.editTodo(t.id, col: "done") } label: { Image(systemName: "circle").font(.system(size: 12 * s)) }
-                .buttonStyle(.plain).foregroundStyle(.secondary).help("完成")
+                .buttonStyle(.plain).foregroundStyle(.secondary).help(L("完成"))
             VStack(alignment: .leading, spacing: 1) {
                 Text(t.text).font(.system(size: 12 * s)).textSelection(.enabled)
                 if let by = t.by { Text(by).font(.system(size: 10 * s)).foregroundStyle(color(by)) }
             }
             Spacer(minLength: 0)
         }
-        .contextMenu { Button("刪掉") { m.editTodo(t.id, col: nil) } }
+        .contextMenu { Button(L("刪掉")) { m.editTodo(t.id, col: nil) } }
     }
 }
 
@@ -973,19 +973,19 @@ struct GoalEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(draft.goalID == nil ? "新目標" : "改目標").font(.headline)
-            TextField("目標（例如：排程喚醒上線）", text: $title)
-            TextField("怎樣算完成（例如：重開後排程還在；到點有送）", text: $done)
+            Text(L(draft.goalID == nil ? "新目標" : "改目標")).font(.headline)
+            TextField(L("目標（例如：排程喚醒上線）"), text: $title)
+            TextField(L("怎樣算完成（例如：重開後排程還在；到點有送）"), text: $done)
             if draft.goalID == nil {
-                Text("步驟：一行一步，「內容@負責人」，負責人可以寫 codenv_1、codenv_2、你；不寫負責人就是「沒人領」，Claude 有空時會自己領。最後會自動加「使用者驗收」。")
+                Text(L("步驟：一行一步，「內容@負責人」，負責人可以寫 codenv_1、codenv_2、你；不寫負責人就是「沒人領」，Claude 有空時會自己領。最後會自動加「使用者驗收」。"))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 TextEditor(text: $steps).font(.system(size: 12)).frame(height: 110)
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
             }
             HStack {
                 Spacer()
-                Button("取消", action: cancel).keyboardShortcut(.cancelAction)
-                Button(draft.goalID == nil ? "開始" : "存") { save(title.trimmingCharacters(in: .whitespaces), done.trimmingCharacters(in: .whitespaces), steps) }
+                Button(L("取消"), action: cancel).keyboardShortcut(.cancelAction)
+                Button(L(draft.goalID == nil ? "開始" : "存")) { save(title.trimmingCharacters(in: .whitespaces), done.trimmingCharacters(in: .whitespaces), steps) }
                     .keyboardShortcut(.defaultAction).disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
@@ -1002,13 +1002,13 @@ struct AgyResultView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(step.text).font(.system(size: 12, weight: .semibold)).lineLimit(2)
-            ScrollView { Text(text.isEmpty ? "（讀不到結果檔）" : text).font(.system(size: 12)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+            ScrollView { Text(text.isEmpty ? L("（讀不到結果檔）") : text).font(.system(size: 12)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                 .frame(width: 420, height: 260)
             HStack {
                 Text(step.result.map { ($0 as NSString).lastPathComponent } ?? "").font(.system(size: 10)).foregroundStyle(.tertiary)
                 Spacer()
-                Button("在 Finder 顯示") { if let r = step.result { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: r)]) } }
-                Button("複製") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }.disabled(text.isEmpty)
+                Button(L("在 Finder 顯示")) { if let r = step.result { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: r)]) } }
+                Button(L("複製")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }.disabled(text.isEmpty)
             }.controlSize(.small)
         }
         .padding(12)
@@ -1024,14 +1024,14 @@ struct ManualReturnView: View {
     @State private var failed = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("把 agy 的回答貼在這裡").font(.system(size: 12, weight: .semibold))
+            Text(L("把 agy 的回答貼在這裡")).font(.system(size: 12, weight: .semibold))
             Text(step.text).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             TextEditor(text: $text).font(.system(size: 12)).frame(width: 420, height: 220)
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.4)))
             HStack {
-                if failed { Text("沒收到：空白，或這一步已經完成了").font(.system(size: 11)).foregroundStyle(.red) }
+                if failed { Text(L("沒收到：空白，或這一步已經完成了")).font(.system(size: 11)).foregroundStyle(.red) }
                 Spacer()
-                Button("交回") { failed = !submit(text) }.keyboardShortcut(.defaultAction).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button(L("交回")) { failed = !submit(text) }.keyboardShortcut(.defaultAction).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }.controlSize(.small)
         }
         .padding(12)

@@ -52,12 +52,12 @@ private final class CodeLabHandler: NSObject, WKScriptMessageHandler {
 final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWindowDelegate {
     enum Mode: Int, CaseIterable {
         case below = 1, swap, popup, noAI
-        var title: String { ["上下分", "F10 換畫面", "F10 開視窗", "不用 AI"][rawValue - 1] }
+        var title: String { [L("上下分"), L("F10 換畫面"), L("F10 開視窗"), L("不用 AI")][rawValue - 1] }
         var detail: String {
-            ["左邊 AI，右上程式碼、右下執行結果",
-             "左邊 AI，右邊程式碼；F10 整塊換成執行畫面，跑完按任意鍵回來",
-             "左邊 AI，右邊程式碼；F10 跳出執行視窗，跑完按任意鍵關掉",
-             "不用 AI：左邊程式碼、右邊執行結果"][rawValue - 1]
+            [L("左邊 AI，右上程式碼、右下執行結果"),
+             L("左邊 AI，右邊程式碼；F10 整塊換成執行畫面，跑完按任意鍵回來"),
+             L("左邊 AI，右邊程式碼；F10 跳出執行視窗，跑完按任意鍵關掉"),
+             L("不用 AI：左邊程式碼、右邊執行結果")][rawValue - 1]
         }
     }
     let directory: String
@@ -131,9 +131,9 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
         filePopup.controlSize = .small
         filePopup.target = self
         filePopup.action = #selector(pickFile)
-        for (b, title, sym, sel, tip) in [(newButton, "新檔案", "doc.badge.plus", #selector(newFile), "在這個資料夾開一個新檔案"),
-                                          (checkButton, "檢查", "checkmark.circle", #selector(check), "存檔並檢查有沒有打錯（F9）"),
-                                          (runButton, "執行", "play.fill", #selector(run), "存檔、編譯並執行，結果在下面（F10）")] {
+        for (b, title, sym, sel, tip) in [(newButton, L("新檔案"), "doc.badge.plus", #selector(newFile), L("在這個資料夾開一個新檔案")),
+                                          (checkButton, L("檢查"), "checkmark.circle", #selector(check), L("存檔並檢查有沒有打錯（F9）")),
+                                          (runButton, L("執行"), "play.fill", #selector(run), L("存檔、編譯並執行，結果在下面（F10）"))] {
             b.title = title
             b.image = NSImage(systemSymbolName: sym, accessibilityDescription: title)
             b.imagePosition = .imageLeading
@@ -150,7 +150,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
         for m in Mode.allCases { modePopup.addItem(withTitle: m.title); modePopup.lastItem?.toolTip = m.detail }
         modePopup.target = self
         modePopup.action = #selector(pickMode)
-        modePopup.toolTip = "版面（預設在 ⌘ , 的「對話」頁改）"
+        modePopup.toolTip = L("版面（預設在 ⌘ , 的「對話」頁改）")
         bar.addSubview(modePopup)
         status.font = .systemFont(ofSize: 11)
         status.textColor = .secondaryLabelColor
@@ -235,7 +235,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
             runWindow = w
             return w
         }()
-        w.title = "執行：" + ((file as NSString?)?.lastPathComponent ?? "")
+        w.title = L("執行：") + ((file as NSString?)?.lastPathComponent ?? "")
         runPanel.frame = w.contentView!.bounds
         runPanel.autoresizingMask = [.width, .height]
         w.contentView!.addSubview(runPanel)
@@ -267,10 +267,10 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
     // MARK: 執行完等任意鍵
 
     private func finished(_ code: Int32) {
-        setStatus(code == 0 ? "執行完（代碼 0）" : "執行結束（代碼 \(code)）")
+        setStatus(code == 0 ? L("執行完（代碼 0）") : L("執行結束（代碼 \(code)）"))
         if code != 0 { markCompileErrors() }
         if mode == .swap || mode == .popup {
-            runPanel.terminal.feed(text: "\r\n\u{1b}[2m按任意鍵回到程式碼（⌘ C 可以先複製）\u{1b}[0m")
+            runPanel.terminal.feed(text: "\r\n\u{1b}[2m" + L("按任意鍵回到程式碼（⌘ C 可以先複製）") + "\u{1b}[0m")
         }
         runPanel.terminal.needsDisplay = true   // 搬過家的終端機（換畫面、開視窗）不一定自己重畫
         waitForKey()
@@ -285,7 +285,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
             let list = diags.map { ["line": $0.line, "column": $0.column, "severity": $0.severity, "message": $0.message] as [String: Any] }
             if let d = try? JSONSerialization.data(withJSONObject: list), let s = String(data: d, encoding: .utf8) { self.js("cl.markers(\(s))") }
             let errors = diags.filter { $0.severity == "error" }.count
-            if errors > 0 { self.setStatus("編譯失敗：\(errors) 個錯誤（程式碼上畫了紅線）" + (msg.split(separator: "\n").first.map { "：" + $0 } ?? "")) }
+            if errors > 0 { self.setStatus(L("編譯失敗：\(errors) 個錯誤（程式碼上畫了紅線）") + (msg.split(separator: "\n").first.map { "：" + $0 } ?? "")) }
         }
     }
 
@@ -376,7 +376,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
     private func reloadFiles() {
         filePopup.removeAllItems()
         let files = sourceFiles()
-        if files.isEmpty { filePopup.addItem(withTitle: "（還沒有程式檔，按「新檔案」）"); filePopup.lastItem?.isEnabled = false }
+        if files.isEmpty { filePopup.addItem(withTitle: L("（還沒有程式檔，按「新檔案」）")); filePopup.lastItem?.isEnabled = false }
         for f in files { filePopup.addItem(withTitle: f) }
         let dirPrefix = (directory as NSString).standardizingPath + "/"
         if let cur = file.map({ ($0 as NSString).standardizingPath }).map({ $0.hasPrefix(dirPrefix) ? String($0.dropFirst(dirPrefix.count)) : ($0 as NSString).lastPathComponent }),
@@ -390,12 +390,12 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
 
     @objc private func newFile() {
         let a = NSAlert()
-        a.messageText = "新檔案"
-        a.informativeText = "檔名（例如 hw1.cpp、test.py、c++/hw2.cpp；沒寫副檔名就是 .cpp）"
+        a.messageText = L("新檔案")
+        a.informativeText = L("檔名（例如 hw1.cpp、test.py、c++/hw2.cpp；沒寫副檔名就是 .cpp）")
         let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         a.accessoryView = tf
-        a.addButton(withTitle: "建立")
-        a.addButton(withTitle: "取消")
+        a.addButton(withTitle: L("建立"))
+        a.addButton(withTitle: L("取消"))
         a.window.initialFirstResponder = tf
         guard a.runModal() == .alertFirstButtonReturn else { return }
         var name = tf.stringValue.trimmingCharacters(in: .whitespaces)
@@ -412,13 +412,13 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
 
     /// 打開檔案：UTF-8 讀不懂就當 Big5（老師給的 Windows 檔），存檔時轉成 UTF-8
     func open(_ path: String) {
-        guard let data = FileManager.default.contents(atPath: path) else { setStatus("打不開 \(path)"); return }
+        guard let data = FileManager.default.contents(atPath: path) else { setStatus(L("打不開 \(path)")); return }
         var text = String(data: data, encoding: .utf8)
         var note = ""
         if text == nil {
             let big5 = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosChineseTrad.rawValue)))
             text = String(data: data, encoding: big5)
-            if text != nil { note = "這個檔案的中文是 Windows 的 Big5 編碼，存檔時會轉成 UTF-8"; dirty = true }
+            if text != nil { note = L("這個檔案的中文是 Windows 的 Big5 編碼，存檔時會轉成 UTF-8"); dirty = true }
         }
         file = path
         appDefaults.set(path, forKey: fileKey)
@@ -432,13 +432,13 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
     }
 
     private func save(_ text: String) -> Bool {
-        guard let file else { setStatus("先選一個檔案或按「新檔案」"); return false }
+        guard let file else { setStatus(L("先選一個檔案或按「新檔案」")); return false }
         do {
             try text.write(toFile: file, atomically: true, encoding: .utf8)
             dirty = false
             return true
         } catch {
-            setStatus("存檔失敗：\(error.localizedDescription)")
+            setStatus(L("存檔失敗：\(error.localizedDescription)"))
             return false
         }
     }
@@ -463,14 +463,14 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
 
     private func doCheck(_ text: String) {
         guard save(text), let file else { return }
-        setStatus("檢查中…")
+        setStatus(L("檢查中…"))
         CodeRunner.check(file: file) { [weak self] diags, msg in
             guard let self, self.file == file else { return }
             let list = diags.map { ["line": $0.line, "column": $0.column, "severity": $0.severity, "message": $0.message] as [String: Any] }
             if let d = try? JSONSerialization.data(withJSONObject: list), let s = String(data: d, encoding: .utf8) { self.js("cl.markers(\(s))") }
             let errors = diags.filter { $0.severity == "error" }.count
             let firstLine = msg.split(separator: "\n").first.map(String.init) ?? ""
-            self.setStatus(diags.isEmpty ? "檢查完：沒有發現錯誤" : (errors > 0 ? "\(errors) 個錯誤：" : "警告：") + firstLine)
+            self.setStatus(diags.isEmpty ? L("檢查完：沒有發現錯誤") : (errors > 0 ? L("\(errors) 個錯誤：") : L("警告：")) + firstLine)
         }
     }
 
@@ -478,7 +478,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
         guard save(text), let file else { return }
         js("cl.markers([])")
         stopWaiting()
-        setStatus(mode == .below ? "執行中…（下面可以輸入）" : "執行中…（執行畫面可以輸入）")
+        setStatus(mode == .below ? L("執行中…（下面可以輸入）") : L("執行中…（執行畫面可以輸入）"))
         showRun()
         runPanel.layoutSubtreeIfNeeded()   // 剛放進去還沒排版：終端機大小是 0，程式開起來的輸出會畫不出來
         runPanel.run(file: file)
@@ -493,7 +493,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
         var s = ModelCarry.codeLabMarker + "我正在看 \(file) 第 \(cursorLine) 行"
         if !selection.isEmpty { s += "，選取了：\n```\n\(selection)\n```\n" } else { s += "。" }
         s += "最後一次執行的畫面紀錄在 \(CodeRunner.lastRunLog(for: file))（需要時自己讀）。"
-        if dirty { s += "（檔案還有沒存的修改）" }
+        if dirty { s += L("（檔案還有沒存的修改）") }
         return s
     }
 
@@ -510,12 +510,12 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
             if let last = appDefaults.string(forKey: fileKey), FileManager.default.fileExists(atPath: last),
                (last as NSString).standardizingPath.hasPrefix(dirPrefix) { open(last) }
             else if let first = sourceFiles().first { open((directory as NSString).appendingPathComponent(first)) }
-            else { setStatus("按「新檔案」開始寫程式（資料夾：\(ClaudeEnvs.tilde(directory))）") }
+            else { setStatus(L("按「新檔案」開始寫程式（資料夾：\(ClaudeEnvs.tilde(directory))）")) }
         case "changed": dirty = true
         case "cursor":
             cursorLine = o["line"] as? Int ?? cursorLine
             selection = o["selection"] as? String ?? ""
-        case "save": if let t = o["text"] as? String, save(t) { setStatus("已存檔") }
+        case "save": if let t = o["text"] as? String, save(t) { setStatus(L("已存檔")) }
         case "check": if let t = o["text"] as? String { doCheck(t) }
         case "run": if let t = o["text"] as? String { doRun(t) }
         case "log": NSLog("codelab: \(o["text"] ?? "")")
@@ -535,13 +535,13 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in done("dirty=\(self?.dirty == true)") }
         case "context": done("file=\(file ?? "nil") ready=\(ready)\n" + (contextLine() ?? "nil"))
         case "check":
-            onStatus = { s in if !s.hasSuffix("…") { done("狀態：" + s) } }
+            onStatus = { s in if !s.hasSuffix("…") { done(L("狀態：") + s) } }
             check()
         case "run":
             onRunFinished = { [weak self] code in
                 self?.onRunFinished = nil
-                let log = (try? String(contentsOfFile: CodeRunner.lastRunLog(for: self?.file ?? ""), encoding: .utf8)) ?? "（沒有紀錄）"
-                done("代碼 \(code)\n" + log)
+                let log = (try? String(contentsOfFile: CodeRunner.lastRunLog(for: self?.file ?? ""), encoding: .utf8)) ?? L("（沒有紀錄）")
+                done(L("代碼 \(code)\n") + log)
             }
             run()
         case "mode1", "mode2", "mode3", "mode4":
@@ -562,7 +562,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
                 guard let self else { return }
                 done("mode=\(self.mode.rawValue) split=\(self.split.isVertical ? "左右" : "上下")×\(self.split.arrangedSubviews.count) showingRun=\(self.showingRun) runWindow=\(self.runWindow?.isVisible == true) waiting=\(self.keyMonitor != nil) focus=\(fr) markers=\(r ?? "?") lab=\(Int(self.frame.width))x\(Int(self.frame.height)) term=\(Int(self.runPanel.terminal.frame.width))x\(Int(self.runPanel.terminal.frame.height)) text=\(self.runPanel.terminal.withTerminalPublic { t in (0..<min(t.rows, 5)).map { r in (0..<min(t.cols, 40)).compactMap { t.getText(col: $0, row: r) }.joined().trimmingCharacters(in: .whitespaces) }.joined(separator: "⏎") }) chatHidden=\(self.superview?.subviews.first { $0 is WKWebView }?.isHidden ?? false) status=\(self.status.stringValue)")
             }
-        default: done("不認得 \(act)")
+        default: done(L("不認得 \(act)"))
         }
     }
     private func js(_ s: String) { web.evaluateJavaScript(s, completionHandler: nil) }

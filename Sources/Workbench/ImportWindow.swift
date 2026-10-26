@@ -43,16 +43,16 @@ struct ImportView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("從 Claude Code 匯入對話").font(.title2.weight(.semibold))
-            Text("在 iTerm／tmux 開過的 Claude 對話。匯入後在工作台打開會接著原本的對話；還在那邊進行的，這裡會同步顯示，結束後（或按「在這裡接手」複製一份）就能在這裡繼續。")
+            Text(L("從 Claude Code 匯入對話")).font(.title2.weight(.semibold))
+            Text(L("在 iTerm／tmux 開過的 Claude 對話。匯入後在工作台打開會接著原本的對話；還在那邊進行的，這裡會同步顯示，結束後（或按「在這裡接手」複製一份）就能在這裡繼續。"))
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
-                TextField("搜尋標題或資料夾", text: $model.search).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
-                Toggle("只看正在進行的", isOn: $model.onlyLive)
-                Toggle("包含暫存資料夾", isOn: $model.includeTemp)
+                TextField(L("搜尋標題或資料夾"), text: $model.search).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
+                Toggle(L("只看正在進行的"), isOn: $model.onlyLive)
+                Toggle(L("包含暫存資料夾"), isOn: $model.includeTemp)
                 Spacer()
                 if model.loading { ProgressView().controlSize(.small) }
-                Button("重新整理") { model.reload() }
+                Button(L("重新整理")) { model.reload() }
             }
             List(shown) { s in
                 let done = imported(s)
@@ -64,11 +64,11 @@ struct ImportView: View {
                         HStack(spacing: 6) {
                             Text(s.title).lineLimit(1)
                             if let l = s.live {
-                                Text(l.tmux.isEmpty ? "進行中" : "進行中 · \(l.tmux)")
+                                Text(l.tmux.isEmpty ? L("進行中") : L("進行中 · \(l.tmux)"))
                                     .font(.caption.weight(.medium)).foregroundStyle(.white)
                                     .padding(.horizontal, 6).padding(.vertical, 1).background(Capsule().fill(Color.green.opacity(0.8)))
                             }
-                            if done { Text("已在工作台").font(.caption).foregroundStyle(.secondary) }
+                            if done { Text(L("已在工作台")).font(.caption).foregroundStyle(.secondary) }
                         }
                         Text((s.cwd as NSString).abbreviatingWithTildeInPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     }
@@ -81,13 +81,13 @@ struct ImportView: View {
                 .padding(.vertical, 2)
             }
             HStack {
-                Toggle("自動加入正在 tmux／iTerm 裡進行的對話（每 30 秒檢查）", isOn: $prefs.autoImportLive)
+                Toggle(L("自動加入正在 tmux／iTerm 裡進行的對話（每 30 秒檢查）"), isOn: $prefs.autoImportLive)
                 Spacer()
-                Button("選取全部進行中的") {
+                Button(L("選取全部進行中的")) {
                     for s in model.sessions where s.live != nil && !imported(s) { model.picked.insert(s.id) }
                 }
-                Button("取消") { close() }.keyboardShortcut(.cancelAction)
-                Button("匯入 \(model.picked.count) 段") {
+                Button(L("取消")) { close() }.keyboardShortcut(.cancelAction)
+                Button(L("匯入 \(model.picked.count) 段")) {
                     store.importSessions(model.sessions.filter { model.picked.contains($0.id) })
                     model.picked.removeAll()
                     close()
@@ -106,7 +106,7 @@ final class ImportWindowController: NSWindowController {
     let model = ImportModel()
     init(store: Store) {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 600), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        w.title = "匯入對話"
+        w.title = L("匯入對話")
         w.isReleasedWhenClosed = false
         super.init(window: w)
         w.contentViewController = NSHostingController(rootView: ImportView(model: model, store: store, close: { [weak w] in w?.close() }))

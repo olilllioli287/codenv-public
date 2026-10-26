@@ -99,6 +99,8 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         web = DropWebView(frame: .zero, configuration: config)
         super.init(frame: .zero)
         config.userContentController.add(WeakHandler(self), name: "wb")
+        // 英文介面：對照表在 chat.js 開始跑之前就放好（畫面一建好的字，例如「正在處理」，也要是英文）
+        if I18n.isEnglish { config.userContentController.addUserScript(WKUserScript(source: "window.__LOCALE=\(I18n.tableJSON);", injectionTime: .atDocumentStart, forMainFrameOnly: true)) }
         web.navigationDelegate = self
         web.setValue(false, forKey: "drawsBackground")
         addSubview(web)
@@ -118,7 +120,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             guard let self else { return }
             self.refreshMode()
             self.onPermissionModeChange?(self.session.permissionMode)
-            self.js("wb.notice(\(Self.jsString("沒辦法換權限模式：\(err)")))")
+            self.js("wb.notice(\(Self.jsString(L("沒辦法換權限模式：\(err)"))))")
         }
         inputBar.onStop = { [weak self] in
             guard let self else { return }
@@ -165,17 +167,17 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             }
             // Claude 收回權限詢問：畫面上那張卡也收掉，不要還能按
             if type == "control_cancel_request", let id = obj["request_id"] as? String {
-                self.js("wb.permissionResolved(\(Self.jsString(id)), \"Claude 收回了這個詢問\")")
+            self.js("wb.permissionResolved(\(Self.jsString(id)), \(Self.jsString(L("Claude 收回了這個詢問"))))")
             }
             self.js("wb.event(\(line))")
             ContextMonitor.shared.observe(obj, conversation: self.conversationID)
             if obj["type"] as? String == "system", obj["subtype"] as? String == "status" {
-                self.onBackgroundModel?(obj["status"] as? String == "compacting" ? "Claude Haiku・背景整理摘要" : nil)
+                self.onBackgroundModel?(obj["status"] as? String == "compacting" ? L("Claude Haiku・背景整理摘要") : nil)
             }
             if obj["type"] as? String == "system", obj["subtype"] as? String == "compact_boundary",
                let m = obj["compact_metadata"] as? [String: Any] {
                 let pre = (m["pre_tokens"] as? NSNumber)?.intValue ?? 0, post = (m["post_tokens"] as? NSNumber)?.intValue ?? 0
-                self.js("wb.notice(\(Self.jsString("已壓縮對話：\(ContextMonitor.text(pre)) → \(ContextMonitor.text(post)) token（原本的紀錄檔還在）")))")
+                self.js("wb.notice(\(Self.jsString(L("已壓縮對話：\(ContextMonitor.text(pre)) → \(ContextMonitor.text(post)) token（原本的紀錄檔還在）"))))")
                 self.onCompacted?()
             }
         }
@@ -188,12 +190,12 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         session.onExit = { [weak self] code, err in
             guard let self else { return }
             let who = self.agentName
-            self.js("wb.resolveAllPermissions(\(Self.jsString("\(who) 已經結束，這個詢問作廢了")))")
+            self.js("wb.resolveAllPermissions(\(Self.jsString(L("\(who) 已經結束，這個詢問作廢了"))))")
             self.js("wb.flushQueued()")
             if let id = self.conversationID { SessionActivity.shared.clear(id) }   // 程序沒了，還沒回答的詢問也作廢
             guard code != 0 && code != 15 else { return }
             let tail = err.split(separator: "\n").suffix(3).joined(separator: " / ")
-            self.js("wb.notice(\(Self.jsString("\(who) 結束了（\(code)）\(tail.isEmpty ? "" : "：" + tail)。再送一則訊息會重新接上。")))")
+            self.js("wb.notice(\(Self.jsString(L("\(who) 結束了（\(code)）\(tail.isEmpty ? "" : "：" + tail)。再送一則訊息會重新接上。"))))")
         }
         wantsLayer = true
         applyTheme(theme)
@@ -277,6 +279,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             obj["bodySize"] = Double(t.font.pointSize) / UIScale.defaultFactor
         }
         inputBar.textFont = termText ? t.font : nil
+        if I18n.isEnglish { js("wb.setLocale(\(I18n.tableJSON))") }     // 英文介面：chat.js 的 L() 用同一份對照表（要在 setTheme 之前，畫面才一開始就是英文）
         if let d = try? JSONSerialization.data(withJSONObject: obj), let s = String(data: d, encoding: .utf8) { js("wb.setTheme(\(s))") }
         js(CodeColors.js(palette: pal, dark: dark))
     }
@@ -293,8 +296,8 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     /// 這格實際在跑的是誰（提示文字用）
     var agentName: String {
         session.agyModel != nil ? "Gemini" : session.codexModel != nil ? "ChatGPT" : session.copilotModel != nil ? "Copilot"
-            : session.appleModel != nil ? "Apple 模型"
-            : session.mlxModel != nil || session.localEndpoint != nil ? "本機模型" : "Claude"
+            : session.appleModel != nil ? L("Apple 模型")
+            : session.mlxModel != nil || session.localEndpoint != nil ? L("本機模型") : "Claude"
     }
 
     func refreshModelTitle() {
@@ -342,7 +345,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         // （清單說預設是 Sonnet，實際卻可能是 Opus，使用者 10/25）
         let d = known.first { $0.value == "default" }
         let live = [resolvedModel, appDefaults.string(forKey: "lastDefaultModel") ?? "", d?.resolved ?? ""].first { !$0.isEmpty } ?? ""
-        inputBar.modelTitle = known.first { $0.resolved == live && $0.value != "default" }?.name ?? (live.isEmpty ? (d?.name ?? "預設模型") : live)
+        inputBar.modelTitle = known.first { $0.resolved == live && $0.value != "default" }?.name ?? (live.isEmpty ? (d?.name ?? L("預設模型")) : live)
     }
 
     private var panel: FloatingPanel?
@@ -373,11 +376,11 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         panelModel.onLocalSettings = { [weak self] in self?.panel?.close(); self?.openSettings?() }
         panelModel.onSetDefault = { [weak self] e in
             guard let self else { return }
-            self.panelModel.defaultNote = "存檔中…"
+            self.panelModel.defaultNote = L("存檔中…")
             self.session.saveDefaultEffort(e) { [weak self] ok in
                 guard let self else { return }
                 if ok { self.panelModel.defaultEffort = e }
-                self.panelModel.defaultNote = ok ? "已設為預設：" + Effort.name(e) : "存不進去，再試一次"
+                self.panelModel.defaultNote = ok ? L("已設為預設：") + Effort.name(e) : L("存不進去，再試一次")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.panelModel.defaultNote = nil }
             }
         }
@@ -498,11 +501,11 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         }.map { keep($0) { ["opus", "sonnet", "haiku"].contains($0.id) } }.filter { !$0.isEmpty }
         // 本機：自己開 mlx_lm 伺服器的（快取裡有模型才列），再來是設定頁加的 Anthropic 格式伺服器
         let mlx = LocalBridge.available.map { m in
-            ModelRow(id: "local:mlx:" + m.id, title: m.name, tip: "本機 MLX · 約 \(m.gb) GB 記憶體 · 不花額度" + (m.gb >= 15 ? " · 跑的時候先關掉其他本機模型" : ""), checked: session.mlxModel == m.id)
+            ModelRow(id: "local:mlx:" + m.id, title: m.name, tip: L("本機 MLX · 約 \(m.gb) GB 記憶體 · 不花額度") + (m.gb >= 15 ? L(" · 跑的時候先關掉其他本機模型") : ""), checked: session.mlxModel == m.id)
         }
         // Apple 內建的模型：系統夠新、Apple Intelligence 開著才列
         let apple = AppleBridge.available
-            ? [ModelRow(id: "local:apple:" + AppleBridge.model, title: AppleBridge.name(AppleBridge.model), tip: "macOS 內建 · 不佔額外記憶體 · 上下文約 8K", checked: session.appleModel != nil)]
+            ? [ModelRow(id: "local:apple:" + AppleBridge.model, title: AppleBridge.name(AppleBridge.model), tip: L("macOS 內建 · 不佔額外記憶體 · 上下文約 8K"), checked: session.appleModel != nil)]
             : []
         let locals = apple + mlx + LocalModel.all.map { l in   // 本機的不花額度，精簡清單也全列
             ModelRow(id: "local:" + l.id.uuidString, title: l.name, tip: "\(l.baseURL) · \(l.model)", checked: session.localEndpoint?.id == l.id)
@@ -511,21 +514,21 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         // Gemini：有裝 agy（Google 的 Antigravity 命令列工具）才列
         if AgyBridge.enabled, AgyBridge.executable != "agy" {
             let rows = keep(AgyBridge.models.map { m in
-                ModelRow(id: "agy:" + m.id, title: m.name, tip: "經 agy（Antigravity）· 用你的 Google AI 訂閱", checked: session.agyModel.map(AgyBridge.base) == AgyBridge.base(m.id))
+                ModelRow(id: "agy:" + m.id, title: m.name, tip: L("經 agy（Antigravity）· 用你的 Google AI 訂閱"), checked: session.agyModel.map(AgyBridge.base) == AgyBridge.base(m.id))
             }) { AgyBridge.base($0.id) == "agy:gemini-3.8-flash" }
             if !rows.isEmpty { out.append(rows) }
         }
         // ChatGPT：有裝 codex（OpenAI 的命令列工具，用 ChatGPT 帳號登入）才列
         if CodexBridge.installed {
             let rows = keep(CodexBridge.models.map { m in
-                ModelRow(id: "codex:" + m.id, title: m.name, tip: "經 Codex · 用你的 ChatGPT 帳號", checked: session.codexModel == m.id)
+                ModelRow(id: "codex:" + m.id, title: m.name, tip: L("經 Codex · 用你的 ChatGPT 帳號"), checked: session.codexModel == m.id)
             })
             if !rows.isEmpty { out.append(rows) }
         }
         // GitHub Copilot：有裝 copilot（GitHub 的命令列工具，用 GitHub 帳號登入）才列
         if CopilotBridge.installed {
             let rows = keep(CopilotBridge.models.map { m in
-                ModelRow(id: "copilot:" + m.id, title: m.name, tip: "經 Copilot CLI · 用你的 GitHub Copilot 額度", checked: session.copilotModel == m.id)
+                ModelRow(id: "copilot:" + m.id, title: m.name, tip: L("經 Copilot CLI · 用你的 GitHub Copilot 額度"), checked: session.copilotModel == m.id)
             })
             if !rows.isEmpty { out.append(rows) }
         }
@@ -644,7 +647,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     private func send(text: String, images: [(data: Data, mediaType: String)], now: Bool = false) {
         // 送出前再確認一次：這段對話如果正在別處進行，不要兩邊同時寫同一份紀錄
         if !session.isRunning, session.forkFrom == nil, liveElsewhere() != nil {
-            js("wb.notice(\(Self.jsString("這段對話剛好在別處進行中，這則沒有送出（避免兩邊同時寫同一份紀錄）。可以等那邊結束，或按「在這裡接手」複製一份。")))")
+            js("wb.notice(\(Self.jsString(L("這段對話剛好在別處進行中，這則沒有送出（避免兩邊同時寫同一份紀錄）。可以等那邊結束，或按「在這裡接手」複製一份。"))))")
             checkLive()
             return
         }
@@ -868,9 +871,9 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     private func checkLive() {
         // 這格自己的 claude 已經在跑（例如打開 App 時自動接回）：紀錄檔剛被寫過是自己寫的，不算在別處
         guard !session.isRunning, let l = liveElsewhere() else { return }
-        let whereText = l.kind == "recent" ? "別處（紀錄檔剛剛還在更新）" : (l.tmux.isEmpty ? "另一個終端機" : "tmux（\(l.tmux)）")
-        inputBar.setLocked("這段對話正在\(whereText)裡進行，這裡同步顯示。在那邊結束後就能在這裡接著聊；也可以複製一份在這裡繼續（那邊不受影響）。",
-                           button: "在這裡接手（複製一份）") { [weak self] in self?.takeOver() }
+        let whereText = l.kind == "recent" ? L("別處（紀錄檔剛剛還在更新）") : (l.tmux.isEmpty ? L("另一個終端機") : L("tmux（\(l.tmux)）"))
+        inputBar.setLocked(L("這段對話正在\(whereText)裡進行，這裡同步顯示。在那邊結束後就能在這裡接著聊；也可以複製一份在這裡繼續（那邊不受影響）。"),
+                           button: L("在這裡接手（複製一份）")) { [weak self] in self?.takeOver() }
         followTimer?.invalidate()
         var tick = 0
         followTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -881,7 +884,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             // 別處停下來（登記檔查不到、紀錄檔 2 分鐘沒動）才解鎖
             if tick % 3 == 0, self.liveElsewhere() == nil, self.quietFor(120) {
                 self.stopFollowing()
-                self.js("wb.notice(\(Self.jsString("那邊的對話已經結束，可以在這裡接著聊了。")))")
+                self.js("wb.notice(\(Self.jsString(L("那邊的對話已經結束，可以在這裡接著聊了。"))))")
             }
         }
     }
@@ -953,7 +956,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         pullNewLines()
         session.forkFrom = session.claudeSession
         stopFollowing()
-        js("wb.notice(\(Self.jsString("已經準備好在這裡接手：送出下一則訊息時會複製一份新的對話，原本那段在那邊照常進行。")))")
+        js("wb.notice(\(Self.jsString(L("已經準備好在這裡接手：送出下一則訊息時會複製一份新的對話，原本那段在那邊照常進行。"))))")
     }
 
     /// 對話裡點檔案路徑：一律在 Finder 裡把那個檔案選起來，不用預設 App 打開（使用者 10/25：「不要用 vscode 打開，請直接用 finder 的那個檔案位置」）。
@@ -1023,7 +1026,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
 
     /// 測試用：在畫面裡跑一段 JS，結果當字串回來
     func evaluate(_ code: String, _ done: @escaping (String) -> Void) {
-        web.evaluateJavaScript(code) { r, e in done(r.map { "\($0)" } ?? "錯誤：\(e?.localizedDescription ?? "?")") }
+        web.evaluateJavaScript(code) { r, e in done(r.map { "\($0)" } ?? L("錯誤：\(e?.localizedDescription ?? "?")")) }
     }
 
     /// NSFont 的粗細換成 CSS 的 font-weight（更紗黑體 SemiBold → 600）

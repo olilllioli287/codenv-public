@@ -83,7 +83,7 @@ struct ContextBlock: View {
         if !ids.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 Divider().padding(.vertical, 4)
-                Text(ids.count > 1 ? "這個分頁的上下文" : "目前這段對話的上下文").font(.system(size: 12 * s)).foregroundStyle(.secondary)
+                Text(L(ids.count > 1 ? "這個分頁的上下文" : "目前這段對話的上下文")).font(.system(size: 12 * s)).foregroundStyle(.secondary)
                 ForEach(ids, id: \.self) { id in row(id, focused: ids.count == 1 || id == store.currentWindow?.focused) }
             }
             .onAppear { ids.forEach(load) }
@@ -113,10 +113,10 @@ struct ContextBlock: View {
                 .font(.system(size: 10.5 * s)).foregroundStyle(.tertiary).lineLimit(1).padding(.leading, 18 * s)
             if let n, n >= 600_000 {
                 HStack(spacing: 6) {
-                    Text("很長了：每一輪都很慢、很吃額度").font(.system(size: 11 * s)).foregroundStyle(ContextMonitor.color(n))
-                    Button("壓縮") { compact(id) }
+                    Text(L("很長了：每一輪都很慢、很吃額度")).font(.system(size: 11 * s)).foregroundStyle(ContextMonitor.color(n))
+                    Button(L("壓縮")) { compact(id) }
                         .controlSize(.small)
-                        .help("送 /compact：Claude 把前面的內容濃縮成摘要，上下文會變小很多（原本的紀錄檔還在）")
+                        .help(L("送 /compact：Claude 把前面的內容濃縮成摘要，上下文會變小很多（原本的紀錄檔還在）"))
                 }
             }
         }

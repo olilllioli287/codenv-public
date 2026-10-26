@@ -73,8 +73,8 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
 
         bar.wantsLayer = true
         addSubview(bar)
-        for (b, sym, tip, act) in [(back, "chevron.left", "上一頁（⌘ [）", #selector(goBack)), (forward, "chevron.right", "下一頁（⌘ ]）", #selector(goForward)),
-                                   (reload, "arrow.clockwise", "重新載入（⌘ R）", #selector(doReload)), (gemini, "sparkle", "開 Gemini", #selector(openGemini))] {
+        for (b, sym, tip, act) in [(back, "chevron.left", L("上一頁（⌘ [）"), #selector(goBack)), (forward, "chevron.right", L("下一頁（⌘ ]）"), #selector(goForward)),
+                                   (reload, "arrow.clockwise", L("重新載入（⌘ R）"), #selector(doReload)), (gemini, "sparkle", L("開 Gemini"), #selector(openGemini))] {
             b.isBordered = false
             b.image = NSImage(systemSymbolName: sym, accessibilityDescription: tip)?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
             b.toolTip = tip
@@ -82,7 +82,7 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
             b.action = act
             bar.addSubview(b)
         }
-        address.placeholderString = "輸入網址或要搜尋的字"
+        address.placeholderString = L("輸入網址或要搜尋的字")
         address.font = .systemFont(ofSize: 12)
         address.bezelStyle = .roundedBezel
         address.focusRingType = .none
@@ -254,7 +254,7 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     func pageText(max: Int, done: @escaping (String) -> Void) {
         webView.evaluateJavaScript("document.body ? document.body.innerText : ''") { r, _ in
             let s = (r as? String) ?? ""
-            done(s.count > max ? String(s.prefix(max)) + "\n…（後面還有 \(s.count - max) 字，用 --max 調大）" : s)
+            done(s.count > max ? String(s.prefix(max)) + "\n" + L("…（後面還有 \(s.count - max) 字，用 --max 調大）") : s)
         }
     }
 
@@ -286,14 +286,14 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         guard let w = window else { return completionHandler() }
-        let a = NSAlert(); a.messageText = frame.request.url?.host ?? "網頁"; a.informativeText = message
+        let a = NSAlert(); a.messageText = frame.request.url?.host ?? L("網頁"); a.informativeText = message
         a.beginSheetModal(for: w) { _ in completionHandler() }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         guard let w = window else { return completionHandler(false) }
-        let a = NSAlert(); a.messageText = frame.request.url?.host ?? "網頁"; a.informativeText = message
-        a.addButton(withTitle: "好"); a.addButton(withTitle: "取消")
+        let a = NSAlert(); a.messageText = frame.request.url?.host ?? L("網頁"); a.informativeText = message
+        a.addButton(withTitle: L("好")); a.addButton(withTitle: L("取消"))
         a.beginSheetModal(for: w) { r in completionHandler(r == .alertFirstButtonReturn) }
     }
 
@@ -315,7 +315,7 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     /// 下載放「下載項目」，同名就加 (2)、(3)
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
         let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        let name = suggestedFilename.isEmpty ? "下載" : suggestedFilename.replacingOccurrences(of: "/", with: "_")
+        let name = suggestedFilename.isEmpty ? L("下載") : suggestedFilename.replacingOccurrences(of: "/", with: "_")
         var url = dir.appendingPathComponent(name)
         let base = url.deletingPathExtension().lastPathComponent, ext = url.pathExtension
         var n = 2

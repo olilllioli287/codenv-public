@@ -34,7 +34,7 @@ enum ModelCarry {
             if let s = msg["content"] as? String { parts = [s] }
             else if let blocks = msg["content"] as? [[String: Any]] {
                 parts = blocks.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }
-                if type == "user", blocks.contains(where: { $0["type"] as? String == "image" }) { parts.append("（附了一張圖）") }
+                if type == "user", blocks.contains(where: { $0["type"] as? String == "image" }) { parts.append(L("（附了一張圖）")) }
             }
             var text = parts.joined(separator: "\n")
             if type == "user" {

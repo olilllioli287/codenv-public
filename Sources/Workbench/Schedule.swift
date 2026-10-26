@@ -67,14 +67,18 @@ struct WakeSchedule: Codable, Identifiable, Equatable {
 
     /// 給人看的頻率（「每天 09:00、21:00」）
     var summary: String {
-        let t = times.joined(separator: "、")
+        let sep = L("、")
+        let t = times.joined(separator: sep)
         switch frequency {
         case "weekly":
-            let names = ["日", "一", "二", "三", "四", "五", "六"]
-            return "每週" + weekdays.sorted().map { names[($0 - 1) % 7] }.joined(separator: "、") + " " + t
-        case "monthly": return "每月 " + monthDays.sorted().map { "\($0) 號" }.joined(separator: "、") + " " + t
-        case "interval": return "每隔 \(intervalMinutes) 分鐘"
-        default: return "每天 " + t
+            let names = [L("日"), L("一"), L("二"), L("三"), L("四"), L("五"), L("六")]
+            let days = weekdays.sorted().map { names[($0 - 1) % 7] }.joined(separator: sep)
+            return L("每週\(days) \(t)")
+        case "monthly":
+            let days = monthDays.sorted().map { L("\($0) 號") }.joined(separator: sep)
+            return L("每月 \(days) \(t)")
+        case "interval": return L("每隔 \(intervalMinutes) 分鐘")
+        default: return L("每天 \(t)")
         }
     }
 }
@@ -252,26 +256,26 @@ struct ScheduleSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("排程：\(title)").font(.headline)
-            Text("會送給：\(model)。codenv 沒開著就不送；全部排程合計每天最多 \(ScheduleStore.dailyLimit) 則。")
+            Text(L("排程：\(title)")).font(.headline)
+            Text(L("會送給：\(model)。codenv 沒開著就不送；全部排程合計每天最多 \(ScheduleStore.dailyLimit) 則。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let d = Binding($draft) {
                 ScheduleForm(s: d)
                 HStack {
                     Spacer()
-                    Button("取消") { draft = nil }.keyboardShortcut(.cancelAction)
-                    Button("存") { if let s = draft { store.put(s) }; draft = nil }
+                    Button(L("取消")) { draft = nil }.keyboardShortcut(.cancelAction)
+                    Button(L("存")) { if let s = draft { store.put(s) }; draft = nil }
                         .keyboardShortcut(.defaultAction)
                         .disabled(draft?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
                 }
             } else {
                 let list = store.of(conversation)
-                if list.isEmpty { Text("還沒有排程").foregroundStyle(.secondary) }
+                if list.isEmpty { Text(L("還沒有排程")).foregroundStyle(.secondary) }
                 ForEach(list) { s in ScheduleRowView(s: s, edit: { draft = s }) }
                 HStack {
-                    Button { draft = WakeSchedule(conversation: conversation, text: "") } label: { Label("新增排程", systemImage: "plus") }
+                    Button { draft = WakeSchedule(conversation: conversation, text: "") } label: { Label(L("新增排程"), systemImage: "plus") }
                     Spacer()
-                    Button("關閉", action: close).keyboardShortcut(.cancelAction)
+                    Button(L("關閉"), action: close).keyboardShortcut(.cancelAction)
                 }
             }
         }
@@ -284,20 +288,20 @@ struct ScheduleForm: View {
     @Binding var s: WakeSchedule
     var body: some View {
         Form {
-            TextField("要送的話", text: $s.text, axis: .vertical).lineLimit(3...6)
-            Picker("頻率", selection: $s.frequency) {
-                Text("每天").tag("daily"); Text("每週").tag("weekly"); Text("每月").tag("monthly"); Text("每隔幾分鐘").tag("interval")
+            TextField(L("要送的話"), text: $s.text, axis: .vertical).lineLimit(3...6)
+            Picker(L("頻率"), selection: $s.frequency) {
+                Text(L("每天")).tag("daily"); Text(L("每週")).tag("weekly"); Text(L("每月")).tag("monthly"); Text(L("每隔幾分鐘")).tag("interval")
             }
             if s.frequency == "interval" {
-                Stepper("每隔 \(s.intervalMinutes) 分鐘", value: $s.intervalMinutes, in: 5...1440, step: 5)
+                Stepper(L("每隔 \(s.intervalMinutes) 分鐘"), value: $s.intervalMinutes, in: 5...1440, step: 5)
             } else {
-                TextField("時間（24 小時制，逗號分開，最多 6 個）", text: Binding(
+                TextField(L("時間（24 小時制，逗號分開，最多 6 個）"), text: Binding(
                     get: { s.times.joined(separator: ", ") },
                     set: { s.times = $0.split(whereSeparator: { ",，、 ".contains($0) }).map(String.init).filter { !$0.isEmpty } }))
                 if s.frequency == "weekly" {
                     HStack(spacing: 4) {
                         ForEach(1...7, id: \.self) { d in
-                            Toggle(["日", "一", "二", "三", "四", "五", "六"][d - 1], isOn: Binding(
+                            Toggle(L(["日", "一", "二", "三", "四", "五", "六"][d - 1]), isOn: Binding(
                                 get: { s.weekdays.contains(d) },
                                 set: { on in if on { s.weekdays.append(d) } else { s.weekdays.removeAll { $0 == d } } }))
                             .toggleStyle(.button)
@@ -305,17 +309,17 @@ struct ScheduleForm: View {
                     }
                 }
                 if s.frequency == "monthly" {
-                    TextField("每月幾號（逗號分開）", text: Binding(
+                    TextField(L("每月幾號（逗號分開）"), text: Binding(
                         get: { s.monthDays.map(String.init).joined(separator: ", ") },
                         set: { s.monthDays = $0.split(whereSeparator: { ",，、 ".contains($0) }).compactMap { Int($0) }.filter { (1...31).contains($0) } }))
                 }
             }
-            Toggle("有截止日", isOn: Binding(get: { s.until != nil }, set: { s.until = $0 ? (s.until ?? Date().addingTimeInterval(7 * 86400)) : nil }))
+            Toggle(L("有截止日"), isOn: Binding(get: { s.until != nil }, set: { s.until = $0 ? (s.until ?? Date().addingTimeInterval(7 * 86400)) : nil }))
             if s.until != nil {
-                DatePicker("截止", selection: Binding(get: { s.until ?? Date() }, set: { s.until = $0 }))
+                DatePicker(L("截止"), selection: Binding(get: { s.until ?? Date() }, set: { s.until = $0 }))
             }
-            Picker("聊天室沒開著時", selection: $s.whenClosed) {
-                Text("開起來送").tag("open"); Text("等它打開再送").tag("wait"); Text("跳過").tag("skip")
+            Picker(L("聊天室沒開著時"), selection: $s.whenClosed) {
+                Text(L("開起來送")).tag("open"); Text(L("等它打開再送")).tag("wait"); Text(L("跳過")).tag("skip")
             }
         }
         .formStyle(.grouped)
@@ -339,19 +343,19 @@ struct ScheduleRowView: View {
                     Text(s.summary).font(.system(size: 12))
                     Text(s.text).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
                     HStack(spacing: 8) {
-                        if let model { Text("送給 \(model)") }
-                        Text(s.enabled ? "下一次 " + (s.nextAt.map { Self.fmt($0) } ?? "—") : "暫停中")
-                        if s.pendingRun != nil { Text("等聊天室打開").foregroundStyle(.orange) }
+                        if let model { Text(L("送給 \(model)")) }
+                        Text(s.enabled ? L("下一次 \(s.nextAt.map { Self.fmt($0) } ?? "—")") : L("暫停中"))
+                        if s.pendingRun != nil { Text(L("等聊天室打開")).foregroundStyle(.orange) }
                     }.font(.system(size: 10.5)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let edit { Button("改", action: edit).controlSize(.small) }
-                Button(role: .destructive) { store.remove(s.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("刪掉這個排程")
+                if let edit { Button(L("改"), action: edit).controlSize(.small) }
+                Button(role: .destructive) { store.remove(s.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help(L("刪掉這個排程"))
             }
             if !s.runs.isEmpty {
-                DisclosureGroup("最近 \(s.runs.count) 次", isExpanded: $showRuns) {
+                DisclosureGroup(L("最近 \(s.runs.count) 次"), isExpanded: $showRuns) {
                     ForEach(Array(s.runs.reversed().enumerated()), id: \.offset) { _, r in
-                        Text("\(Self.fmt(r.due))　\(r.result)").font(.system(size: 10.5)).foregroundStyle(r.result == "已送出" ? .secondary : Color.orange)
+                        Text(L("\(Self.fmt(r.due))　\(r.result)")).font(.system(size: 10.5)).foregroundStyle(r.result == "已送出" ? .secondary : Color.orange)
                     }
                 }.font(.system(size: 10.5))
             }
@@ -374,13 +378,13 @@ struct SchedulesPage: View {
         Form {
             Section {
                 if schedules.items.isEmpty {
-                    Text("還沒有排程。在側欄的對話上按右鍵 →「排程…」新增。").foregroundStyle(.secondary)
+                    Text(L("還沒有排程。在側欄的對話上按右鍵 →「排程…」新增。")).foregroundStyle(.secondary)
                 }
                 ForEach(schedules.items) { s in
-                    ScheduleRowView(s: s, model: store.displayModel(s.conversation), conversationTitle: store.conversation(s.conversation)?.title ?? "（對話已刪除）")
+                    ScheduleRowView(s: s, model: store.displayModel(s.conversation), conversationTitle: store.conversation(s.conversation)?.title ?? L("（對話已刪除）"))
                 }
             } footer: {
-                Text("codenv 沒開著就不送，重開時錯過好幾次只補一次。全部排程合計每天最多 \(ScheduleStore.dailyLimit) 則，超過的記成「超過每日上限」。送出去的訊息開頭會寫「這是排程自動送的」。")
+                Text(L("codenv 沒開著就不送，重開時錯過好幾次只補一次。全部排程合計每天最多 \(ScheduleStore.dailyLimit) 則，超過的記成「超過每日上限」。送出去的訊息開頭會寫「這是排程自動送的」。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

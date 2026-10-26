@@ -18,6 +18,20 @@
   const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
   const lines = (s) => (s ? String(s).replace(/\n$/, '').split('\n').length : 0);
 
+  // ───────────────────────── 介面語言 ─────────────────────────
+  // L('中文原文') 或 L`共 ${n} 筆`：查 Swift 傳來的對照表（wb.setLocale，跟 Swift 的 L() 同一份 en.json），查不到就原文。中文介面表是空的，原樣輸出
+  let LOCALE = window.__LOCALE || {};      // 英文介面：Swift 在頁面開始前放好（ChatPane 的 WKUserScript）；之後 wb.setLocale 也會再給一次
+  const L = (s, ...vals) => {
+    const tagged = Array.isArray(s) && s.raw;
+    const key = tagged ? s.join('%@') : s;
+    const args = tagged ? vals : [];
+    let out = (Object.prototype.hasOwnProperty.call(LOCALE, key) && LOCALE[key]) ? LOCALE[key] : key;     // 值是空字串＝還沒翻，顯示中文原文
+    if (LOCALE.__pseudo) out = '⟪' + key + '⟫';     // 測試用（--lang pseudo）：標出哪些字有包 L()
+    args.forEach((a, i) => { out = out.split('%' + (i + 1) + '$@').join(String(a)); });
+    let n = 0;
+    return out.replace(/%@/g, () => (n < args.length ? String(args[n++]) : '%@'));
+  };
+
   let followGuard = 0;
   function post(msg) {
     try { window.webkit.messageHandlers.wb.postMessage(msg); }
@@ -59,9 +73,9 @@
     log.setAttribute('aria-live', 'polite');
     typing = root.appendChild(el('div', 'typing'));
     typing.hidden = true;
-    typing.innerHTML = '<span class="typing-dots"><i></i><i></i><i></i></span><span class="typing-t">Claude 正在處理</span><span class="typing-s"></span>';
+    typing.innerHTML = `<span class="typing-dots"><i></i><i></i><i></i></span><span class="typing-t">${L('Claude 正在處理')}</span><span class="typing-s"></span>`;
     queueBox = root.appendChild(el('div', 'queue-box'));   // 排隊中的訊息放在「正在處理」下面
-    jumpBtn = document.body.appendChild(el('button', 'jump', '↓ 最新'));
+    jumpBtn = document.body.appendChild(el('button', 'jump', L('↓ 最新')));
     jumpBtn.type = 'button';
     jumpBtn.hidden = true;
     jumpBtn.addEventListener('click', jumpToBottom);
@@ -88,7 +102,7 @@
     if (sc().scrollTop < 800) {
       S.loadingOlder = true;
       const n = log.querySelector('.notice.more-top');
-      if (n) n.textContent = '載入更早的訊息…';
+      if (n) n.textContent = L('載入更早的訊息…');
       post({ type: 'loadOlder' });
     }
   }, { passive: true });
@@ -129,7 +143,7 @@
     const show = !S.following && distFromBottom() > 120;
     if (show) {
       const waiting = [...S.perms.values()].some((p) => p.pending);
-      jumpBtn.textContent = waiting ? '↓ 等你回應' : '↓ 最新';
+      jumpBtn.textContent = waiting ? L('↓ 等你回應') : L('↓ 最新');
       jumpBtn.classList.toggle('attn', waiting);
     }
     if (jumpBtn.hidden === show) jumpBtn.hidden = !show;
@@ -278,7 +292,7 @@
     const img = e.target;
     if (!(img instanceof HTMLImageElement) || !img.classList.contains('md-img') || !img.dataset.path) return;
     const span = el('span', 'md-img-missing');
-    span.append('🖼 ' + (img.alt || '圖片') + '（載不到：');
+    span.append('🖼 ' + (img.alt || L('圖片')) + L('（載不到：'));
     span.appendChild(pathEl(img.dataset.path));
     span.append('）');
     img.replaceWith(span);
@@ -306,7 +320,7 @@
         // 網路上的圖不自動載入：被網頁誘導的 Claude 可以把資料藏在圖片網址裡送出去。改成連結，點了才用瀏覽器開
         if (/^https?:/i.test(href)) {
           let host = ''; try { host = new URL(href).host; } catch (_) {}
-          return `<a href="${esc(href)}" class="md-img-remote" title="${esc(href)}">🖼 ${esc(text || '網路圖片')}（${esc(host)}，點了才開）</a>`;
+          return `<a href="${esc(href)}" class="md-img-remote" title="${esc(href)}">🖼 ${esc(text || L('網路圖片'))}${L('（')}${esc(host)}${L('，點了才開）')}</a>`;
         }
         if (/^data:/i.test(href)) return `<img class="md-img" src="${esc(href)}" alt="${esc(text || '')}" loading="lazy">`;
         // 本機路徑（/…、~/…、file://…）：網頁只能讀 chat 資料夾，改走 codenv-img://（LocalImages.swift 讀檔，只回圖片）
@@ -352,10 +366,10 @@
     let body;
     if (l && mode === 'sync' && text.length < 60000) {
       try { body = hljs.highlight(text, { language: l, ignoreIllegals: true }).value; } catch (_) { body = esc(text); }
-      return `<div class="code"><div class="code-h"><span class="code-l">${label}</span><button class="copy icon-btn" type="button" title="複製" aria-label="複製">${COPY_ICON}</button></div><pre><code class="hljs">${body}</code></pre></div>`;
+      return `<div class="code"><div class="code-h"><span class="code-l">${label}</span><button class="copy icon-btn" type="button" title="${L('複製')}" aria-label="${L('複製')}">${COPY_ICON}</button></div><pre><code class="hljs">${body}</code></pre></div>`;
     }
     const lazy = l && mode === 'lazy' ? ` data-hl="${l}"` : '';
-    return `<div class="code"><div class="code-h"><span class="code-l">${label}</span><button class="copy icon-btn" type="button" title="複製" aria-label="複製">${COPY_ICON}</button></div><pre><code${lazy}>${esc(text)}</code></pre></div>`;
+    return `<div class="code"><div class="code-h"><span class="code-l">${label}</span><button class="copy icon-btn" type="button" title="${L('複製')}" aria-label="${L('複製')}">${COPY_ICON}</button></div><pre><code${lazy}>${esc(text)}</code></pre></div>`;
   }
   const lazyHl = new IntersectionObserver((entries) => {
     for (const en of entries) {
@@ -846,7 +860,7 @@
       if (hi > 0) box.appendChild(el('div', 'diff-gap', '⋯'));
       let o = h.oldStart, n = h.newStart;
       for (const l of h.lines) {
-        if (++count > 800) { if (count === 801) box.appendChild(el('div', 'diff-gap', '（差異太長，只顯示前 800 行）')); continue; }
+        if (++count > 800) { if (count === 801) box.appendChild(el('div', 'diff-gap', L('（差異太長，只顯示前 800 行）'))); continue; }
         const row = el('div', 'dl ' + (l.t === '+' ? 'add' : l.t === '-' ? 'del' : 'ctx'));
         const on = el('span', 'ln', l.t === '+' ? '' : String(o));
         const nn = el('span', 'ln', l.t === '-' ? '' : String(n));
@@ -906,7 +920,7 @@
     const ls = t.split('\n');
     if (ls.length > maxLines) {
       pre.textContent = ls.slice(0, maxLines).join('\n');
-      const more = wrap.appendChild(el('button', 'more', `顯示全部（共 ${ls.length} 行）`));
+      const more = wrap.appendChild(el('button', 'more', L`顯示全部（共 ${ls.length} 行）`));
       more.type = 'button';
       more.addEventListener('click', () => { pre.textContent = t; more.remove(); });
     } else pre.textContent = t;
@@ -920,7 +934,7 @@
     const show = ls.length > maxLines ? ls.slice(0, maxLines).join('\n') : String(text);
     highlightTo(code, show, lang);
     if (ls.length > maxLines) {
-      const more = wrap.appendChild(el('button', 'more', `顯示全部（共 ${ls.length} 行）`));
+      const more = wrap.appendChild(el('button', 'more', L`顯示全部（共 ${ls.length} 行）`));
       more.type = 'button';
       more.addEventListener('click', () => { highlightTo(code, String(text), lang); more.remove(); });
     }
@@ -932,7 +946,7 @@
       const img = box.appendChild(el('img'));
       img.src = u;
       img.loading = 'lazy';
-      img.alt = '圖片';
+      img.alt = L('圖片');
     }
     return box;
   }
@@ -951,7 +965,7 @@
     constructor(ctx, id, name, input) {
       this.ctx = ctx;
       this.id = id;
-      this.name = name || '工具';
+      this.name = name || L('工具');
       this.input = input || {};
       this.partial = '';
       this.result = null;     // {text, images}
@@ -1062,9 +1076,9 @@
         if (target.nodeType) this.sum.appendChild(target); else this.sum.appendChild(el('span', 'tgt', target));
       }
       let m = meta || '';
-      if (this.state === 'waiting') m = '等你允許';
-      else if (this.state === 'denied') m = '已拒絕';
-      else if (this.state === 'stopped') m = '已停止';
+      if (this.state === 'waiting') m = L('等你允許');
+      else if (this.state === 'denied') m = L('已拒絕');
+      else if (this.state === 'stopped') m = L('已停止');
       this.meta.innerHTML = '';
       if (m && typeof m === 'object') this.meta.appendChild(m); else this.meta.textContent = m;
     }
@@ -1075,23 +1089,23 @@
       switch (n) {
         case 'Bash': {
           const cmd = f('command');
-          return { verb: '執行', target: cmd ? codeT(cmd) : '指令…', meta: this.tur && this.tur.interrupted ? '已中斷' : '' };
+          return { verb: L('執行'), target: cmd ? codeT(cmd) : L('指令…'), meta: this.tur && this.tur.interrupted ? L('已中斷') : '' };
         }
-        case 'BashOutput': return { verb: '查看背景指令輸出', target: '' };
-        case 'KillShell': case 'KillBash': return { verb: '停止背景指令', target: '' };
+        case 'BashOutput': return { verb: L('查看背景指令輸出'), target: '' };
+        case 'KillShell': case 'KillBash': return { verb: L('停止背景指令'), target: '' };
         case 'Read': {
           const off = this.input.offset, lim = this.input.limit;
           let meta = '';
-          if (lim) meta = `第 ${off || 1}–${(off || 1) + lim - 1} 行`;
-          else if (off) meta = `第 ${off} 行起`;
-          if (this.tur && this.tur.type === 'image') meta = '圖片';
-          return { verb: '讀取', target: p('file_path') || '檔案…', meta };
+          if (lim) meta = L`第 ${off || 1}–${(off || 1) + lim - 1} 行`;
+          else if (off) meta = L`第 ${off} 行起`;
+          if (this.tur && this.tur.type === 'image') meta = L('圖片');
+          return { verb: L('讀取'), target: p('file_path') || L('檔案…'), meta };
         }
         case 'Write': {
           const c = f('content');
           const isNew = this.tur ? this.tur.type === 'create' : null;
           const ln = this.inputDone ? lines(c) : (this.partial.match(/\\n/g) || []).length;
-          return { verb: isNew === false ? '覆寫' : isNew ? '建立' : '寫入', target: p('file_path') || '檔案…', meta: ln ? `${ln} 行${this.inputDone ? '' : '…'}` : '' };
+          return { verb: isNew === false ? L('覆寫') : isNew ? L('建立') : L('寫入'), target: p('file_path') || L('檔案…'), meta: ln ? L`${ln} 行${this.inputDone ? '' : '…'}` : '' };
         }
         case 'Edit': case 'MultiEdit': {
           let meta = '';
@@ -1099,27 +1113,27 @@
             const { add, del } = countHunks(this.hunks());
             meta = this.diffMeta(add, del);
           }
-          return { verb: '編輯', target: p('file_path') || '檔案…', meta };
+          return { verb: L('編輯'), target: p('file_path') || L('檔案…'), meta };
         }
-        case 'NotebookEdit': return { verb: '編輯筆記本', target: p('notebook_path') };
-        case 'Glob': return { verb: '找檔案', target: f('pattern') ? codeT(f('pattern')) : '', meta: this.countMeta('個檔案') };
-        case 'Grep': return { verb: '搜尋', target: f('pattern') ? codeT(f('pattern')) : '', meta: f('path') ? '於 ' + shortPath(f('path')) : this.countMeta('筆') };
-        case 'LS': return { verb: '列出', target: p('path') };
-        case 'WebFetch': { const u = f('url') || ''; return { verb: '讀取網頁', target: el('span', 'tgt', clip(u.replace(/^https?:\/\//, ''), 80)) }; }
-        case 'WebSearch': return { verb: '搜尋網路', target: f('query') ? `「${clip(f('query'), 80)}」` : '' };
+        case 'NotebookEdit': return { verb: L('編輯筆記本'), target: p('notebook_path') };
+        case 'Glob': return { verb: L('找檔案'), target: f('pattern') ? codeT(f('pattern')) : '', meta: this.countMeta(L('個檔案')) };
+        case 'Grep': return { verb: L('搜尋'), target: f('pattern') ? codeT(f('pattern')) : '', meta: f('path') ? L('於 ') + shortPath(f('path')) : this.countMeta(L('筆')) };
+        case 'LS': return { verb: L('列出'), target: p('path') };
+        case 'WebFetch': { const u = f('url') || ''; return { verb: L('讀取網頁'), target: el('span', 'tgt', clip(u.replace(/^https?:\/\//, ''), 80)) }; }
+        case 'WebSearch': return { verb: L('搜尋網路'), target: f('query') ? L`「${clip(f('query'), 80)}」` : '' };
         case 'TodoWrite': {
           const t = this.input.todos || [];
           const done = t.filter((x) => x.status === 'completed').length;
-          return { verb: '待辦清單', target: '', meta: t.length ? `完成 ${done}/${t.length}` : '' };
+          return { verb: L('待辦清單'), target: '', meta: t.length ? L`完成 ${done}/${t.length}` : '' };
         }
         case 'Task': case 'Agent': return this.taskSummary();
-        case 'AskUserQuestion': return { verb: '提問', target: '' };
-        case 'ExitPlanMode': return { verb: '計畫', target: '', meta: '' };
-        case 'EnterPlanMode': return { verb: '進入規劃模式', target: '' };
-        case 'Skill': return { verb: '使用技能', target: f('skill') ? codeT(f('skill')) : '' };
-        case 'ToolSearch': return { verb: '載入工具', target: f('query') ? codeT(f('query')) : '' };
-        case 'SendMessage': return { verb: '傳訊息給', target: f('to') || f('recipient') || '' };
-        case 'TaskStop': return { verb: '停止子代理', target: '' };
+        case 'AskUserQuestion': return { verb: L('提問'), target: '' };
+        case 'ExitPlanMode': return { verb: L('計畫'), target: '', meta: '' };
+        case 'EnterPlanMode': return { verb: L('進入規劃模式'), target: '' };
+        case 'Skill': return { verb: L('使用技能'), target: f('skill') ? codeT(f('skill')) : '' };
+        case 'ToolSearch': return { verb: L('載入工具'), target: f('query') ? codeT(f('query')) : '' };
+        case 'SendMessage': return { verb: L('傳訊息給'), target: f('to') || f('recipient') || '' };
+        case 'TaskStop': return { verb: L('停止子代理'), target: '' };
         default: {
           const mm = n.match(/^mcp__(.+?)__(.+)$/);
           const firstStr = Object.values(this.input).find((v) => typeof v === 'string' && v.length < 200);
@@ -1135,7 +1149,7 @@
     }
     countMeta(unit) {
       if (!this.result || this.isError) return '';
-      if (this.tur && typeof this.tur.numFiles === 'number') return `${this.tur.numFiles} ${unit}`;
+      if (this.tur && typeof this.tur.numFiles === 'number') return `${this.tur.numFiles} ${unit}`;     // unit 由呼叫端用 L('…') 包好
       return '';
     }
     taskSummary() {
@@ -1147,9 +1161,9 @@
         const t = s.target && s.target.nodeType ? s.target.textContent : (s.target || '');
         meta = clip(`${s.verb} ${t}`.trim(), 60);
       } else if (this.tur && this.tur.totalToolUseCount != null) {
-        meta = `${this.tur.totalToolUseCount} 個步驟 · ${(this.tur.totalDurationMs / 1000).toFixed(1)} 秒`;
-      } else if (this.steps) meta = `${this.steps} 個步驟`;
-      return { verb: type && type !== 'general-purpose' ? `子代理（${type}）` : '子代理', target: d ? el('span', 'tgt', d) : '', meta };
+        meta = L`${this.tur.totalToolUseCount} 個步驟 · ${(this.tur.totalDurationMs / 1000).toFixed(1)} 秒`;
+      } else if (this.steps) meta = L`${this.steps} 個步驟`;
+      return { verb: type && type !== 'general-purpose' ? L`子代理（${type}）` : L('子代理'), target: d ? el('span', 'tgt', d) : '', meta };
     }
     hunks() {
       if (this._hunks && this._hunksFrom === this.tur) return this._hunks;
@@ -1204,9 +1218,9 @@
               const er = this.tur && typeof this.tur === 'object' ? (this.tur.stderr || '') : '';
               if (out) b.appendChild(preEl(out));
               if (er) b.appendChild(preEl(er, 'stderr'));
-              if (!out && !er) b.appendChild(el('div', 'note', '（沒有輸出）'));
+              if (!out && !er) b.appendChild(el('div', 'note', L('（沒有輸出）')));
               if (r.images.length) b.appendChild(imagesEl(r.images));
-              if (this.exitCode !== null && this.exitCode !== undefined) b.appendChild(el('div', 'note', `結束碼 ${this.exitCode}`));
+              if (this.exitCode !== null && this.exitCode !== undefined) b.appendChild(el('div', 'note', L`結束碼 ${this.exitCode}`));
             }
           }
           return;
@@ -1254,7 +1268,7 @@
           const keys = Object.keys(inp);
           if (keys.length) {
             const det = b.appendChild(el('details', 'args'));
-            det.appendChild(el('summary', '', '參數'));
+            det.appendChild(el('summary', '', L('參數')));
             det.appendChild(codeEl(JSON.stringify(inp, null, 2), 'json', 200));
             if (keys.length <= 3 && JSON.stringify(inp).length < 300) det.open = true;
           }
@@ -1265,7 +1279,7 @@
               if (js) b.appendChild(codeEl(js, 'json'));
               else if (r.text) b.appendChild(preEl(r.text));
               if (r.images.length) b.appendChild(imagesEl(r.images));
-              if (!r.text && !r.images.length) b.appendChild(el('div', 'note', '（沒有輸出）'));
+              if (!r.text && !r.images.length) b.appendChild(el('div', 'note', L('（沒有輸出）')));
             }
           }
         }
@@ -1275,7 +1289,7 @@
     refreshTask() {
       const prompt = this.input.prompt;
       if (prompt && !this.promptEl.childNodes.length) {
-        this.promptEl.appendChild(el('div', 'task-pl', '交代的工作'));
+        this.promptEl.appendChild(el('div', 'task-pl', L('交代的工作')));
         const t = this.promptEl.appendChild(el('div', 'task-pt'));
         t.textContent = prompt;
         t.addEventListener('click', () => t.classList.toggle('full'));
@@ -1315,20 +1329,20 @@
       this.el.innerHTML = '';
       this.el.classList.toggle('pending', this.pending);
       this.el.classList.toggle('answered', !!this.answers);
-      const head = this.el.appendChild(el('div', 'ask-t', this.answers ? `${S.agent} 問了你` : this.pending ? `${S.agent} 想問你` : `${S.agent} 的問題`));
-      if (!qs.length) { head.textContent = 'Claude 正在準備問題…'; return; }
+      const head = this.el.appendChild(el('div', 'ask-t', this.answers ? L`${S.agent} 問了你` : this.pending ? L`${S.agent} 想問你` : L`${S.agent} 的問題`));
+      if (!qs.length) { head.textContent = L('Claude 正在準備問題…'); return; }
       this.qs = qs.map(() => ({ sel: new Set(), other: '' }));
       qs.forEach((q, qi) => {
         const box = this.el.appendChild(el('div', 'q'));
         const qh = box.appendChild(el('div', 'q-h'));
         if (q.header) qh.appendChild(el('span', 'chip', q.header));
         qh.appendChild(el('span', 'q-q', q.question || ''));
-        if (q.multiSelect) qh.appendChild(el('span', 'q-hint', '可複選'));
+        if (q.multiSelect) qh.appendChild(el('span', 'q-hint', L('可複選')));
         const opts = box.appendChild(el('div', 'opts'));
         opts.setAttribute('role', q.multiSelect ? 'group' : 'radiogroup');
         const chosen = this.answers ? String(this.answers[q.question] ?? '') : null;
         const chosenSet = chosen != null ? new Set(chosen.split(/、|, /)) : null;
-        const all = [...(q.options || []), { label: '其他…', other: true }];
+        const all = [...(q.options || []), { label: L('其他…'), other: true }];
         all.forEach((o, oi) => {
           const btn = opts.appendChild(el('button', 'opt' + (o.other ? ' other' : '')));
           btn.type = 'button';
@@ -1344,7 +1358,7 @@
             if (o.other) {
               const known = new Set((q.options || []).map((x) => x.label));
               const extra = [...chosenSet].filter((x) => x && !known.has(x));
-              if (extra.length) { btn.classList.add('on'); tx.querySelector('.opt-l').textContent = '其他：' + extra.join('、'); } else btn.remove();
+              if (extra.length) { btn.classList.add('on'); tx.querySelector('.opt-l').textContent = L('其他：') + extra.join('、'); } else btn.remove();
             }
             return;
           }
@@ -1354,7 +1368,7 @@
         if (this.pending) {
           const inp = box.appendChild(el('input', 'other-in'));
           inp.type = 'text';
-          inp.placeholder = '輸入你的答案（⌘ Enter 送出）';
+          inp.placeholder = L('輸入你的答案（⌘ Enter 送出）');
           inp.hidden = true;
           inp.addEventListener('input', () => { this.qs[qi].other = inp.value; this.validate(); });
           // 只有 ⌘ Enter 送出：中文選字按的 Enter 在 WebKit 常常沒標 isComposing，單按 Enter 會誤送
@@ -1367,11 +1381,11 @@
       });
       if (this.pending) {
         const f = this.el.appendChild(el('div', 'btns'));
-        this.sendBtn = f.appendChild(el('button', 'primary', '送出答案'));
+        this.sendBtn = f.appendChild(el('button', 'primary', L('送出答案')));
         this.sendBtn.type = 'button';
         this.sendBtn.disabled = true;
         this.sendBtn.addEventListener('click', () => this.submit());
-        const skip = f.appendChild(el('button', 'ghost', '略過'));
+        const skip = f.appendChild(el('button', 'ghost', L('略過')));
         skip.type = 'button';
         skip.addEventListener('click', () => this.skip());
       } else if (this.resolvedNote) this.el.appendChild(el('div', 'note', this.resolvedNote));
@@ -1417,14 +1431,14 @@
       if (!this.pending) return;
       post({ type: 'permission', request_id: this.reqId, behavior: 'deny', message: '使用者略過了這個問題，請不要再問，照你的判斷繼續。' });
       this.pending = false;
-      this.resolvedNote = '已略過';
+      this.resolvedNote = L('已略過');
       this.render();
       updateJump();
     }
     resolved(note) {
       if (!this.pending) return;
       this.pending = false;
-      this.resolvedNote = note || '已處理';
+      this.resolvedNote = note || L('已處理');
       this.render();
       updateJump();
     }
@@ -1436,7 +1450,7 @@
         for (const m of t.matchAll(/"([^"]+)"="([^"]*)"/g)) ans[m[1]] = m[2];
         if (Object.keys(ans).length) this.answers = ans;
       }
-      if (isError && !this.answers) this.resolvedNote = this.resolvedNote || '沒有回答';
+      if (isError && !this.answers) this.resolvedNote = this.resolvedNote || L('沒有回答');
       this.pending = false;
       if (this.reqId) S.perms.delete(this.reqId);
       this.render();
@@ -1446,8 +1460,8 @@
 
   // ───────────────────────── 權限卡片 ─────────────────────────
   const PERM_TITLE = {
-    Bash: '執行指令', Write: '寫入檔案', Edit: '編輯檔案', MultiEdit: '編輯檔案', NotebookEdit: '編輯筆記本', Read: '讀取檔案',
-    WebFetch: '讀取網頁', WebSearch: '搜尋網路', Glob: '找檔案', Grep: '搜尋檔案內容', Task: '開子代理', Agent: '開子代理', ExitPlanMode: '照這個計畫開始做',
+    Bash: L('執行指令'), Write: L('寫入檔案'), Edit: L('編輯檔案'), MultiEdit: L('編輯檔案'), NotebookEdit: L('編輯筆記本'), Read: L('讀取檔案'),
+    WebFetch: L('讀取網頁'), WebSearch: L('搜尋網路'), Glob: L('找檔案'), Grep: L('搜尋檔案內容'), Task: L('開子代理'), Agent: L('開子代理'), ExitPlanMode: L('照這個計畫開始做'),
   };
   function suggestionText(sugs) {
     const parts = [];
@@ -1455,10 +1469,10 @@
     for (const s of sugs || []) {
       if (s.destination && s.destination !== 'session') persistent = true;
       if (s.type === 'setMode') {
-        parts.push({ acceptEdits: '自動接受檔案編輯', bypassPermissions: '略過所有權限詢問', plan: '規劃模式', default: '一般模式' }[s.mode] || s.mode);
+        parts.push({ acceptEdits: L('自動接受檔案編輯'), bypassPermissions: L('略過所有權限詢問'), plan: L('規劃模式'), default: L('一般模式') }[s.mode] || s.mode);
       } else if (s.type === 'addRules' || s.type === 'replaceRules') {
         for (const r of s.rules || []) parts.push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
-      } else if (s.type === 'addDirectories') parts.push('存取 ' + (s.directories || []).map(shortPath).join('、'));
+      } else if (s.type === 'addDirectories') parts.push(L('存取 ') + (s.directories || []).map(shortPath).join('、'));
     }
     return { text: parts.join('、'), persistent };
   }
@@ -1482,7 +1496,7 @@
       this.el.innerHTML = '';
       const t = this.el.appendChild(el('div', 'perm-t'));
       t.appendChild(el('span', 'perm-ic', '!'));
-      t.appendChild(el('span', '', `要允許 ${S.agent} ${PERM_TITLE[r.tool_name] || '使用 ' + (r.display_name || r.tool_name)}嗎？`));
+      t.appendChild(el('span', '', L`要允許 ${S.agent} ${PERM_TITLE[r.tool_name] || L('使用 ') + (r.display_name || r.tool_name)}嗎？`));
       const d = this.el.appendChild(el('div', 'perm-d'));
       const lang = langFromPath(inp.file_path);
       switch (r.tool_name) {
@@ -1517,30 +1531,30 @@
       }
       if (r.description && r.tool_name !== 'Bash' && r.description !== shortPath(inp.file_path) && !String(inp.file_path || '').endsWith(r.description))
         d.appendChild(el('div', 'note', r.description));
-      if (r.blocked_path) d.appendChild(el('div', 'note', '碰到的路徑：' + shortPath(r.blocked_path)));
+      if (r.blocked_path) d.appendChild(el('div', 'note', L('碰到的路徑：') + shortPath(r.blocked_path)));
       if (!this.pending) {
         this.el.classList.remove('pending');
         this.el.classList.add('done', this.decision || 'other');
-        const s = el('div', 'perm-res', this.note || '已處理');
+        const s = el('div', 'perm-res', this.note || L('已處理'));
         this.el.appendChild(s);
         d.hidden = true;
         t.addEventListener('click', () => { d.hidden = !d.hidden; });
         return;
       }
       const btns = this.el.appendChild(el('div', 'btns'));
-      const allow = btns.appendChild(el('button', 'primary', '允許'));
+      const allow = btns.appendChild(el('button', 'primary', L('允許')));
       allow.type = 'button';
       allow.addEventListener('click', () => this.decide('allow'));
       const sugs = r.permission_suggestions || [];
       if (sugs.length) {
         const st = suggestionText(sugs);
-        const all = btns.appendChild(el('button', '', st.persistent ? '以後都允許' : '這次對話都允許'));
+        const all = btns.appendChild(el('button', '', st.persistent ? L('以後都允許') : L('這次對話都允許')));
         all.type = 'button';
         all.title = st.text;
         all.addEventListener('click', () => this.decide('always'));
-        if (st.text) this.el.insertBefore(el('div', 'perm-sug', (st.persistent ? '「以後都允許」會記住：' : '「這次對話都允許」會開啟：') + st.text), btns);
+        if (st.text) this.el.insertBefore(el('div', 'perm-sug', (st.persistent ? L('「以後都允許」會記住：') : L('「這次對話都允許」會開啟：')) + st.text), btns);
       }
-      const deny = btns.appendChild(el('button', 'danger', '拒絕'));
+      const deny = btns.appendChild(el('button', 'danger', L('拒絕')));
       deny.type = 'button';
       deny.addEventListener('click', () => this.decide('deny'));
     }
@@ -1549,13 +1563,13 @@
       const r = this.req;
       if (kind === 'deny') {
         post({ type: 'permission', request_id: this.reqId, behavior: 'deny', message: '使用者拒絕了這個操作。' });
-        this.finish('deny', '已拒絕');
+        this.finish('deny', L('已拒絕'));
         if (this.tool) { this.tool.denied = true; this.tool.setState('denied'); this.tool.refreshHead(); }
       } else {
         const m = { type: 'permission', request_id: this.reqId, behavior: 'allow', updatedInput: r.input || {} };
         if (kind === 'always') m.updatedPermissions = r.permission_suggestions || [];
         post(m);
-        this.finish('allow', kind === 'always' ? (suggestionText(r.permission_suggestions).persistent ? '已允許，以後都允許' : '已允許，這次對話都允許') : '已允許');
+        this.finish('allow', kind === 'always' ? (suggestionText(r.permission_suggestions).persistent ? L('已允許，以後都允許') : L('已允許，這次對話都允許')) : L('已允許'));
         if (this.tool && this.tool.state === 'waiting') { this.tool.setState('running'); this.tool.refreshHead(); }
       }
     }
@@ -1571,7 +1585,7 @@
     resolved(note) {
       if (!this.pending) return;
       if (this.tool && this.tool.state === 'waiting') { this.tool.setState(this.tool.result ? (this.tool.isError ? 'error' : 'done') : 'running'); this.tool.refreshHead(); }
-      this.finish('other', note || '已處理');
+      this.finish('other', note || L('已處理'));
     }
   }
 
@@ -1606,9 +1620,9 @@
       tx.textContent = text;
       if (text.length > 900 || lines(text) > 14) {
         tx.classList.add('clamp');
-        const more = b.appendChild(el('button', 'more', '展開全部'));
+        const more = b.appendChild(el('button', 'more', L('展開全部')));
         more.type = 'button';
-        more.addEventListener('click', () => { const c = tx.classList.toggle('clamp'); more.textContent = c ? '展開全部' : '收起'; });
+        more.addEventListener('click', () => { const c = tx.classList.toggle('clamp'); more.textContent = c ? L('展開全部') : L('收起'); });
       }
     }
     (opts.queued ? queueBox : log).appendChild(t);
@@ -1619,9 +1633,9 @@
     let n = t.querySelector('.queued-note');
     if (!n) n = t.appendChild(el('div', 'queued-note'));
     n.innerHTML = '';
-    if (now) { n.textContent = '插話中…（Claude 停下目前這一步就讀）'; return; }
-    n.appendChild(document.createTextNode('排隊中：Claude 做完這一步就會讀到 · '));
-    const a = n.appendChild(el('button', 'queued-now', '馬上插話（⌃ Enter）'));
+    if (now) { n.textContent = L('插話中…（Claude 停下目前這一步就讀）'); return; }
+    n.appendChild(document.createTextNode(L('排隊中：Claude 做完這一步就會讀到 · ')));
+    const a = n.appendChild(el('button', 'queued-now', L('馬上插話（⌃ Enter）')));
     a.type = 'button';
     a.addEventListener('click', () => { queueNote(t, uuid, true); post({ type: 'sendNow', uuid }); });
   }
@@ -1637,11 +1651,11 @@
     const stopped = S.interrupted;
     const isErr = o.is_error && !(stopped && (o.subtype === 'error_during_execution' || !o.subtype));
     const parts = [];
-    if (!stopped && !isErr) parts.push('完成');
+    if (!stopped && !isErr) parts.push(L('完成'));
     if (o.duration_ms) parts.push(fmtDur(o.duration_ms));
     // 不顯示 total_cost_usd：訂閱登入時那只是「換算成 API 價格」的估計，不會真的收費，顯示出來容易誤會
     if (isErr) {
-      const msg = o.result || (Array.isArray(o.errors) && o.errors.join('；')) || ({ error_max_turns: '達到回合上限', error_during_execution: '執行中發生錯誤', error_max_budget_usd: '達到花費上限' }[o.subtype]) || '發生錯誤';
+      const msg = o.result || (Array.isArray(o.errors) && o.errors.join('；')) || ({ error_max_turns: L('達到回合上限'), error_during_execution: L('執行中發生錯誤'), error_max_budget_usd: L('達到花費上限') }[o.subtype]) || L('發生錯誤');
       const n = (turn || log).appendChild(el('div', 'turn-foot err'));
       n.textContent = msg + (parts.length ? ' · ' + parts.join(' · ') : '');
     } else if (turn) {
@@ -1659,15 +1673,15 @@
     const b = el('button', 'turn-copy icon-btn');
     b.type = 'button';
     b.innerHTML = COPY_ICON;
-    b.setAttribute('aria-label', '複製');
-    b.title = '複製這段回覆的全部文字';
+    b.setAttribute('aria-label', L('複製'));
+    b.title = L('複製這段回覆的全部文字');
     foot.insertBefore(b, foot.firstChild);
   }
   const fmtDur = (ms) => {
     const s = ms / 1000;
-    if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + ' 秒';
+    if (s < 60) return L`${s.toFixed(s < 10 ? 1 : 0)} 秒`;
     const m = Math.floor(s / 60);
-    return `${m} 分 ${Math.round(s % 60)} 秒`;
+    return L`${m} 分 ${Math.round(s % 60)} 秒`;
   };
 
   // ───────────────────────── 事件處理 ─────────────────────────
@@ -1791,7 +1805,7 @@
       const myTur = results.length === 1 ? tur : null;
       if (card) {
         card.setResult(r.content, myTur, r.is_error);
-        for (const p of S.perms.values()) if (p.pending && p.req && p.req.tool_use_id === r.tool_use_id) p.resolved(r.is_error ? '已處理' : '已允許');
+        for (const p of S.perms.values()) if (p.pending && p.req && p.req.tool_use_id === r.tool_use_id) p.resolved(r.is_error ? L('已處理') : L('已允許'));
       }
     }
     if (o.parent_tool_use_id) return; // 子代理收到的交代內容，Task 卡片已經有了
@@ -1805,8 +1819,8 @@
   function stoppedNote() {
     S.interrupted = true;
     for (const card of S.tools.values()) if (card.setState && (card.state === 'running' || card.state === 'waiting')) { card.setState('stopped'); card.refreshHead(); }
-    for (const p of S.perms.values()) if (p.pending) p.resolved('已停止');
-    smallNote(S.ctxMain, '已停止', 'stopped');
+    for (const p of S.perms.values()) if (p.pending) p.resolved(L('已停止'));
+    smallNote(S.ctxMain, L('已停止'), 'stopped');
   }
   // 舊對話裡的使用者文字：過濾系統插入的東西
   function userText(text, images) {
@@ -1839,7 +1853,7 @@
       case 'permission_denied': {
         const card = S.tools.get(o.tool_use_id);
         if (card && card.setState) { card.denied = true; card.setState('denied'); card.refreshHead(); }
-        else smallNote(ctxFor(o), `沒有權限：${o.tool_name || ''}`, 'warn');
+        else smallNote(ctxFor(o), L`沒有權限：${o.tool_name || ''}`, 'warn');
         break;
       }
       case 'thinking_tokens': {
@@ -1850,15 +1864,15 @@
       }
       case 'compact_boundary':
         if (S.compactingEl) { S.compactingEl.remove(); S.compactingEl = null; }
-        notice('對話已壓縮（較早的內容整理成摘要）'); break;
+        notice(L('對話已壓縮（較早的內容整理成摘要）')); break;
       // 壓縮中（Claude 自己壓、或本機模型請 Claude 整理）／本機模型的自動壓縮沒成功
       // 「整理中」那行做完就收掉（status 換成別的、或 compact_boundary 到了）
       case 'status':
         if (S.compactingEl) { S.compactingEl.remove(); S.compactingEl = null; }
-        if (o.status === 'compacting') S.compactingEl = notice('整理前面的對話…（上下文太長，先壓縮成摘要）');
-        else if (o.status === 'compact_failed') notice(o.message || '自動壓縮沒成功，照原樣繼續', 'warn');
+        if (o.status === 'compacting') S.compactingEl = notice(L('整理前面的對話…（上下文太長，先壓縮成摘要）'));
+        else if (o.status === 'compact_failed') notice(o.message || L('自動壓縮沒成功，照原樣繼續'), 'warn');
         break;
-      case 'api_retry': notice(`連線不穩，重試中（第 ${o.attempt || '?'} 次）…`, 'warn'); break;
+      case 'api_retry': notice(L`連線不穩，重試中（第 ${o.attempt || '?'} 次）…`, 'warn'); break;
       case 'task_notification': {
         const card = S.tools.get(o.tool_use_id);
         if (card && card.kind === 'task' && !card.result && o.summary) {
@@ -1914,8 +1928,8 @@
   function markLost(t) {
     t.classList.add('lost');
     const n = t.appendChild(el('div', 'queued-note'));
-    n.appendChild(document.createTextNode('沒送到：結束前沒有讀到這則 · '));
-    const b = n.appendChild(el('button', 'queued-now', '刪除'));
+    n.appendChild(document.createTextNode(L('沒送到：結束前沒有讀到這則 · ')));
+    const b = n.appendChild(el('button', 'queued-now', L('刪除')));
     b.type = 'button';
     b.addEventListener('click', () => t.remove());
   }
@@ -1932,6 +1946,10 @@
   let busyTimer = null;
   const wb = {
     pathsChecked,
+    setLocale(table) {
+      LOCALE = table || {};
+      document.title = L('對話');
+    },
     setTheme(t) {
       t = t || {};
       const st = document.documentElement.style;
@@ -1972,7 +1990,7 @@
         if (!r || (r.type !== 'user' && r.type !== 'assistant')) continue;
         if (r.isMeta || r.isSidechain || r.isVisibleInTranscriptOnly) continue;
         if (r.cwd && !S.cwd) { S.cwd = r.cwd; guessHome(r.cwd); }
-        if (r.isCompactSummary) { notice('（較早的對話已壓縮成摘要）'); continue; }
+        if (r.isCompactSummary) { notice(L('（較早的對話已壓縮成摘要）')); continue; }
         try { handle(r, false); } catch (e) { console.error('history', e); }
       }
       // 舊對話沒結果的工具：不要一直轉圈
@@ -1993,7 +2011,7 @@
         if (!r || (r.type !== 'user' && r.type !== 'assistant')) continue;
         if (r.isMeta || r.isSidechain || r.isVisibleInTranscriptOnly) continue;
         if (r.cwd && !S.cwd) { S.cwd = r.cwd; guessHome(r.cwd); }
-        if (r.isCompactSummary) { notice('（較早的對話已壓縮成摘要）'); continue; }
+        if (r.isCompactSummary) { notice(L('（較早的對話已壓縮成摘要）')); continue; }
         try { handle(r, false); } catch (e) { console.error('historyAppend', e); }
       }
       S.batch++;
@@ -2109,7 +2127,7 @@
           if (r && r.type === 'wbDivider') { S.ctxMain.endTurn(); notice(r.text, 'divider'); continue; }
           if (!r || (r.type !== 'user' && r.type !== 'assistant')) continue;
           if (r.isMeta || r.isSidechain || r.isVisibleInTranscriptOnly) continue;
-          if (r.isCompactSummary) { notice('（較早的對話已壓縮成摘要）'); continue; }
+          if (r.isCompactSummary) { notice(L('（較早的對話已壓縮成摘要）')); continue; }
           try { handle(r, false); } catch (e) { console.error('historyPrepend', e); }
         }
         S.ctxMain.endTurn();
@@ -2137,7 +2155,7 @@
       if (s.scrollTop <= 2 && S.hasOlder && !S.loadingOlder) {
         S.loadingOlder = true;
         const n = log.querySelector('.notice.more-top');
-        if (n) n.textContent = '載入更早的訊息…';
+        if (n) n.textContent = L('載入更早的訊息…');
         post({ type: 'loadOlder' });
       } else s.scrollTop = 0;
       S.lastScrollTop = s.scrollTop;
@@ -2145,7 +2163,7 @@
     },
     moreAbove() {
       if (log.querySelector('.notice.more-top')) return;
-      const n = el('div', 'notice more-top', '往上捲可以載入更早的訊息');
+      const n = el('div', 'notice more-top', L('往上捲可以載入更早的訊息'));
       log.insertBefore(n, log.firstChild);
       S.hasOlder = true;
     },
@@ -2170,7 +2188,7 @@
       if (!btn) return;
       // 圖示鈕：換成打勾一下；文字鈕：換成「已複製」
       if (btn.classList.contains('icon-btn')) { btn.classList.add('done'); setTimeout(() => btn.classList.remove('done'), 1200); return; }
-      btn.textContent = '已複製'; setTimeout(() => { btn.textContent = '複製'; }, 1200);
+      btn.textContent = L('已複製'); setTimeout(() => { btn.textContent = L('複製'); }, 1200);
     };
     if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done, () => fallback()); return; }
     fallback();

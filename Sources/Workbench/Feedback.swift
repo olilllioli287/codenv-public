@@ -8,7 +8,7 @@ import Foundation
 enum Feedback {
     static var available: Bool { Edition.feedbackEmail != nil && Edition.updateRepo != nil }
 
-    static let subject = "codenv 回報："
+    static let subject = L("codenv 回報：")
     /// 網址太長時郵件 App／GitHub 會吃不下，超過就從紀錄最舊的行開始丟
     static let maxURLLength = 7000
     static let logLines = 50
@@ -18,7 +18,7 @@ enum Feedback {
     static var chip: String {
         var size = 0
         sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
-        guard size > 0 else { return "未知" }
+        guard size > 0 else { return L("未知") }
         var buf = [CChar](repeating: 0, count: size)
         sysctlbyname("machdep.cpu.brand_string", &buf, &size, nil, 0)
         return String(cString: buf)
@@ -56,8 +56,8 @@ enum Feedback {
     }
 
     static func body(log: [String]?) -> String {
-        var s = "codenv 版本：\(Edition.version)\n\(systemLine)\n晶片：\(chip)\n\n問題描述：\n\n"
-        if let log, !log.isEmpty { s += "\n---- 最近的紀錄（最後 \(log.count) 行，家目錄路徑已換成 ~）----\n" + log.joined(separator: "\n") + "\n" }
+        var s = L("codenv 版本：\(Edition.version)\n\(systemLine)\n晶片：\(chip)\n\n問題描述：\n\n")
+        if let log, !log.isEmpty { s += L("\n---- 最近的紀錄（最後 \(log.count) 行，家目錄路徑已換成 ~）----\n") + log.joined(separator: "\n") + "\n" }
         return s
     }
 
@@ -89,20 +89,20 @@ enum Feedback {
     static func present() {
         guard let email = Edition.feedbackEmail, let repo = Edition.updateRepo else { return }
         let alert = NSAlert()
-        alert.messageText = "回報問題"
-        alert.informativeText = "選一個管道。內容會先幫你填好 codenv 版本、macOS 版本和晶片，你在郵件或網頁上看過、補上問題描述才會送出；codenv 自己不會寄任何東西。"
-        let box = NSButton(checkboxWithTitle: "附上最近的錯誤紀錄（最後 \(logLines) 行）", target: nil, action: nil)
+        alert.messageText = L("回報問題")
+        alert.informativeText = L("選一個管道。內容會先幫你填好 codenv 版本、macOS 版本和晶片，你在郵件或網頁上看過、補上問題描述才會送出；codenv 自己不會寄任何東西。")
+        let box = NSButton(checkboxWithTitle: L("附上最近的錯誤紀錄（最後 \(logLines) 行）"), target: nil, action: nil)
         box.state = .off
-        let note = NSTextField(wrappingLabelWithString: "紀錄裡可能有檔名或對話片段，附之前請自己看過；家目錄路徑已換成 ~。")
+        let note = NSTextField(wrappingLabelWithString: L("紀錄裡可能有檔名或對話片段，附之前請自己看過；家目錄路徑已換成 ~。"))
         note.font = .systemFont(ofSize: 11); note.textColor = .secondaryLabelColor
         note.preferredMaxLayoutWidth = 300
         let stack = NSStackView(views: [box, note])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 4
         stack.frame = NSRect(x: 0, y: 0, width: 300, height: 56)
         alert.accessoryView = stack
-        alert.addButton(withTitle: "寄 email")
-        alert.addButton(withTitle: "到 GitHub 回報")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L("寄 email"))
+        alert.addButton(withTitle: L("到 GitHub 回報"))
+        alert.addButton(withTitle: L("取消"))
         let r = alert.runModal()
         guard r == .alertFirstButtonReturn || r == .alertSecondButtonReturn else { return }
         let log = box.state == .on ? recentLog() : nil

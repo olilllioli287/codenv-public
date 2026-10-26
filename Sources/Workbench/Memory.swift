@@ -34,7 +34,7 @@ final class MemoryMonitor: ObservableObject {
         let labels = labeler()
         var out: [Row] = []
         let mine = Self.footprint(me)
-        out.append(Row(id: "self", label: "codenv 本身", bytes: mine, count: 1))
+        out.append(Row(id: "self", label: L("codenv 本身"), bytes: mine, count: 1))
         var claude = 0
         var childSet = Set<pid_t>([me])
         for c in Self.children(of: me) {
@@ -49,7 +49,7 @@ final class MemoryMonitor: ObservableObject {
         // 只算 WebKit 的（從 codenv 裡跑的測試實例等等，系統也會記在 codenv 身上，那些不算）
         let web = Self.responsible(to: me).filter { !childSet.contains($0) && Self.name($0).hasPrefix("com.apple.WebKit") }
         if !web.isEmpty {
-            out.append(Row(id: "web", label: "畫面（網頁程序）", bytes: web.reduce(UInt64(0)) { $0 + Self.footprint($1) }, count: web.count))
+            out.append(Row(id: "web", label: L("畫面（網頁程序）"), bytes: web.reduce(UInt64(0)) { $0 + Self.footprint($1) }, count: web.count))
         }
         let head = out.first!
         let rest = out.dropFirst().sorted { $0.bytes > $1.bytes }
@@ -82,7 +82,7 @@ final class MemoryMonitor: ObservableObject {
     static func name(_ pid: pid_t) -> String {
         var buf = [CChar](repeating: 0, count: 256)
         let n = proc_name(pid, &buf, UInt32(buf.count))
-        return n > 0 ? String(cString: buf) : "程序 \(pid)"
+        return n > 0 ? String(cString: buf) : L("程序 \(pid)")
     }
 
     /// 系統記錄「由誰負責」的程序（WebKit 的網頁程序會記在開它的 App 身上）。查不到這個函式就回空的
@@ -116,7 +116,7 @@ struct MemoryBlock: View {
             Button(action: { open.toggle(); if open { m.refresh() } }) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("記憶體").font(.system(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary)
+                        Text(L("記憶體")).font(.system(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary)
                         Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9 * s, weight: .semibold)).foregroundStyle(.tertiary)
                         Spacer()
                         Text(MemoryMonitor.format(m.total)).font(.system(size: 15 * s, weight: .semibold)).monospacedDigit()
@@ -126,7 +126,7 @@ struct MemoryBlock: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("codenv 和它開的程序加起來用的記憶體（跟活動監視器的「記憶體」同一種算法）；點一下看各聊天室")
+            .help(L("codenv 和它開的程序加起來用的記憶體（跟活動監視器的「記憶體」同一種算法）；點一下看各聊天室"))
             if open {
                 ForEach(m.rows) { r in
                     HStack(alignment: .firstTextBaseline) {
@@ -144,9 +144,9 @@ struct MemoryBlock: View {
     private var summary: String {
         let others = max(0, m.rows.count - 1 - (m.rows.contains { $0.id == "web" } ? 1 : 0))
         var parts = ["codenv"]
-        if m.claudeCount > 0 { parts.append("\(m.claudeCount) 個 Claude") }
-        if others > m.claudeCount { parts.append("\(others - m.claudeCount) 個其他程序") }
-        if m.rows.contains(where: { $0.id == "web" }) { parts.append("畫面") }
+        if m.claudeCount > 0 { parts.append(L("\(m.claudeCount) 個 Claude")) }
+        if others > m.claudeCount { parts.append(L("\(others - m.claudeCount) 個其他程序")) }
+        if m.rows.contains(where: { $0.id == "web" }) { parts.append(L("畫面")) }
         return parts.joined(separator: "＋")
     }
 }

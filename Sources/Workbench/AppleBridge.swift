@@ -8,7 +8,7 @@ import FoundationModels
 
 final class AppleBridge {
     static let model = "on-device"
-    static func name(_ model: String) -> String { "Apple 模型" }
+    static func name(_ model: String) -> String { L("Apple 模型") }
 
     /// 這台能不能用（系統夠新、Apple Intelligence 開著、模型下載好了）
     static var available: Bool {
@@ -95,7 +95,7 @@ final class AppleBridge {
         emit?(["type": "user", "isReplay": true, "uuid": q.uuid, "message": ["role": "user", "content": []]])
         let past = history
         history.append((true, q.text))
-        guard #available(macOS 26.4, *) else { fail("Apple 模型要 macOS 26.4 以上"); return }
+        guard #available(macOS 26.4, *) else { fail(L("Apple 模型要 macOS 26.4 以上")); return }
         let t = turn
         task = Task { @MainActor [weak self] in await self?.generate(q.text, past: past, turn: t) }
     }
@@ -117,7 +117,7 @@ final class AppleBridge {
     @MainActor private func generate(_ text: String, past: [(user: Bool, text: String)], turn t: Int) async {
         let model = SystemLanguageModel.default
         guard case .available = model.availability else {
-            fail("Apple 模型現在不能用（\(model.availability)）：要在系統設定打開 Apple Intelligence，模型下載完才能用")
+            fail(L("Apple 模型現在不能用（\(model.availability)）：要在系統設定打開 Apple Intelligence，模型下載完才能用"))
             return
         }
         // 上下文只有 contextSize（實測 8192）：留 1500 給回答，前面的對話從最舊的開始丟
@@ -133,7 +133,7 @@ final class AppleBridge {
         }
         guard turn == t else { return }
         if used > limit {
-            fail("這則太長了：Apple 模型一次只能讀大約 \(model.contextSize) 個 token（幾千個字）。請分段貼，或改用 LFM2.5")
+            fail(L("這則太長了：Apple 模型一次只能讀大約 \(model.contextSize) 個 token（幾千個字）。請分段貼，或改用 LFM2.5"))
             return
         }
         let s = LanguageModelSession(model: model, instructions: instructions)
@@ -191,13 +191,13 @@ final class AppleBridge {
     /// 錯誤翻成看得懂的話（macOS 26 和 27 的錯誤型別不一樣，用名字認）
     private static func describe(_ error: Error) -> String {
         let s = String(describing: error)
-        if s.contains("guardrailViolation") { return "Apple 模型的安全過濾擋下了這則（它對某些主題很敏感），換個說法試試" }
-        if s.contains("contextSizeExceeded") || s.contains("exceededContextWindowSize") { return "超過 Apple 模型能讀的長度（約 8K token），請開新對話或分段問" }
-        if s.contains("unsupportedLanguageOrLocale") { return "Apple 模型不支援這個語言" }
-        if s.contains("rateLimited") { return "Apple 模型忙不過來，等一下再試" }
-        if s.contains("assetsUnavailable") { return "Apple 模型的檔案還沒準備好（系統可能正在下載或更新 Apple Intelligence）" }
-        if s.contains("refusal") { return "Apple 模型拒絕回答這則" }
-        return "Apple 模型：" + error.localizedDescription
+        if s.contains("guardrailViolation") { return L("Apple 模型的安全過濾擋下了這則（它對某些主題很敏感），換個說法試試") }
+        if s.contains("contextSizeExceeded") || s.contains("exceededContextWindowSize") { return L("超過 Apple 模型能讀的長度（約 8K token），請開新對話或分段問") }
+        if s.contains("unsupportedLanguageOrLocale") { return L("Apple 模型不支援這個語言") }
+        if s.contains("rateLimited") { return L("Apple 模型忙不過來，等一下再試") }
+        if s.contains("assetsUnavailable") { return L("Apple 模型的檔案還沒準備好（系統可能正在下載或更新 Apple Intelligence）") }
+        if s.contains("refusal") { return L("Apple 模型拒絕回答這則") }
+        return L("Apple 模型：") + error.localizedDescription
     }
 
     // MARK: 讀出來

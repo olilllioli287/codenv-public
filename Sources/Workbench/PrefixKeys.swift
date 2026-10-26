@@ -157,7 +157,7 @@ final class PrefixHUD {
     private var panel: NSPanel?
     func show(in window: NSWindow?) {
         guard let window else { return }
-        let label = NSTextField(labelWithString: "Ctrl+A  （| - 切開、h j k l 換格、c 新 Window、x 關、再按 Ctrl+A 看全部）")
+        let label = NSTextField(labelWithString: L("Ctrl+A  （| - 切開、h j k l 換格、c 新 Window、x 關、再按 Ctrl+A 看全部）"))
         label.font = .systemFont(ofSize: 12, weight: .medium)
         label.textColor = .white
         let size = label.intrinsicContentSize

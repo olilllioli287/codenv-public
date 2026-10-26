@@ -126,7 +126,7 @@ enum LocalCompact {
             outPipe.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; lock.lock(); out.append(d); lock.unlock() }
             errPipe.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; lock.lock(); err.append(d); lock.unlock() }
             do { try p.run() } catch {
-                DispatchQueue.main.async { done(nil, "開不了 claude：\(error.localizedDescription)") }
+                DispatchQueue.main.async { done(nil, L("開不了 claude：\(error.localizedDescription)")) }
                 return
             }
             inPipe.fileHandleForWriting.write(Data(input.utf8))
@@ -146,8 +146,8 @@ enum LocalCompact {
             let ok = p.terminationReason == .exit && p.terminationStatus == 0 && text.count >= 20
             DispatchQueue.main.async {
                 if ok { done(text, nil) }
-                else if p.terminationReason == .uncaughtSignal { done(nil, "Claude 整理太久（超過 \(Int(timeout)) 秒）") }
-                else { done(nil, "Claude 沒整理成功（代碼 \(p.terminationStatus)）" + (e.isEmpty ? "" : "：" + String(e.prefix(200)))) }
+                else if p.terminationReason == .uncaughtSignal { done(nil, L("Claude 整理太久（超過 \(Int(timeout)) 秒）")) }
+                else { done(nil, L("Claude 沒整理成功（代碼 \(p.terminationStatus)）") + (e.isEmpty ? "" : L("：") + String(e.prefix(200)))) }
             }
         }
     }

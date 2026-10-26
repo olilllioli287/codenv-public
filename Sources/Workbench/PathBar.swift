@@ -43,7 +43,7 @@ final class PathBar: NSView {
             b.image = icon
             b.imagePosition = .imageLeading
             b.imageHugsTitle = true
-            b.toolTip = seg.path + "\n點一下：在 Finder 打開"
+            b.toolTip = seg.path + "\n" + L("點一下：在 Finder 打開")
             b.identifier = NSUserInterfaceItemIdentifier(seg.path)
             b.lineBreakMode = .byTruncatingTail
             addSubview(b)
