@@ -95,7 +95,7 @@ final class CopilotBridge {
         switch obj["type"] as? String {
         case "user":
             guard let msg = obj["message"] as? [String: Any] else { return }
-            if let s = msg["content"] as? String, s.hasPrefix("/") { return }   // /effort 之類是給 Claude 的
+            if let s = msg["content"] as? String, s == "/effort" || s.hasPrefix("/effort ") { return }   // /effort 之類是給 Claude 的
             let uuid = (obj["uuid"] as? String)?.lowercased() ?? UUID().uuidString.lowercased()
             queue.append((uuid, Self.prompt(msg), msg))   // 真的送出（next）時才寫紀錄：排隊時就記會排在上一輪回答前面
             next()
@@ -249,15 +249,15 @@ final class CopilotBridge {
         let tc = p["toolCall"] as? [String: Any] ?? [:]
         let options = p["options"] as? [[String: Any]] ?? []
         let kind = tc["kind"] as? String ?? ""
+        let callID = tc["toolCallId"] as? String ?? UUID().uuidString
+        // 請求裡的參數比 tool_call 那時候完整（寫檔有差異），畫面與紀錄用新的；自動放行也要先記，不然工具卡只剩殘缺參數
+        let (name, input) = tool(tc, fallback: tools[callID])
+        tools[callID] = (name, input)
         // 不用問的模式：全部允許、自動；接受修改＝讀檔、改檔直接允許，跑指令還是問
         if mode == "bypassPermissions" || mode == "auto" || (mode == "acceptEdits" && ["read", "edit", "search"].contains(kind)) {
             answer(id, options, "allow_once")
             return
         }
-        let callID = tc["toolCallId"] as? String ?? UUID().uuidString
-        // 請求裡的參數比 tool_call 那時候完整（寫檔有差異），畫面用新的
-        let (name, input) = tool(tc, fallback: tools[callID])
-        tools[callID] = (name, input)
         let rid = "copilot-\(UUID().uuidString.prefix(8))"
         approvals[rid] = (id, options)
         emit?(["type": "control_request", "request_id": rid,
@@ -387,7 +387,7 @@ final class CopilotBridge {
             if let c = current, adds[c] != nil, l.hasPrefix("+") { adds[c]!.append(l.dropFirst()) }
         }
         if files.count == 1, let f = files.first, let lines = adds[f] { return ("Write", ["file_path": f, "content": lines.joined(separator: "\n")]) }
-        if files.count == 1, let f = files.first { return ("Edit", ["file_path": f, "old_string": "", "new_string": ""]) }
+        if files.count == 1, let f = files.first { return ("ApplyPatch", ["patch": patch, "file_path": f]) }
         return ("ApplyPatch", ["files": files])
     }
 
@@ -413,12 +413,6 @@ final class CopilotBridge {
             obj["message"] = msg
         }
         guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        let fm = FileManager.default
-        try? fm.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !fm.fileExists(atPath: transcriptURL.path) { fm.createFile(atPath: transcriptURL.path, contents: nil) }
-        guard let h = try? FileHandle(forWritingTo: transcriptURL) else { return }
-        defer { try? h.close() }
-        _ = try? h.seekToEnd()
-        try? h.write(contentsOf: d + Data([0x0a]))
+        Transcripts.append(d + Data([0x0a]), to: transcriptURL)      // 寫不進去會記進事件紀錄（Transcripts.append）
     }
 }

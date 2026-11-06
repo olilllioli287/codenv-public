@@ -11,6 +11,7 @@
     if (text != null) e.textContent = text;
     return e;
   };
+  const Q = window.cdvQuote;
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const raf = window.requestAnimationFrame.bind(window);
   const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g, '');
@@ -361,6 +362,9 @@
   // 複製鈕的圖示（兩張卡；按了換成打勾一下）：程式碼區右上角、每輪回覆最下面共用
   const COPY_ICON = '<svg class="ic-copy" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1.6"/><path d="M10.5 3.2V3A1.5 1.5 0 0 0 9 1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h.2"/></svg><svg class="ic-done" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>';
   function codeBlockHtml(text, lang, mode) {
+    if (lang === 'plot' && window.wbPlot) {
+      return `<div class="plot">${window.wbPlot.svg(text)}<details><summary>plot</summary><pre><code>${esc(text)}</code></pre></details></div>`;
+    }
     const l = hlLang(lang);
     const label = lang ? esc(lang) : '';
     let body;
@@ -404,7 +408,12 @@
 
   function renderMarkdownHtml(src, hlMode) {
     md._hl = hlMode;
-    try { return md.parse(src); } catch (e) { return `<p>${esc(src)}</p>`; } finally { md._hl = 'sync'; }
+    try {
+      const math = window.wbMath;
+      if (!math) return md.parse(src);
+      const protectedMath = math.protect(src);
+      return math.restore(md.parse(protectedMath.text), protectedMath.items);
+    } catch (e) { return `<p>${esc(src)}</p>`; } finally { md._hl = 'sync'; }
   }
   function setMarkdown(container, src, hlMode = 'sync') {
     container.innerHTML = renderMarkdownHtml(src, hlMode);
@@ -425,6 +434,7 @@
       if (!this.main) return this.container;
       if (!this.turn || !this.turn.isConnected) {
         this.turn = el('section', 'turn assistant');
+        this.turn.dataset.qid = this.quoteID || '';
         this.container.appendChild(this.turn);
       }
       return this.turn;
@@ -445,7 +455,7 @@
       this.group = null;
       g.end(forced);
     }
-    endTurn() { this.closeGroup(false); if (this.main && this.turn) addTurnCopy(this.turn); this.turn = null; }
+    endTurn() { this.closeGroup(false); if (this.main && this.turn) addTurnCopy(this.turn); this.turn = null; this.quoteID = null; }
     msg(id) {
       id = id || this.curMsg || '_';
       let m = this.msgs.get(id);
@@ -687,11 +697,19 @@
       return this.shown < this.raw.length; // 還有字要出
     }
     renderPartial(src, isFinal) {
+      // 數學式先換成佔位字再切段（和整則轉換同一套），否則串流中的 $…$ 會照原文印出來
+      const math = window.wbMath;
+      let pm = null;
+      if (math) { try { pm = math.protect(src); src = pm.text; } catch (_) { pm = null; } }
+      const items = pm && pm.items && pm.items.length ? pm.items : null;
+      const unmath = items ? new Map(items.map((it) => [it.token, it.raw])) : null;
+      const unmathRe = items ? new RegExp(items.map((it) => it.token).join('|'), 'g') : null;
+      const keyOf = (raw) => (items ? raw.replace(unmathRe, (k) => unmath.get(k)) : raw);
       let tokens;
       try { tokens = md.lexer(src); } catch (_) { tokens = [{ type: 'paragraph', raw: src, text: src, tokens: [{ type: 'text', raw: src, text: src }] }]; }
       const links = tokens.links;
       const toks = tokens.filter((t) => t.type !== 'space' && t.type !== 'def');
-      const keys = toks.map((t, i) => (i === toks.length - 1 && !isFinal ? '~' : '') + t.raw);
+      const keys = toks.map((t, i) => (i === toks.length - 1 && !isFinal ? '~' : '') + keyOf(t.raw));
       let i = 0;
       while (i < this.parts.length && i < keys.length && this.parts[i].key === keys[i]) i++;
       // 移除變動的部分
@@ -706,8 +724,9 @@
         if (isTail && t.type === 'code' && t.text.length > 6000) mode = 'none';
         md._hl = mode;
         let h;
-        try { h = md.parser(list); } catch (_) { h = `<p>${esc(t.raw)}</p>`; }
+        try { h = md.parser(list); } catch (_) { h = `<p>${esc(keyOf(t.raw))}</p>`; }
         md._hl = 'sync';
+        if (items) { try { h = math.restore(h, items); } catch (_) { h = h.replace(unmathRe, (k) => esc(unmath.get(k))); } }
         tpl.innerHTML = h;
         const nodes = [...tpl.content.childNodes].filter((n) => n.nodeType === 1 || n.textContent.trim());
         for (const n of nodes) { this.el.appendChild(n); decorate(n); }
@@ -880,6 +899,28 @@
     return box;
   }
 
+  // 選擇題的答案是把選的 label 用「、」（或 ", "）接起來的一串字：選項文字本身含「、」「, 」時不能直接 split，
+  // 不然會被拆成碎片、當成自己打的「其他」。這裡從左到右，優先認得整個選項 label（長的先），認不得的才當自己打的字切開
+  function splitChosen(chosen, labels) {
+    const sorted = [...new Set(labels)].filter(Boolean).sort((a, b) => b.length - a.length);
+    const seps = ['、', ', '];
+    const out = [];
+    let i = 0;
+    while (i < chosen.length) {
+      const hit = sorted.find((l) => chosen.startsWith(l, i) && (i + l.length === chosen.length || seps.some((sp) => chosen.startsWith(sp, i + l.length))));
+      let end;
+      if (hit) { out.push(hit); end = i + hit.length; }
+      else {
+        const nexts = seps.map((sp) => chosen.indexOf(sp, i)).filter((n) => n >= 0);
+        end = nexts.length ? Math.min(...nexts) : chosen.length;
+        out.push(chosen.slice(i, end));
+      }
+      const sp = seps.find((x) => chosen.startsWith(x, end));
+      i = end + (sp ? sp.length : 0);
+    }
+    return out;
+  }
+
   // ───────────────────────── 工具結果整理 ─────────────────────────
   function normResult(content) {
     // tool_result.content 可能是字串或 [{type:text|image}]
@@ -943,6 +984,14 @@
   function imagesEl(urls) {
     const box = el('div', 'imgs');
     for (const u of urls) {
+      // 網路上的圖不自動載入（跟 Markdown 的遠端圖片同一套：網址可以夾帶資料送出去）：改成連結，點了才用瀏覽器開
+      if (/^https?:/i.test(u)) {
+        let host = ''; try { host = new URL(u).host; } catch (_) {}
+        const a = box.appendChild(el('a', 'md-img-remote'));
+        a.href = u; a.title = u;
+        a.textContent = `🖼 ${L('網路圖片')}${L('（')}${host}${L('，點了才開）')}`;
+        continue;
+      }
       const img = box.appendChild(el('img'));
       img.src = u;
       img.loading = 'lazy';
@@ -1341,7 +1390,7 @@
         const opts = box.appendChild(el('div', 'opts'));
         opts.setAttribute('role', q.multiSelect ? 'group' : 'radiogroup');
         const chosen = this.answers ? String(this.answers[q.question] ?? '') : null;
-        const chosenSet = chosen != null ? new Set(chosen.split(/、|, /)) : null;
+        const chosenSet = chosen != null ? new Set(splitChosen(chosen, (q.options || []).map((x) => x.label))) : null;
         const all = [...(q.options || []), { label: L('其他…'), other: true }];
         all.forEach((o, oi) => {
           const btn = opts.appendChild(el('button', 'opt' + (o.other ? ' other' : '')));
@@ -1613,8 +1662,21 @@
     const t = el('section', 'turn user' + (opts.queued ? ' queued' : ''));
     const b = t.appendChild(el('div', 'bubble' + (opts.cmd ? ' cmd' : '')));
     if (images && images.length) b.appendChild(imagesEl(images));
+    if (opts.bang) b.appendChild(el('div', 'bang-badge', L`附 ${opts.bang} 個指令結果`));
     // 換模型時程式附的那行（前面對話的紀錄檔）是給模型看的，重開時從紀錄讀回來也不顯示
-    if (text) text = text.replace(/\n\n〔codenv 換模型〕[\s\S]*$/, '');   // 換模型的交接（可能好幾行）一路藏到最後
+    const parsed = Q.parse(text);
+    text = parsed.text;
+    t.dataset.qid = opts.qid || Q.fallbackID('user', text);
+    const refs = opts.quotes || parsed.quotes;
+    if (refs.length) {
+      const labels = b.appendChild(el('div', 'quote-labels'));
+      for (const q of refs) {
+        const label = labels.appendChild(el('button', 'quote-label', quoteLabel(q)));
+        label.type = 'button';
+        label.setAttribute('aria-label', L('跳至引用訊息') + ' ' + quoteLabel(q));
+        label.addEventListener('click', () => jumpQuote(q.qid));
+      }
+    }
     if (text) {
       const tx = b.appendChild(el('div', 'bubble-t'));
       tx.textContent = text;
@@ -1625,9 +1687,88 @@
         more.addEventListener('click', () => { const c = tx.classList.toggle('clamp'); more.textContent = c ? L('展開全部') : L('收起'); });
       }
     }
+    const foot = t.appendChild(el('div', 'user-actions'));
+    addQuoteButton(t, foot);
     (opts.queued ? queueBox : log).appendChild(t);
     return t;
   }
+
+  // ───────────────────────── ! 指令卡片（docs/bang-command-spec.md）─────────────────────────
+  // 使用者在輸入框打「! 指令」：Swift 直接跑，卡片即時往下長（stderr 淡紅色）；結束後顯示結束碼和花的時間
+  const BANG_LEAD_RE = /^(?:\s*<bash-input>[\s\S]*?<\/bash-input>\s*(?:<bash-stdout>[\s\S]*?<\/bash-stdout>)?\s*(?:<bash-stderr>[\s\S]*?<\/bash-stderr>)?[ \t]*(?:（這個指令[^\n]*）)?)+/;
+  const BANG_SHOW = 200;            // 卡片預設只顯示最後 200 行，「展開全部」看完整的
+  const bangCards = new Map();
+  const BANG_NEEDS_TTY = /(password|passphrase)\s*:|Username for |a terminal is required|no tty|Permission denied \(publickey|could not read (Username|Password)/i;
+  function bangCard(rec) {
+    if (bangCards.has(rec.id)) return bangCards.get(rec.id).el;
+    S.ctxMain.endTurn();
+    const t = el('section', 'turn bang');
+    if (rec && rec.id) t.dataset.bid = String(rec.id);
+    const head = t.appendChild(el('div', 'bang-head'));
+    head.appendChild(el('span', 'bang-prompt', '$'));
+    head.appendChild(el('code', 'bang-cmd', rec.cmd));
+    const stop = head.appendChild(el('button', 'bang-stop', L('停止')));
+    stop.type = 'button';
+    stop.addEventListener('click', () => post({ type: 'bangStop', id: rec.id }));
+    const out = t.appendChild(el('pre', 'bang-out'));
+    const more = t.appendChild(el('button', 'more bang-more', L('展開全部')));
+    more.type = 'button';
+    more.hidden = true;
+    const foot = t.appendChild(el('div', 'bang-foot'));
+    const c = { id: rec.id, el: t, out, more, foot, stop, expanded: false, raf: 0,
+      segs: (rec.segs || []).map((s) => ({ e: !!s.e, t: String(s.t) })),
+      status: rec.status || 'running', code: rec.code == null ? null : rec.code, secs: rec.secs || 0, truncated: !!rec.truncated };
+    more.addEventListener('click', () => { c.expanded = !c.expanded; bangRender(c); });
+    bangCards.set(rec.id, c);
+    log.appendChild(t);
+    bangRender(c);
+    bangFoot(c);
+    return t;
+  }
+  function bangRender(c) {
+    let nl = 0;
+    for (const s of c.segs) for (let i = s.t.indexOf('\n'); i >= 0; i = s.t.indexOf('\n', i + 1)) nl++;
+    const hide = !c.expanded && nl > BANG_SHOW ? nl - BANG_SHOW : 0;   // 前面要藏幾行
+    c.out.textContent = '';
+    let skip = hide;
+    for (const s of c.segs) {
+      let text = s.t;
+      if (skip > 0) {
+        let cut = 0;
+        while (skip > 0) { const j = text.indexOf('\n', cut); if (j < 0) { cut = text.length; break; } cut = j + 1; skip--; }
+        text = text.slice(cut);
+      }
+      if (!text) continue;
+      const sp = document.createElement('span');
+      if (s.e) sp.className = 'err';
+      sp.textContent = text;
+      c.out.appendChild(sp);
+    }
+    c.out.hidden = c.segs.length === 0;
+    c.more.hidden = nl <= BANG_SHOW;
+    c.more.textContent = c.expanded ? L('收起') : L`展開全部（${nl} 行）`;
+  }
+  function bangFoot(c) {
+    const running = c.status === 'running';
+    c.stop.hidden = !running;
+    c.el.classList.toggle('running', running);
+    c.foot.textContent = '';
+    const bad = !running && (c.status !== 'done' || (c.code != null && c.code !== 0));
+    c.foot.classList.toggle('bad', bad);
+    const parts = [];
+    if (running) parts.push(L('執行中…'));
+    else if (c.status === 'stopped') parts.push(L('已停止'));
+    else if (c.status === 'timeout') parts.push(L('逾時'));
+    else if (c.status === 'interrupted') parts.push(L('執行到一半 codenv 被關掉'));
+    else parts.push(L`結束碼 ${c.code == null ? '—' : c.code}`);
+    if (!running && c.secs) parts.push(fmtDur(c.secs * 1000));
+    if (c.truncated) parts.push(L('輸出太長，後面截掉了'));
+    c.foot.appendChild(document.createTextNode(parts.join(' · ')));
+    if (!running && bad && BANG_NEEDS_TTY.test(c.segs.map((s) => s.t).join(''))) {
+      c.foot.appendChild(el('div', 'bang-hint', L('需要輸入的指令請到終端機格子跑')));
+    }
+  }
+  function bangHistoryTurn(r) { if (r && r.rec) bangCard(r.rec); }
   // 排隊中的泡泡：放在對話最下面（Claude 目前的回答下方），等它真的讀進去才移進對話
   function queueNote(t, uuid, now) {
     let n = t.querySelector('.queued-note');
@@ -1662,6 +1803,78 @@
       turn.appendChild(el('div', 'turn-foot', parts.join(' · ')));
     }
   }
+  const selectedQuotes = new Map();
+  let quoteTray = null, pendingQuoteJump = null;
+  const quoteLabel = (q) => (q.role === 'user' ? L('我') : L('AI')) + ' · ' + (q.preview ?? Q.preview(q.text));
+  function orderedQuotes() {
+    return Q.ordered(selectedQuotes.values(), [...document.querySelectorAll('.turn[data-qid]')].map((t) => t.dataset.qid));
+  }
+  function renderQuotes(notify = true) {
+    if (!quoteTray) {
+      quoteTray = document.body.appendChild(el('div', 'quote-tray'));
+      quoteTray.setAttribute('aria-label', L('已引用的訊息'));
+    }
+    const items = orderedQuotes();
+    quoteTray.replaceChildren();
+    quoteTray.hidden = !items.length;
+    document.documentElement.style.setProperty('--quote-height', items.length ? '48px' : '0px');
+    for (const q of items) {
+      const chip = quoteTray.appendChild(el('button', 'quote-chip', quoteLabel(q) + ' ×'));
+      chip.type = 'button';
+      chip.setAttribute('aria-label', L('移除引用') + ' ' + quoteLabel(q));
+      chip.addEventListener('click', () => { selectedQuotes.delete(q.qid); renderQuotes(); });
+    }
+    for (const t of document.querySelectorAll('.turn[data-qid]')) {
+      const on = selectedQuotes.has(t.dataset.qid);
+      t.classList.toggle('quoted', on);
+      const b = t.querySelector('.quote-toggle');
+      if (b) b.setAttribute('aria-pressed', String(on));
+    }
+    if (notify) post({ type: 'quotes', items: items.map(({ qid, role, text }) => ({ qid, role, text })) });
+  }
+  function addQuoteButton(turn, foot) {
+    if (foot.querySelector('.quote-toggle')) return;
+    if (!turn.dataset.qid) turn.dataset.qid = Q.fallbackID('assistant', turnTexts(turn).join('\n\n'));
+    const b = foot.appendChild(el('button', 'quote-toggle icon-btn', '❞'));
+    b.type = 'button';
+    b.title = L('引用');
+    b.setAttribute('aria-label', L('引用'));
+    b.setAttribute('aria-pressed', String(selectedQuotes.has(turn.dataset.qid)));
+    turn.classList.toggle('quoted', selectedQuotes.has(turn.dataset.qid));
+    b.addEventListener('click', () => {
+      const qid = turn.dataset.qid;
+      if (selectedQuotes.has(qid)) selectedQuotes.delete(qid);
+      else {
+        const user = turn.classList.contains('user');
+        const text = user ? (turn.querySelector('.bubble-t')?.textContent || '') : turnTexts(turn).join('\n\n');
+        selectedQuotes.set(qid, { qid, role: user ? 'user' : 'assistant', text });
+      }
+      renderQuotes();
+    });
+  }
+  function jumpQuote(qid) {
+    pendingQuoteJump = { qid, tries: 0 };
+    S.following = false;
+    S.magnet = false;
+    continueQuoteJump();
+  }
+  function continueQuoteJump() {
+    const request = pendingQuoteJump;
+    if (!request) return;
+    const target = [...document.querySelectorAll('.turn[data-qid]')].find((t) => t.dataset.qid === request.qid);
+    if (target) {
+      pendingQuoteJump = null;
+      target.scrollIntoView({ block: 'center' });
+      target.classList.add('quote-flash');
+      setTimeout(() => target.classList.remove('quote-flash'), 1800);
+    } else if (!S.hasOlder || request.tries >= 5) pendingQuoteJump = null;
+    else if (!S.loadingOlder) {
+      request.tries++;
+      S.loadingOlder = true;
+      post({ type: 'loadOlder' });
+    }
+  }
+
   // 一輪回覆結束：最下面放「複製」，複製這輪 Claude 說的所有文字（原文 Markdown，不含工具和思考）
   function turnTexts(turn) {
     return [...turn.querySelectorAll(':scope > .md')].map((m) => (m._tb ? m._tb.raw : m.textContent).trim()).filter(Boolean);
@@ -1676,6 +1889,7 @@
     b.setAttribute('aria-label', L('複製'));
     b.title = L('複製這段回覆的全部文字');
     foot.insertBefore(b, foot.firstChild);
+    addQuoteButton(turn, foot);
   }
   const fmtDur = (ms) => {
     const s = ms / 1000;
@@ -1709,6 +1923,10 @@
   function onAssistant(o, live) {
     const ctx = ctxFor(o);
     const msg = o.message || {};
+    if (ctx.main && !ctx.quoteID) {
+      ctx.quoteID = msg.id || o.uuid || Q.fallbackID('assistant', JSON.stringify(msg));
+      if (ctx.turn) ctx.turn.dataset.qid = ctx.quoteID;
+    }
     const m = ctx.msg(msg.id);
     for (const blk of msg.content || []) {
       if (!blk) continue;
@@ -1756,6 +1974,10 @@
     switch (e.type) {
       case 'message_start':
         ctx.curMsg = (e.message && e.message.id) || msgId;
+        if (ctx.main && !ctx.quoteID && ctx.curMsg) {
+          ctx.quoteID = ctx.curMsg;
+          if (ctx.turn) ctx.turn.dataset.qid = ctx.quoteID;
+        }
         break;
       case 'content_block_start':
         blockForStart(ctx, msgId, e.index, e.content_block || {}, true);
@@ -1791,7 +2013,7 @@
     const ctx = ctxFor(o);
     const c = o.message && o.message.content;
     const tur = o.tool_use_result !== undefined ? o.tool_use_result : o.toolUseResult;
-    if (typeof c === 'string') { if (!live) userText(c, []); else if (INTERRUPT_RE.test(c)) stoppedNote(); return; }
+    if (typeof c === 'string') { if (!live) userText(c, [], o.uuid || Q.fallbackID('user', JSON.stringify(c))); else if (INTERRUPT_RE.test(c)) stoppedNote(); return; }
     if (!Array.isArray(c)) return;
     const texts = [], images = [];
     const results = c.filter((b) => b && b.type === 'tool_result');
@@ -1813,7 +2035,7 @@
       if (texts.some((t) => INTERRUPT_RE.test(t))) stoppedNote();
       return;
     }
-    if (!results.length && (texts.length || images.length)) userText(texts.join('\n'), images);
+    if (!results.length && (texts.length || images.length)) userText(texts.join('\n'), images, o.uuid || Q.fallbackID('user', JSON.stringify(c)));
     else if (texts.some((t) => INTERRUPT_RE.test(t))) stoppedNote();
   }
   function stoppedNote() {
@@ -1822,25 +2044,48 @@
     for (const p of S.perms.values()) if (p.pending) p.resolved(L('已停止'));
     smallNote(S.ctxMain, L('已停止'), 'stopped');
   }
+  function taskNote(raw, inner) {
+    const tag = (n) => ((inner.match(new RegExp('<' + n + '>([\\s\\S]*?)</' + n + '>')) || [])[1] || '').trim();
+    const summary = tag('summary'), status = tag('status');
+    const text = !summary ? L('背景工作通知')
+      : (!status || status === 'completed') ? L`背景工作完成：${summary}` : L`背景工作結束（${status}）：${summary}`;
+    const n = notice(clip(text, 200), 'task');
+    n.title = raw.length > 2000 ? raw.slice(0, 2000) + '…' : raw;
+  }
   // 舊對話裡的使用者文字：過濾系統插入的東西
-  function userText(text, images) {
+  function userText(text, images, qid) {
     let t = String(text || '');
     if (INTERRUPT_RE.test(t.trim())) { stoppedNote(); return; }
     if (/^<(local-command-caveat|system-reminder)>/.test(t.trim())) return;
+    // Claude Code 自動送來的背景工作通知（不是使用者打的）：畫成一行灰色小字，原文放在滑鼠停留提示；後面接著使用者自己打的字就照常顯示
+    for (let m; (m = t.match(/^\s*<task-notification>([\s\S]*?)<\/task-notification>\s*/));) {
+      taskNote(m[0].trim(), m[1]);
+      t = t.slice(m[0].length);
+    }
+    if (!t.trim() && !(images && images.length)) return;
     const cmd = t.match(/<command-name>([^<]*)<\/command-name>/);
+    // codenv 改聊天室名字時幫 Claude 送的 /rename（ChatSession.syncName）：不當成使用者打的字顯示，它的回應也不顯示
+    if (cmd && /^\/?rename$/.test(cmd[1].trim())) return;
     if (cmd) {
       const args = (t.match(/<command-args>([\s\S]*?)<\/command-args>/) || [])[1] || '';
-      userBubble(`${cmd[1].startsWith('/') ? '' : '/'}${cmd[1]} ${args}`.trim(), images, { cmd: true });
+      userBubble(`${cmd[1].startsWith('/') ? '' : '/'}${cmd[1]} ${args}`.trim(), images, { cmd: true, qid });
       return;
     }
     const out = t.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
+    if (out && /^Session renamed to:/.test(out[1].trim())) return;
     if (out) { const s = stripAnsi(out[1]).trim(); if (s) notice(clip(s, 300)); return; }
+    // 使用者一般訊息前面附的指令結果（codenv 的 ! 指令，Bang.swift）：卡片已經顯示過，不重複，旁邊標「附 N 個指令結果」
+    const lead = t.match(BANG_LEAD_RE);
+    if (lead) {
+      const rest = t.slice(lead[0].length).trim();
+      if (rest) { userBubble(rest, images, { qid, bang: (lead[0].match(/<bash-input>/g) || []).length }); return; }
+    }
     const bash = t.match(/<bash-input>([\s\S]*?)<\/bash-input>/);
-    if (bash) { userBubble('! ' + bash[1], images, { cmd: true }); return; }
+    if (bash) { userBubble('! ' + bash[1], images, { cmd: true, qid }); return; }
     if (/<bash-(stdout|stderr)>/.test(t)) return;
     t = t.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
     if (!t && !(images && images.length)) return;
-    userBubble(t, images);
+    userBubble(t, images, { qid });
   }
 
   function onSystem(o) {
@@ -1987,6 +2232,7 @@
       S.bulk = true;   // 整批載入：組直接收起，不做動畫、不量位置
       for (const r of records || []) {
         if (r && r.type === 'wbDivider') { S.ctxMain.endTurn(); notice(r.text, 'divider'); continue; }   // 換過模型：各家紀錄接起來的分隔線
+        if (r && r.type === 'wbBang') { bangHistoryTurn(r); continue; }                                   // 用 ! 跑過的指令（Swift 依時間插進來）
         if (!r || (r.type !== 'user' && r.type !== 'assistant')) continue;
         if (r.isMeta || r.isSidechain || r.isVisibleInTranscriptOnly) continue;
         if (r.cwd && !S.cwd) { S.cwd = r.cwd; guessHome(r.cwd); }
@@ -2022,15 +2268,22 @@
       if (typeof o === 'string') { try { o = JSON.parse(o); } catch (_) { return; } }
       try { handle(o, true); } catch (e) { console.error('wb.event', e, o); }
     },
+    clearQuotes() { selectedQuotes.clear(); renderQuotes(); },
+    restoreQuotes(items) {
+      selectedQuotes.clear();
+      for (const q of items || []) selectedQuotes.set(q.qid, q);
+      renderQuotes();
+    },
     localUser(m) {
       m = m || {};
       if (m.queued && m.uuid) {
-        const t = userBubble(m.text || '', m.images || [], { queued: true });
+        const t = userBubble(m.text || '', m.images || [], { queued: true, bang: m.bang, qid: m.uuid, quotes: m.quotes });
         queued.set(m.uuid, t);
         queueNote(t, m.uuid, !!m.now);
+        S.lastLocal = { uuid: m.uuid, el: t };
       } else {
         S.interrupted = false;
-        userBubble(m.text || '', m.images || []);
+        S.lastLocal = { uuid: m.uuid, el: userBubble(m.text || '', m.images || [], { bang: m.bang, qid: m.uuid, quotes: m.quotes }) };
       }
       // 送出＝扣上卡扣：之後 Claude 的思考、回覆一直貼在最新一行，直到使用者自己往上捲
       S.magnet = true;
@@ -2040,7 +2293,34 @@
       stick();
       updateJump();
     },
+    // 這則其實沒送出去（程序開不起來、寫不進去）：把剛畫的泡泡收回來；字會放回輸入框，不然重送會出現兩個泡泡
+    unsend(uuid) {
+      const l = S.lastLocal;
+      const target = [...document.querySelectorAll('.turn.user')].find((t) => t.dataset.qid === uuid);
+      if (l && l.uuid === uuid) S.lastLocal = null;
+      queued.delete(uuid);
+      unconfirmed.delete(uuid);
+      if (target) target.remove();
+    },
     // Claude 讀進了這則（回送）：從排隊區移進對話
+    // ! 指令：開始（卡片出現）、輸出一段、結束（最後完整的資料）
+    bangStart(rec) { bangCard(Object.assign({ status: 'running', segs: [] }, rec)); S.magnet = true; S.following = true; stick(); },
+    bangOut(id, text, isErr) {
+      const c = bangCards.get(id);
+      if (!c) return;
+      const last = c.segs[c.segs.length - 1];
+      if (last && last.e === !!isErr) last.t += text; else c.segs.push({ e: !!isErr, t: String(text) });
+      if (!c.raf) c.raf = raf(() => { c.raf = 0; bangRender(c); stick(); });
+    },
+    bangEnd(rec) {
+      const c = bangCards.get(rec.id);
+      if (!c) { bangCard(rec); return; }
+      c.status = rec.status; c.code = rec.code == null ? null : rec.code; c.secs = rec.secs || 0; c.truncated = !!rec.truncated;
+      if (Array.isArray(rec.segs)) c.segs = rec.segs.map((s) => ({ e: !!s.e, t: String(s.t) }));
+      bangRender(c);
+      bangFoot(c);
+      stick();
+    },
     userTaken(uuid) {
       S.interrupted = false;   // 讀進了新的訊息：新的一輪開始
       unconfirmed.delete(uuid);
@@ -2125,6 +2405,7 @@
       try {
         for (const r of records || []) {
           if (r && r.type === 'wbDivider') { S.ctxMain.endTurn(); notice(r.text, 'divider'); continue; }
+          if (r && r.type === 'wbBang') { bangHistoryTurn(r); continue; }
           if (!r || (r.type !== 'user' && r.type !== 'assistant')) continue;
           if (r.isMeta || r.isSidechain || r.isVisibleInTranscriptOnly) continue;
           if (r.isCompactSummary) { notice(L('（較早的對話已壓縮成摘要）')); continue; }
@@ -2141,9 +2422,12 @@
       if (old) old.remove();
       const first = log.firstChild;
       while (box.firstChild) log.insertBefore(box.firstChild, first);
+      S.hasOlder = !!more;
       if (more) wb.moreAbove();
       s.scrollTop = top + (s.scrollHeight - before);
       S.loadingOlder = false;
+      renderQuotes();
+      continueQuoteJump();
     },
     // 最上面放「往上捲載入更早的訊息」，捲到頂端附近就跟 App 要
     scrollEdge(top) {
@@ -2167,13 +2451,102 @@
       log.insertBefore(n, log.firstChild);
       S.hasOlder = true;
     },
-    noMoreAbove() { const n = log.querySelector('.notice.more-top'); if (n) n.remove(); S.hasOlder = false; S.loadingOlder = false; },
+    noMoreAbove() { const n = log.querySelector('.notice.more-top'); if (n) n.remove(); S.hasOlder = false; S.loadingOlder = false; continueQuoteJump(); },
+    // 卸載網頁前抓取閱讀位置：目前畫面最上面那則訊息的識別與偏移，以及是否貼在最底
+    scrollAnchor() {
+      const s = sc();
+      const turns = logTurns();
+      const bottom = (S.following && Math.abs(s.scrollTop - S.lastScrollTop) <= 2) || distFromBottom() < 6;
+      if (!turns.length) return { bottom: true, qid: '', index: -1, fromEnd: 0, offset: 0 };
+      let idx = turns.findIndex((t, i) => turnRect(t, i, s).bottom > 0);
+      if (idx < 0) idx = turns.length - 1;
+      const t = turns[idx];
+      const qid = turnId(t);
+      const offset = Math.round(turnRect(t, idx, s).top);
+      let fromEnd = 0;
+      if (qid) {
+        for (let i = turns.length - 1; i > idx; i--) if (turnId(turns[i]) === qid) fromEnd++;
+      }
+      // tail＝從最後一則倒數第幾則：沒有識別的訊息靠它，重建時只載入最後一段也對得上（從頭數會對到別則；agy Argon 11/6）
+      return { bottom, qid, index: idx, tail: turns.length - 1 - idx, fromEnd, offset };
+    },
+    // 重建歷史後還原閱讀位置：原本貼底或目標訊息不在載入範圍內就貼底，否則捲回該則訊息＋偏移並關閉自動貼底
+    restoreAnchor(a) {
+      if (!a || typeof a !== 'object' || (a.bottom ?? a.atBottom ?? a.following)) {
+        S.following = true;
+        S.jumping = false;
+        stick();
+        raf(stick);
+        updateJump();
+        return true;
+      }
+      const turns = logTurns();
+      const qid = a.qid ?? a.id ?? '';
+      let target = null, idx = -1;
+      if (qid) {
+        const hits = [];
+        turns.forEach((t, i) => { if (turnId(t) === qid) hits.push({ t, i }); });
+        if (hits.length) {
+          const pick = typeof a.fromEnd === 'number' && hits.length - 1 - a.fromEnd >= 0
+            ? hits[hits.length - 1 - a.fromEnd]
+            : hits[0];
+          target = pick.t;
+          idx = pick.i;
+        }
+      } else if (Number.isInteger(a.tail) && a.tail >= 0) {
+        const i = turns.length - 1 - a.tail;
+        if (i >= 0) { target = turns[i]; idx = i; }
+      } else if (typeof a.index === 'number' && a.index >= 0 && a.index < turns.length) {
+        target = turns[a.index];
+        idx = a.index;
+      }
+      if (!target) {
+        S.following = true;
+        S.jumping = false;
+        stick();
+        raf(stick);
+        updateJump();
+        return false;
+      }
+      const rawOffset = a.offset ?? a.top ?? 0;
+      const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? rawOffset : 0;
+      S.following = false;
+      S.magnet = false;
+      S.jumping = false;
+      const apply = () => {
+        if (!target.isConnected) return;
+        const s = sc();
+        const r = turnRect(target, idx, s);
+        const maxTop = Math.max(0, s.scrollHeight - s.clientHeight);
+        s.scrollTop = Math.max(0, Math.min(maxTop, Math.round(s.scrollTop + (r.top - offset))));
+        S.lastScrollTop = s.scrollTop;
+        updateJump();
+      };
+      apply();
+      raf(() => {
+        if (S.following || S.jumping || S.magnet || userScrolled()) return;
+        apply();
+      });
+      return true;
+    },
     // 網頁端補充：清空畫面（換對話時用）
     clear() { resetState(); },
   };
+  const logTurns = () => [...log.children].filter((c) => c.classList && c.classList.contains('turn'));
+  const turnId = (t) => t.dataset.qid || (t.dataset.bid ? 'bang:' + t.dataset.bid : '');
+  function turnRect(t, idx, s) {
+    if (typeof t.getBoundingClientRect === 'function') return t.getBoundingClientRect();
+    const top = (typeof t.offsetTop === 'number' ? t.offsetTop : idx * 100) - s.scrollTop;
+    const height = typeof t.offsetHeight === 'number' ? t.offsetHeight : 100;
+    return { top, bottom: top + height, height };
+  }
   function resetState() {
+    selectedQuotes.clear();
+    pendingQuoteJump = null;
+    renderQuotes(false);
     log.innerHTML = '';
     S.tools.clear();
+    bangCards.clear();
     S.perms.clear();
     S.animating.clear();
     S.deferred.clear();

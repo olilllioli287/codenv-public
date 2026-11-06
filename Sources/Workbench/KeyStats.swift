@@ -134,6 +134,8 @@ final class KeyStats {
 final class KeyStatsApp: NSApplication {
     override func sendEvent(_ e: NSEvent) {
         if e.type == .keyDown { KeyStats.shared.saw(e) }
+        // ⌥ ＋左鍵：八宮格先於任何視窗、WebView、終端機、文字框看到事件（RadialMenu.swift）
+        if RadialMenu.shared.intercept(e) { return }
         super.sendEvent(e)
     }
 }

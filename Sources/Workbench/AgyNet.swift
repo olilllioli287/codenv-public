@@ -20,8 +20,12 @@ enum AgyNet {
     private static var testOffline: Bool { CommandLine.arguments.contains("--state-dir") && CommandLine.arguments.contains("--agy-offline") }
 
     static func start() {
-        guard !started else { return }
+        // 兩個執行緒同時呼叫時只有一個能往下（同一個 NWPathMonitor 不能 start 兩次）
+        lock.lock()
+        let first = !started
         started = true
+        lock.unlock()
+        guard first else { return }
         monitor.pathUpdateHandler = { path in
             let now = path.status == .satisfied
             lock.lock(); let was = _up; _up = now; if now != was { _blockedUntil = nil }; lock.unlock()
@@ -32,6 +36,7 @@ enum AgyNet {
 
     /// 馬上就能回答（不連網路，主執行緒可以用）：系統說有網路、而且沒有因為剛跳過登入頁而暫停
     static var quickOK: Bool {
+        start()
         if testOffline { return false }
         lock.lock(); defer { lock.unlock() }
         if let t = _blockedUntil, t > Date() { return false }
@@ -50,8 +55,9 @@ enum AgyNet {
         let done = DispatchSemaphore(value: 0)
         let ok = Box()
         // 有回 HTTP 回應（就算是 404）就算連得到；要登入的 Wi-Fi 會卡在 TLS，算連不到
-        URLSession.shared.dataTask(with: req) { _, r, _ in ok.set(r is HTTPURLResponse); done.signal() }.resume()
-        _ = done.wait(timeout: .now() + timeout + 1)
+        let task = URLSession.shared.dataTask(with: req) { _, r, _ in ok.set(r is HTTPURLResponse); done.signal() }
+        task.resume()
+        if done.wait(timeout: .now() + timeout + 1) == .timedOut { task.cancel() }   // 等不到就取消，不要讓掛住的連線一直占著
         return ok.get()
     }
 

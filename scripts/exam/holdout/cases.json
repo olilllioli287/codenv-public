@@ -1,0 +1,55 @@
+[
+  {
+    "id": "A11",
+    "name": "回答提到 quota 不誤判額度",
+    "runner": "holdout/todo.py",
+    "before": "52279dd^",
+    "files": [
+      "scripts/codenv-todo"
+    ]
+  },
+  {
+    "id": "A12",
+    "name": "TMPDIR 不擴大允許工作區、環境白名單",
+    "runner": "holdout/todo.py",
+    "before": "52279dd^",
+    "files": [
+      "scripts/codenv-todo"
+    ]
+  },
+  {
+    "id": "C13",
+    "name": "空檔恢復與非空壞檔保護",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C14",
+    "name": "舊檔遲到 save 不寫新檔",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C15",
+    "name": "編輯器焦點與聊天快捷鍵",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C16",
+    "name": "網頁卸載後程式代送不丟泡泡",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C17",
+    "name": "卸載中串流切回不重複",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C18",
+    "name": "程序被關掉時沒確認的訊息放回",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C19",
+    "name": "大訊息寫入不卡主執行緒",
+    "runner": "native.sh"
+  }
+]

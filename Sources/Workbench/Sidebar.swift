@@ -17,10 +17,13 @@ struct SidebarActions {
     var newBrowser: () -> Void = {}
     /// 對話右鍵「換工作資料夾…」（MoveFolder.swift）
     var changeFolder: (UUID) -> Void = { _ in }
+    var about: (UUID) -> Void = { _ in }
     /// 最左邊的「協作」圖示：開關右邊的協作看板（CollabBoard.swift）
     var toggleCollab: () -> Void = {}
     /// 對話右鍵「排程…」（Schedule.swift）
     var schedule: (UUID) -> Void = { _ in }
+    /// 右鍵「在沙盒裡跑（nono）」開關
+    var toggleSandbox: (UUID) -> Void = { _ in }
 }
 
 struct SidebarView: View {
@@ -56,11 +59,7 @@ struct SidebarView: View {
                     Text(mode == "codelab" ? "codelab" : "codenv").font(.system(size: 20 * s, weight: .semibold))
                         .lineLimit(1).minimumScaleFactor(0.7)
                     Spacer()
-                    Button(action: actions.toggleSidebar) {
-                        Image(systemName: "sidebar.left").font(.system(size: 15 * s))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help(L("收起側欄（⌃ ⌘ S）：聊天區變寬；上面分頁列最左邊的同一顆按鈕可以再打開"))
+                    // 收起側欄的按鈕拿掉了（使用者 10/29）：只靠 F3（或選單的 ⌃ ⌘ S）
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -116,8 +115,11 @@ struct SidebarView: View {
                         if store.projects.isEmpty {
                             Text(L("按 ＋ 選一個資料夾當專案")).font(.callout).foregroundStyle(.tertiary).padding(.horizontal, 16).padding(.vertical, 4)
                         }
-                        if store.groups.isEmpty {
-                            ForEach(store.projects) { p in projectBlock(p) }
+                        // 程式碼學習專區不算（它放在最左邊的圖示列）：除了它之外沒有別的組時，首頁照樣直接列專案；
+                        // 不然只建了學習專區的人，首頁會整個空掉（專案和對話都看不到）
+                        let labID = store.groups.first(where: { $0.name == Store.codeLabGroupName })?.id
+                        if store.groups.allSatisfy({ $0.id == labID }) {
+                            ForEach(store.projects.filter { $0.groupID == nil || $0.groupID != labID }) { p in projectBlock(p) }
                         } else {
                             // 程式碼學習專區放在最左邊的圖示列，首頁不列
                             ForEach(store.topGroups.filter { $0.name != Store.codeLabGroupName }) { g in groupBlock(g, depth: 0) }
@@ -230,7 +232,7 @@ struct SidebarView: View {
             if convs.isEmpty && archived.isEmpty {
                 Text(L("沒有對話")).font(.system(size: 14 * s)).foregroundStyle(.tertiary).padding(.leading, 40).padding(.vertical, 5)
             }
-            ForEach(Self.sideItems(convs)) { item in sideItem(item, depth: 0) }
+            ForEach(Self.sideItems(convs, windowFrames: store.windowFrames)) { item in sideItem(item, depth: 0) }
             // 一個禮拜沒碰的：按上面的封存按鈕才列出來，灰色字
             if showArchived {
                 ForEach(archived) { c in
@@ -289,7 +291,9 @@ struct SidebarView: View {
         Button(L("上移")) { store.shift(c.id, by: -1) }
         Button(L("下移")) { store.shift(c.id, by: 1) }
         Button(L("換工作資料夾…")) { actions.changeFolder(c.id) }
+        if !c.isBrowser { Button(L("關於…")) { actions.about(c.id) } }
         if c.terminal != true && !c.isBrowser { Button(schedules.has(c.id) ? L("排程…（有）") : L("排程…")) { actions.schedule(c.id) } }
+        if c.terminal != true && !c.isBrowser && NonoSandbox.available { Button((c.sandbox == true ? "✓ " : "") + L("Claude 在沙盒裡跑（nono；! 指令不含）")) { actions.toggleSandbox(c.id) } }
         if !store.groups.isEmpty {
             Menu(L("移到…")) {
                 ForEach(store.groupTree(), id: \.group.id) { t in
@@ -372,7 +376,7 @@ struct SidebarView: View {
             }
             // 使用者 10/22：資料夾那一行、封存那一行都太佔位置。組底下直接列對話（在哪個資料夾滑鼠停著看），
             // 封存的平常不列，按上面的封存按鈕才在各組最下面用灰字列出來
-            ForEach(Self.sideItems(active)) { item in sideItem(item, depth: depth) }
+            ForEach(Self.sideItems(active, windowFrames: store.windowFrames)) { item in sideItem(item, depth: depth) }
             ForEach(archived) { c in
                 ConversationRow(title: c.title, selected: store.selected == c.id, indent: true, dimmed: true) { store.open(c.id) }
                     .padding(.leading, CGFloat(depth) * 16 * s)
@@ -424,11 +428,13 @@ struct SidebarView: View {
         case bundle(UUID, [Conversation])
         var id: UUID { switch self { case .conv(let c): return c.id; case .bundle(let b, _): return b } }
     }
-    static func sideItems(_ list: [Conversation]) -> [SideItem] {
+    static func sideItems(_ list: [Conversation], windowFrames: [UUID: (window: UUID, name: String)] = [:]) -> [SideItem] {
+        // 框的編號：自己的掛件框（Conversation.bundle），或取過名字的 Window（Store.windowFrames，已經在掛件框裡的不搶）
+        func key(_ c: Conversation) -> UUID? { c.bundle ?? windowFrames[c.id]?.window }
         var seen = Set<UUID>(), out: [SideItem] = []
         for c in list {
-            if let b = c.bundle {
-                if seen.insert(b).inserted { out.append(.bundle(b, list.filter { $0.bundle == b })) }
+            if let b = key(c) {
+                if seen.insert(b).inserted { out.append(.bundle(b, list.filter { key($0) == b })) }
             } else { out.append(.conv(c)) }
         }
         return out
@@ -442,6 +448,7 @@ struct SidebarView: View {
         case .bundle(let b, let members):
             BundleBox(bundle: b, gadgets: store.gadgets(of: b),
                       shownGadgets: Set((store.currentWindow?.root?.leaves ?? []).filter { !PaneSlide.shared.isLeaving($0) }), depth: depth,
+                      windowTitle: store.windowName(ofBundle: b),
                       onOpen: { store.openGadget($0) },
                       onRemoveGadget: { store.removeConversation($0) },
                       onDissolve: { store.dissolveBundle(b) },
@@ -745,10 +752,23 @@ struct GroupDrop: ViewModifier {
                 return m.nest(info.itemProviders(for: [.text]))
             }
             GroupDrop.dragging = nil
-            ChatTextView.dropLog("側欄排組：\(m.store.group(g)?.name ?? "?") → \(after ? "排到後面" : "排到前面")：\(m.store.group(m.target)?.name ?? "?")", nil)
-            if after { m.store.reorderGroup(g, after: m.target) } else { m.store.reorderGroup(g, before: m.target) }
+            let store = m.store, target = m.target
+            verifyOwnDrag(info.itemProviders(for: [.text]), expect: SidebarView.groupDragPrefix + g.uuidString) {
+                ChatTextView.dropLog("側欄排組：\(store.group(g)?.name ?? "?") → \(after ? "排到後面" : "排到前面")：\(store.group(target)?.name ?? "?")", nil)
+                if after { store.reorderGroup(g, after: target) } else { store.reorderGroup(g, before: target) }
+            }
             return true
         }
+    }
+}
+
+/// 放下時確認拖進來的東西真的是側欄自己拖出去的那一項（內容是我們放的那串字）：
+/// 開始拖後取消、一分鐘內從別的 App 拖文字過來，不會被當成排序。內容要非同步讀，符合才執行 then（主執行緒）
+func verifyOwnDrag(_ providers: [NSItemProvider], expect: String, then: @escaping () -> Void) {
+    guard let p = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return }
+    _ = p.loadObject(ofClass: NSString.self) { obj, _ in
+        guard let s = obj as? String, s == expect else { return }
+        DispatchQueue.main.async(execute: then)
     }
 }
 
@@ -795,8 +815,11 @@ struct ReorderDrop: ViewModifier {
                 return false
             }
             ReorderDrop.dragging = nil
-            ChatTextView.dropLog("側欄排序：\(store.conversation(id)?.title ?? "?") → \(after ? "排到後面" : "排到前面")：\(store.conversation(target)?.title ?? "?")", nil)
-            if after { store.reorder(id, after: target) } else { store.reorder(id, before: target) }
+            let store = self.store, target = self.target
+            verifyOwnDrag(info.itemProviders(for: [.text]), expect: DropOverlay.prefix + id.uuidString) {
+                ChatTextView.dropLog("側欄排序：\(store.conversation(id)?.title ?? "?") → \(after ? "排到後面" : "排到前面")：\(store.conversation(target)?.title ?? "?")", nil)
+                if after { store.reorder(id, after: target) } else { store.reorder(id, before: target) }
+            }
             return true
         }
     }

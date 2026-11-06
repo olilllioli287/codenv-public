@@ -7,14 +7,32 @@ final class Workspace {
     private(set) var panes: [UUID: any ConversationPane] = [:]
     /// 跑 Claude 的指令；測試時可以換成別的（main.swift 的 --claude）
     var claudeCommand = "claude"
+    private var webUnloadTimer: Timer?
 
-    init(store: Store, theme: Theme) {
+    init(store: Store, theme: Theme, webUnloadSeconds: TimeInterval = 180) {
         self.store = store
         self.theme = theme
+        webUnloadTimer = Timer.scheduledTimer(withTimeInterval: max(0.5, min(30, webUnloadSeconds / 2)), repeats: true) { [weak self] _ in
+            self?.unloadHiddenWebViews(idleSeconds: webUnloadSeconds)
+        }
+    }
+
+    deinit { webUnloadTimer?.invalidate() }
+
+    func unloadHiddenWebViews(idleSeconds: TimeInterval = 180) {
+        let now = Date()
+        for pane in panes.values {
+            guard let c = pane as? ChatPane, c.window == nil, let since = c.hiddenSince,
+                  now.timeIntervalSince(since) >= idleSeconds, c.canUnloadWeb else { continue }
+            c.unloadWeb()
+        }
     }
 
     func pane(for c: Conversation) -> any ConversationPane {
-        if let p = panes[c.id] { return p }
+        if let p = panes[c.id] {
+            (p as? ChatPane)?.restoreSavedDraftIfNeeded()
+            return p
+        }
         if c.isBrowser { return browserPane(for: c) }
         if c.terminal != true { return chatPane(for: c) }
         let p = TerminalPane(theme: theme)
@@ -45,10 +63,7 @@ final class Workspace {
         let cid = c.id
         // 名字跟著網頁標題（自己改過名就不動）；網址記下來，重開 App 打開同一頁
         p.onTitle = { [weak self] t in self?.store.rename(cid, to: String(t.prefix(40)), byUser: false) }
-        p.onURL = { [weak self] u in
-            guard let self, let i = self.store.conversations.firstIndex(where: { $0.id == cid }), self.store.conversations[i].browser != u else { return }
-            self.store.conversations[i].browser = u
-        }
+        p.onURL = { [weak self] u in self?.store.noteBrowserURL(cid, u) }
         p.zoomFor = { [weak self] h in self?.store.browserZoom[h].map { CGFloat($0) } }
         p.onZoom = { [weak self] h, z in self?.store.browserZoom[h] = abs(z - 1) < 0.001 ? nil : Double(z) }
         p.applySavedZoom()
@@ -66,6 +81,8 @@ final class Workspace {
         p.applyModel(c.model)
         p.applyEffort(c.effort)
         p.applyPermissionMode(c.permissionMode)
+        p.session.sandboxed = c.sandbox == true
+        p.configureDraftPersistence(directory: store.directory)
         p.onPermissionModeChange = { [weak self] m in
             guard let self, let i = self.store.conversations.firstIndex(where: { $0.id == cid }) else { return }
             self.store.conversations[i].permissionMode = m
@@ -91,8 +108,13 @@ final class Workspace {
             if (saved == nil || saved == "default"), self.store.conversation(cid)?.terminal != true { appDefaults.set(m, forKey: "lastDefaultModel") }
         }
         p.openSettings = { NSApp.sendAction(#selector(AppDelegate.showSettings), to: nil, from: nil) }
-        p.onStatus = { [weak self] s in
-            guard let self else { return }
+        p.onToolsMenu = { [weak self, weak p] v in
+            guard let self, let p else { return }
+            self.popUpToolsMenu(for: cid, chat: p, from: v)
+        }
+        p.onStatus = { [weak self, weak p] s in
+            // 只認目前這格：已經關掉或換掉的舊格晚到的回報不能改燈號（agy Argon 11/6）
+            guard let self, let p, (self.panes[cid] as AnyObject?) === p else { return }
             let was = self.store.status[cid]
             self.store.status[cid] = s == .idle ? nil : s
             // 做完了而且你沒在看這段：標成未讀
@@ -117,35 +139,71 @@ final class Workspace {
     }
 
     /// 換成終端機／聊天介面打開同一段對話（兩邊共用 Claude 的對話紀錄）
-    func switchMode(_ id: UUID, terminal: Bool) {
+    func switchMode(_ id: UUID, terminal: Bool, done: (() -> Void)? = nil) {
+        // 程式碼區有沒存的修改：先存，存不了就不換（關掉這一格會把它丟掉）
+        if let lab = (panes[id] as? ChatPane)?.codeLab, lab.hasUnsaved {
+            lab.saveForClose { [weak self] ok in
+                guard let self else { return }
+                guard ok else { NSSound.beep(); return }
+                self.doSwitchMode(id, terminal: terminal)
+                done?()      // 先存檔的情況是存好才真的換：畫面要等換完再重建，不然會重建出舊的聊天格
+            }
+            return
+        }
+        doSwitchMode(id, terminal: terminal)
+        done?()
+    }
+
+    private func doSwitchMode(_ id: UUID, terminal: Bool) {
         close(id)
         if let i = store.conversations.firstIndex(where: { $0.id == id }) { store.conversations[i].terminal = terminal ? true : nil }
     }
 
     func close(_ id: UUID) {
-        panes[id]?.terminate()
-        panes[id] = nil
+        // 先拿掉格子、清燈號，再結束：結束過程同步回報的「停下來」不能把被關掉的對話標成未讀（agy Argon 11/6）
+        let old = panes.removeValue(forKey: id)
         store.liveModel[id] = nil
+        store.backgroundModel[id] = nil
         store.status[id] = nil   // 格子已經放掉了，它不會再回報「停下來」，燈號要自己清
+        old?.terminate()
+    }
+
+    /// 不在版面上的聊天格能不能收：閒著、沒有沒送的字、沒有 ! 指令和程式在跑，也沒有背景工作（背景 shell、agy／codex、本機背景模型）。
+    /// 前景回答完但背景指令還在跑的，收掉會連 Claude 一起結束、背景工作跟著死（agy Argon 11/6）
+    private func canRelease(_ id: UUID, _ c: ChatPane) -> Bool {
+        if woken.contains(id), c.session.isRunning { return false }
+        // 背景工作只看可信的：掃描到真的還活著的程序，以及 claude 還活著時它自己回報的背景清單。
+        // 不看前景紀錄、也不看已結束程序留下的清單：主動結束（換模型）時不會走 onExit 清理，殘留紀錄會讓格子永遠收不掉（Codex 11/6）
+        let act = SessionActivity.shared
+        let busyBackground = !(act.scanned[id] ?? []).isEmpty || (c.session.isRunning && !(act.background[id] ?? []).isEmpty)
+        return store.status[id] == nil && store.backgroundModel[id] == nil && !busyBackground
+            && !c.session.hasUnacknowledgedInput   // 還有送出沒確認的（排隊中）：這輪剛結束、下一則馬上要讀
+            && !c.inputBar.hasPendingInput && !c.isBangRunning && c.codeLab?.isProgramRunning != true
     }
 
     /// 按 × 或 ⌘ W 關掉的格子（哪個 Window 都沒擺著了）：閒著的就把 Claude 收掉、釋出記憶體（使用者 10/25）。
     /// 正在做事的留著跑完（做完再呼叫一次就會收）；輸入框還有沒送的字或圖的留著；程式碼區的程式在跑的留著、有沒存的修改先存再收（存不了就留著）；
     /// 終端機模式不動（裡面可能在跑別的）。
     /// 紀錄都在，之後再打開會自動接回（--resume）
+    /// 用 codenv-todo wake 喚醒的、不在版面上的聊天室：releaseUnplaced 不收（不然 claude 馬上又被關掉）。擺進版面之後就照一般規則
+    var woken = Set<UUID>()
+
     func releaseUnplaced() {
         var placed = Set<UUID>()
         for s in store.sessions { for w in s.windows { placed.formUnion(w.root?.leaves ?? []) } }
+        woken.subtract(placed)
         for (id, p) in panes where !placed.contains(id) {
+            // 喚醒的：claude 還在跑就留著；已經結束了就當一般不在版面上的處理（不要永遠留著）
+            if woken.contains(id) { if (p as? ChatPane)?.session.isRunning == true { continue } else { woken.remove(id) } }
             // 瀏覽器格子關掉就停（不在背景播聲音、吃記憶體）；網址記在對話上，再打開會重新載入
             // 掛件例外：⌘ ⇧ B 收起來只是不顯示，網頁留著，再叫出來不用重新載入、不會閃白（使用者 10/25）
             if p is BrowserPane { if store.conversation(id)?.isGadget != true { close(id) }; continue }
-            guard let c = p as? ChatPane, store.status[id] == nil, !c.inputBar.hasPendingInput,
-                  c.codeLab?.isProgramRunning != true else { continue }
+            guard let c = p as? ChatPane, canRelease(id, c) else { continue }
             guard let lab = c.codeLab, lab.hasUnsaved else { close(id); continue }
             // 程式碼區有沒存的修改：先存（使用者 10/25），存好而且還是關著、閒著才收；存不了就留著
-            lab.saveForClose { [weak self, weak c] ok in
-                guard ok, let self, let c, (self.panes[id] as AnyObject?) === c, self.store.status[id] == nil,
+            lab.saveForClose(interactive: false) { [weak self, weak c] ok in
+                // 存檔是非同步的：回來時重新整套檢查（存檔期間可能被喚醒、打了字、開始跑程式）
+                guard ok, let self, let c, (self.panes[id] as AnyObject?) === c, self.canRelease(id, c), c.codeLab?.hasUnsaved != true,
                       !self.store.sessions.contains(where: { $0.windows.contains { $0.root?.leaves.contains(id) == true } }) else { return }
                 self.close(id)
             }
@@ -198,6 +256,87 @@ extension Workspace {
         let current = s.transcriptURL
         let files = s.allTranscripts.filter { $0.url != claude }
             .map { (url: $0.url, model: $0.url == current ? store.displayModel(id) : Transcripts.family($0.url)) }
-        Transcripts.update(id: id, title: c.title, files: files, done: done)
+        // 用 ! 跑過的指令（Bang.swift）也寫進好讀紀錄
+        let extra = p.bangForTranscript.map { Transcripts.Turn(time: $0.at, user: true, text: Bang.readable($0), model: "") }
+        Transcripts.update(id: id, title: c.title, files: files, extra: extra, done: done)
+    }
+
+    /// ⌘ Q 結束前檢查所有格子有沒有在跑的東西，每項一句白話
+    /// 範圍：所有 Session、所有 Window（包含獨立視窗）、沒擺在版面上但程序還活著的聊天室
+    func runningSummary() -> [String] {
+        var result: [String] = []
+
+        // 收集所有相關對話 ID：維持穩定順序（先依 conversations 清單，再補其餘活著的 pane 與 status）
+        var checkedIDs = Set<UUID>()
+        var orderedIDs: [UUID] = []
+
+        for c in store.conversations {
+            orderedIDs.append(c.id)
+            checkedIDs.insert(c.id)
+        }
+        for id in panes.keys where !checkedIDs.contains(id) {
+            orderedIDs.append(id)
+            checkedIDs.insert(id)
+        }
+        for id in store.status.keys where !checkedIDs.contains(id) {
+            orderedIDs.append(id)
+            checkedIDs.insert(id)
+        }
+        for id in SessionActivity.shared.activeIDs where !checkedIDs.contains(id) {
+            orderedIDs.append(id)
+            checkedIDs.insert(id)
+        }
+
+        func isExternalModel(_ it: RunningItem) -> Bool {
+            if it.id.hasPrefix("proc-") { return true }
+            if let tag = it.tag?.lowercased() {
+                if tag.contains("agy") || tag.contains("codex") || tag.contains("copilot") || tag.contains("gemini") || tag.contains("本機") {
+                    return true
+                }
+            }
+            if SessionActivity.externalModel(in: it.text) != nil { return true }
+            return false
+        }
+
+        for id in orderedIDs {
+            let conv = store.conversation(id)
+            let title = conv?.title ?? L("新對話")
+            let pane = panes[id]
+
+            // 1. 主對話：Claude 回答中
+            if let st = store.status[id], st != .idle {
+                result.append(L("\(title)：Claude 回答中"))
+            }
+
+            // 2. 背景工作與外部程序（SessionActivity）
+            let items = SessionActivity.shared.running(id)
+            for it in items {
+                if isExternalModel(it) {
+                    result.append(L("\(title)：agy／codex 在跑"))
+                } else if it.background {
+                    result.append(L("\(title)：背景 shell"))
+                }
+            }
+
+            // 3. 程式碼學習專區：程式執行中
+            if let chat = pane as? ChatPane, let lab = chat.codeLab, lab.isProgramRunning {
+                let practiceName = conv?.title ?? L("練習")
+                result.append(L("\(practiceName)：程式執行中"))
+            }
+
+            // 4. ! 指令在跑
+            if let chat = pane as? ChatPane, chat.isBangRunning {
+                result.append(L("\(title)：! 指令在跑"))
+            }
+
+            // 5. 終端機格：有程式在跑
+            if let term = pane as? TerminalPane, term.hasRunningProcess {
+                result.append(L("終端機：有程式在跑"))
+            }
+        }
+
+        // 最後輸出前把完全相同的行去重，保留原本順序
+        var seen = Set<String>()
+        return result.filter { seen.insert($0).inserted }
     }
 }

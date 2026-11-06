@@ -80,34 +80,169 @@ enum Feedback {
         var lines = log
         while true {
             if let u = make(lines), u.absoluteString.count <= maxURLLength || (lines ?? []).isEmpty { return u }
+            if (lines ?? []).isEmpty { return nil }
             lines = Array((lines ?? []).suffix((lines ?? []).count / 2))
         }
     }
 
-    // MARK: 視窗
+    // MARK: 回報檔（使用者 10/29：公版的「回報問題」改成產生一份回報 zip）
 
-    static func present() {
+    /// 測試用（要有 --state-dir）：回報 zip 放 <state-dir>/reports，不放使用者的「下載項目」
+    private static var stateDirArg: String? {
+        let a = CommandLine.arguments
+        guard let i = a.firstIndex(of: "--state-dir"), i + 1 < a.count else { return nil }
+        return a[i + 1]
+    }
+    private static func testNote(_ s: String) {
+        guard stateDirArg != nil, let path = ProcessInfo.processInfo.environment["CODENV_REPORT_TEST_LOG"] else { return }
+        let line = s + "\n"
+        if let h = FileHandle(forWritingAtPath: path) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() } else { try? line.write(toFile: path, atomically: true, encoding: .utf8) }
+    }
+    /// 測試：CODENV_REPORT_AUTO="按鈕編號:說明文字"（0 用郵件寄出、1 前往討論區、2 只存檔案、其他取消；要有 --state-dir）→ 不跳對話框、不開任何東西
+    private static var autoChoice: (Int, String)? {
+        guard stateDirArg != nil, let v = ProcessInfo.processInfo.environment["CODENV_REPORT_AUTO"], let c = v.firstIndex(of: ":"), let n = Int(v[..<c]) else { return nil }
+        return (n, String(v[v.index(after: c)...]))
+    }
+
+    /// 說明選單的「回報問題…」與瀏覽器格的「回報問題…」共用：browser＝要附截圖的那一格（沒有就不附截圖）
+    static func present(browser: BrowserPane? = nil, browserName: String? = nil, over window: NSWindow? = nil) {
+        guard Edition.feedbackEmail != nil, Edition.updateRepo != nil else { return }
+        if let browser {
+            let host = browser.webView.url?.host
+            browser.snapshot { shot in showReport(shot: shot, host: host, name: browserName, over: window) }
+        } else {
+            showReport(shot: nil, host: nil, name: nil, over: window)
+        }
+    }
+
+    private static func showReport(shot: Data?, host: String?, name: String?, over window: NSWindow?) {
         guard let email = Edition.feedbackEmail, let repo = Edition.updateRepo else { return }
-        let alert = NSAlert()
-        alert.messageText = L("回報問題")
-        alert.informativeText = L("選一個管道。內容會先幫你填好 codenv 版本、macOS 版本和晶片，你在郵件或網頁上看過、補上問題描述才會送出；codenv 自己不會寄任何東西。")
-        let box = NSButton(checkboxWithTitle: L("附上最近的錯誤紀錄（最後 \(logLines) 行）"), target: nil, action: nil)
-        box.state = .off
-        let note = NSTextField(wrappingLabelWithString: L("紀錄裡可能有檔名或對話片段，附之前請自己看過；家目錄路徑已換成 ~。"))
-        note.font = .systemFont(ofSize: 11); note.textColor = .secondaryLabelColor
-        note.preferredMaxLayoutWidth = 300
-        let stack = NSStackView(views: [box, note])
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 4
-        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 56)
-        alert.accessoryView = stack
-        alert.addButton(withTitle: L("寄 email"))
-        alert.addButton(withTitle: L("到 GitHub 回報"))
-        alert.addButton(withTitle: L("取消"))
-        let r = alert.runModal()
-        guard r == .alertFirstButtonReturn || r == .alertSecondButtonReturn else { return }
-        let log = box.state == .on ? recentLog() : nil
-        let url = r == .alertFirstButtonReturn ? mailtoURL(email: email, log: log) : issueURL(repo: repo, log: log)
-        if let url { NSWorkspace.shared.open(url) }
+        var choice = 3, note = "", withShot = shot != nil
+        if let a = autoChoice {
+            (choice, note) = a
+        } else {
+            let alert = NSAlert()
+            alert.messageText = L("回報問題")
+            alert.informativeText = L("會產生一個回報檔（zip）：這一格的截圖、最近 3 天的事件紀錄（不含對話內容與完整網址）、codenv 版本、macOS、螢幕編號與解析度，加上你寫的說明。codenv 自己不會寄任何東西，由你決定怎麼送。")
+            let label = NSTextField(labelWithString: L("說明（發生了什麼事）："))
+            label.font = .systemFont(ofSize: 12)
+            let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 90))
+            tv.isRichText = false; tv.font = .systemFont(ofSize: 13); tv.isVerticallyResizable = true
+            tv.textContainer?.widthTracksTextView = true
+            let sc = NSScrollView(frame: NSRect(x: 0, y: 0, width: 320, height: 90))
+            sc.documentView = tv; sc.hasVerticalScroller = true; sc.borderType = .bezelBorder
+            sc.translatesAutoresizingMaskIntoConstraints = false
+            sc.widthAnchor.constraint(equalToConstant: 320).isActive = true
+            sc.heightAnchor.constraint(equalToConstant: 90).isActive = true
+            var views: [NSView] = [label, sc]
+            let box = NSButton(checkboxWithTitle: L("附上這一格的截圖（\(host ?? "")）"), target: nil, action: nil)
+            box.state = .on
+            if shot != nil { views.append(box) }
+            let stack = NSStackView(views: views)
+            stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 6
+            stack.frame = NSRect(x: 0, y: 0, width: 320, height: stack.fittingSize.height)
+            alert.accessoryView = stack
+            alert.addButton(withTitle: L("用郵件寄出"))
+            alert.addButton(withTitle: L("前往討論區"))
+            alert.addButton(withTitle: L("只存成檔案"))
+            alert.addButton(withTitle: L("取消"))
+            alert.window.initialFirstResponder = tv
+            switch alert.runModal() {
+            case .alertFirstButtonReturn: choice = 0
+            case .alertSecondButtonReturn: choice = 1
+            case .alertThirdButtonReturn: choice = 2
+            default: choice = 3
+            }
+            note = tv.string
+            withShot = shot != nil && box.state == .on
+        }
+        guard choice <= 2 else { testNote("取消，沒有產生檔案"); return }
+        buildReport(note: note, shot: withShot ? shot : nil, host: host, name: name) { zip in
+            guard let zip else {
+                testNote("產生回報檔失敗")
+                if stateDirArg != nil { return }   // 測試實例不跳 runModal
+                let a = NSAlert(); a.messageText = L("沒能產生回報檔"); a.informativeText = L("請再試一次，或直接到討論區描述問題。"); a.runModal(); return
+            }
+            testNote("zip=\(zip.path)")
+            switch choice {
+            case 0: sendMail(to: email, zip: zip, note: note)
+            case 1: openDiscussion(repo: repo, zip: zip)
+            default: reveal(zip)
+            }
+        }
+    }
+
+    private static func reveal(_ zip: URL) {
+        if stateDirArg != nil { testNote("（測試）不打開 Finder：\(zip.lastPathComponent)"); return }
+        NSWorkspace.shared.activateFileViewerSelecting([zip])
+    }
+
+    /// 郵件：用系統的郵件服務帶附件；不行就開 mailto（附件請使用者自己拖進去）並在 Finder 顯示回報檔
+    private static func sendMail(to email: String, zip: URL, note: String) {
+        let body = L("附上回報檔 \(zip.lastPathComponent)。\n\n問題描述：\n\(note)\n")
+        let svc = NSSharingService(named: .composeEmail)
+        svc?.recipients = [email]
+        svc?.subject = subject + (Edition.version.isEmpty ? "" : Edition.version)
+        let ok = svc?.canPerform(withItems: [body, zip]) == true
+        if stateDirArg != nil { testNote("郵件：收件人=\(email) 主旨=\(svc?.subject ?? "") 附件=\(zip.lastPathComponent) 系統郵件服務可用=\(ok)（測試不真的開）"); return }
+        if ok { svc?.perform(withItems: [body, zip]); return }
+        if let u = URL(string: "mailto:\(email)?subject=\(enc(subject))&body=\(enc(body))") { NSWorkspace.shared.open(u) }
+        NSWorkspace.shared.activateFileViewerSelecting([zip])
+        let a = NSAlert()
+        a.messageText = L("請自己把回報檔附到信裡")
+        a.informativeText = L("這台 Mac 沒有設定好郵件 App，所以只幫你開了空白信。回報檔已在 Finder 選好，拖進信裡就可以寄出。")
+        a.runModal()
+    }
+
+    private static func openDiscussion(repo: String, zip: URL) {
+        let url = URL(string: "https://github.com/\(repo)/issues")!
+        if stateDirArg != nil { testNote("討論區：\(url.absoluteString)（測試不真的開）；回報檔 \(zip.lastPathComponent) 可自己拖進 issue"); return }
+        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.activateFileViewerSelecting([zip])
+    }
+
+    /// 產生回報 zip（放「下載項目」；測試放 <state-dir>/reports）：說明.txt、screenshot.png（有的話）、events.log（最近 3 天）
+    static func buildReport(note: String, shot: Data?, host: String?, name: String?, done: @escaping (URL?) -> Void) {
+        let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"
+        let stamp = f.string(from: Date())
+        let outDirArg = stateDirArg.map { URL(fileURLWithPath: $0).appendingPathComponent("reports", isDirectory: true) }
+        EventLog.recentThreeDaysText { log, count in
+            let g = DateFormatter(); g.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            var info = "codenv 回報\n時間：\(g.string(from: Date()))\ncodenv 版本：\(Edition.version)\n\(systemLine)\n晶片：\(chip)\n螢幕：\(EventLog.screensSummary())\n"
+            if let host, !host.isEmpty { info += "瀏覽器格：\(host)\n" }      // 格子的名稱常是第一句話或網頁標題，不寫進去
+            info += "事件紀錄：\(count) 行（最近 3 天）\n\n說明：\n\(note)\n"
+            let eventsText = log.isEmpty ? "（沒有事件紀錄）\n" : log + "\n"
+            // 寫檔、壓縮都在背景做（截圖可能有幾 MB）；任何一步失敗就清掉暫存與半殘的 zip、回報失敗
+            DispatchQueue.global(qos: .userInitiated).async {
+                let fm = FileManager.default
+                let outDir = outDirArg ?? (fm.urls(for: .downloadsDirectory, in: .userDomainMask).first ?? Edition.home)
+                let folderName = "codenv-report-\(stamp)-\(UUID().uuidString.prefix(4).lowercased())"   // 同一秒的兩份不會互相覆蓋
+                // 外面多包一層唯一的資料夾：兩份回報（或兩個 codenv）不會共用暫存而互相刪掉
+                let work = fm.temporaryDirectory.appendingPathComponent("codenv-report-" + UUID().uuidString, isDirectory: true)
+                let src = work.appendingPathComponent(folderName, isDirectory: true)
+                let zip = outDir.appendingPathComponent(folderName + ".zip")
+                func finish(_ ok: Bool) {
+                    if !ok { try? fm.removeItem(at: zip) }
+                    try? fm.removeItem(at: work)
+                    DispatchQueue.main.async { done(ok ? zip : nil) }
+                }
+                do {
+                    try fm.createDirectory(at: outDir, withIntermediateDirectories: true)
+                    try fm.createDirectory(at: src, withIntermediateDirectories: true)
+                    try info.write(to: src.appendingPathComponent("說明.txt"), atomically: true, encoding: .utf8)
+                    if let shot { try shot.write(to: src.appendingPathComponent("screenshot.png")) }
+                    try eventsText.write(to: src.appendingPathComponent("events.log"), atomically: true, encoding: .utf8)
+                    let p = Process()
+                    p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                    p.arguments = ["-c", "-k", "--keepParent", "--norsrc", src.path, zip.path]
+                    try p.run()
+                    p.waitUntilExit()
+                    finish(p.terminationStatus == 0 && fm.fileExists(atPath: zip.path))
+                } catch {
+                    finish(false)
+                }
+            }
+        }
     }
 
     /// 測試：算出四個網址寫進檔案，不開任何東西

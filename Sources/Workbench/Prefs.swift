@@ -27,6 +27,11 @@ final class Prefs: ObservableObject {
     @Published var localCompactTokens: Int { didSet { d.set(localCompactTokens, forKey: "localCompactTokens") } }
     /// 瀏覽器格子用哪個核心：webkit（系統內建、省記憶體）或 chromium（第二階段，還沒做好前照樣用 WebKit）
     @Published var browserEngine: String { didSet { d.set(browserEngine, forKey: "browserEngine") } }
+    /// Gemini 網頁換皮（GeminiSkin.swift）：預設關
+    @Published var geminiSkin: Bool { didSet { d.set(geminiSkin, forKey: "geminiSkin"); BrowserPane.setSkin(geminiSkin) } }
+    /// NotebookLM 網頁換皮（NotebookSkin.swift）：預設關
+    @Published var notebookSkin: Bool { didSet { d.set(notebookSkin, forKey: "notebookSkin"); BrowserPane.setNotebookSkin(notebookSkin) } }
+    @Published var geminiCmdEnter: Bool { didSet { d.set(geminiCmdEnter, forKey: "geminiCmdEnter"); BrowserPane.setGeminiKeys(geminiCmdEnter) } }
     /// 幾天沒碰收進封存
     @Published var archiveDays: Int { didSet { d.set(archiveDays, forKey: "archiveDays") } }
     /// 打開對話先載入幾則（往上捲再載入更早的）
@@ -44,7 +49,7 @@ final class Prefs: ObservableObject {
     @Published var autoImportLive: Bool { didSet { d.set(autoImportLive, forKey: "autoImportLive") } }
     /// 模型清單列出全部；關著（預設）只列常用的：Opus／Sonnet／Haiku 5.5 (cc)、Gemini 3.8 Flash、本機模型（使用者 10/24 要的）
     @Published var allModels: Bool { didSet { d.set(allModels, forKey: "allModels") } }
-    /// agy（Google Antigravity CLI）功能的總開關：Gemini 聊天室、灰字建議、用量、看板 @agy 自動做事都靠它。私人版預設開、公版預設關（Edition.agyDefault）；
+    /// agy（Google Antigravity CLI）功能的總開關：Gemini 聊天室、灰字建議、用量、看板 @agy 自動做事都靠它。預設開（Edition.agyDefault）；公版第一次用前要先看過提醒（agyNoticeSeen）；
     /// 從關到開要先看警告（Prefs.confirmEnableAgy），所以設定頁的開關不直接改這個值
     /// 公版：開 App 30 秒後、之後每 24 小時去 GitHub 看有沒有新版（UpdateCheck.swift）；沒有更新來源的私人版用不到
     @Published var autoCheckUpdates: Bool { didSet { d.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
@@ -67,6 +72,9 @@ final class Prefs: ObservableObject {
         cloudCompactTokens = d.object(forKey: "cloudCompactTokens") as? Int ?? 640_000   // 使用者 10/25 定的預設
         localCompactTokens = d.object(forKey: "localCompactTokens") as? Int ?? 400_000
         browserEngine = d.string(forKey: "browserEngine") ?? "webkit"
+        geminiCmdEnter = d.object(forKey: "geminiCmdEnter") as? Bool ?? true
+        geminiSkin = d.object(forKey: "geminiSkin") as? Bool ?? false
+        notebookSkin = d.object(forKey: "notebookSkin") as? Bool ?? false
         archiveDays = d.object(forKey: "archiveDays") as? Int ?? 7
         historyLimit = d.object(forKey: "historyLimit") as? Int ?? 400
         usageMinutes = d.object(forKey: "usageMinutes") as? Int ?? 5
@@ -86,7 +94,14 @@ final class Prefs: ObservableObject {
 
     /// 看板的背景執行器（scripts/codenv-todo，Python）看不到 UserDefaults：關著時在看板資料夾放一個 agy-disabled 檔，它看到就不叫 agy
     static func syncAgyMarker(_ on: Bool) {
-        let url = CollabBoardModel.todoFile.deletingLastPathComponent().appendingPathComponent("agy-disabled")
+        // 開著但還沒看過提醒：放 agy-notice-pending，執行器看到就不領 @agy 步驟、請桌寵提醒一次
+        let dir = CollabBoardModel.todoFile.deletingLastPathComponent()
+        let pending = dir.appendingPathComponent("agy-notice-pending")
+        if on && !(appDefaults.object(forKey: "agyNoticeSeen") as? Bool ?? !Edition.isPublic) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: pending.path, contents: Data("agy 的提醒還沒在 codenv 裡看過\n".utf8))
+        } else { try? FileManager.default.removeItem(at: pending) }
+        let url = dir.appendingPathComponent("agy-disabled")
         if on { try? FileManager.default.removeItem(at: url) }
         else {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -94,31 +109,76 @@ final class Prefs: ObservableObject {
         }
     }
 
-    /// 打開 agy 功能前的警告：引用 Google 官方 FAQ 原文。按「我了解風險，仍要打開」才回傳 true。
-    /// 這只是把風險講清楚，不會讓用法變成合規；codenv 也沒有任何隱藏自己的處理
+    /// 看過 agy 提醒了沒：私人版使用者已經知情（預設當成看過），公版第一次用前要看一次（docs/agy-warning-spec.md）
+    var agyNoticeSeen: Bool {
+        get { appDefaults.object(forKey: "agyNoticeSeen") as? Bool ?? !Edition.isPublic }
+        set { appDefaults.set(newValue, forKey: "agyNoticeSeen"); Self.syncAgyMarker(agyEnabled) }
+    }
+
+    /// 警告內文：兩件事分開講，附 FAQ 原文。不寫「合規」「安全」「官方允許」，也不保證帳號沒事
+    private static let agyNoticeBody = L("""
+    Google 的 Antigravity 官方 FAQ（https://antigravity.google/docs/faq/）講了兩件事：
+
+    1. 拿 agy 的登入去開第三方軟體（例如 Claude Code、OpenCode）是違反服務條款，可能被停權。codenv 沒有這樣做：它不讀、不轉用你的登入，只是呼叫官方的 `agy -p`。
+
+    2. `agy -p` 是給「直接寫腳本和 CI」用的；把 agy 包進第三方的 coding agent 或 App，個人方案「不支援」。codenv 的 Gemini 聊天室、灰字建議、用量查詢，以及看板讓 Claude 自動派工作給 agy，都屬於這一類。
+
+    FAQ 原文：
+
+    "Antigravity CLI headless mode (`agy -p`) is intended for direct scripting and CI workflows. Wrapping `agy` inside third-party coding agents or applications, or automating account rotation, is not supported under consumer plans."
+
+    "Using third-party software, tools, or services to access Antigravity is a violation of our Terms of Service … Such actions can result in suspension or termination of your account."
+
+    實際狀況請自己查證相關文章與 Google 的最新說明；codenv 不保證你的帳號不會出事，風險由你自己承擔。
+    """)
+
+    /// 從關到開時的警告：按「我了解，打開」才回傳 true（同時算看過提醒了）。codenv 沒有任何隱藏自己的處理
     static func confirmEnableAgy() -> Bool {
         while true {
             let a = NSAlert()
             a.alertStyle = .warning
-            a.messageText = L("打開 agy 功能前，請先看這段")
-            a.informativeText = L("""
-            Google 的 Antigravity 官方 FAQ（https://antigravity.google/docs/faq/）寫著：
-
-            "Antigravity CLI headless mode (`agy -p`) is intended for direct scripting and CI workflows. Wrapping `agy` inside third-party coding agents or applications, or automating account rotation, is not supported under consumer plans."
-
-            "Using third-party software, tools, or services to access Antigravity is a violation of our Terms of Service … Such actions can result in suspension or termination of your account."
-
-            codenv 的 Gemini 聊天室、灰字建議、用量查詢、看板 @agy 自動做事，都是用別的程式去呼叫 agy。打開之後，你的 Google 帳號可能被停權，風險由你自己承擔；這個開關不會讓這樣的用法變成合規。
-            """)
+            a.messageText = L("agy 功能：使用前請先知道這件事")
+            a.informativeText = agyNoticeBody
             a.addButton(withTitle: L("取消"))
-            a.addButton(withTitle: L("我了解風險，仍要打開"))
+            a.addButton(withTitle: L("我了解，打開"))
             a.addButton(withTitle: L("看 FAQ 原文"))
             switch a.runModal() {
-            case .alertSecondButtonReturn: return true
+            case .alertSecondButtonReturn: Prefs.shared.agyNoticeSeen = true; return true
             case .alertThirdButtonReturn: if let u = URL(string: "https://antigravity.google/docs/faq/") { NSWorkspace.shared.open(u) }
             default: return false
             }
         }
+    }
+
+    /// 預設開著但還沒看過提醒：第一次要呼叫 agy 前先跳一次（App 開啟、回到前景時檢查；沒看過之前 AgyBridge.enabled 是 false，
+    /// 所以 Gemini 聊天室、灰字建議、用量、看板都不會先叫 agy）。測試 App 用 --agy-notice-answer 知道｜關掉 代按
+    private var noticeShowing = false
+    func checkAgyNotice() {
+        guard agyEnabled, !agyNoticeSeen, !noticeShowing else { return }
+        noticeShowing = true
+        defer { noticeShowing = false }
+        let a = CommandLine.arguments
+        var choice = 0      // 1＝我知道了、2＝關掉 agy 功能
+        if a.contains("--state-dir"), let i = a.firstIndex(of: "--agy-notice-answer"), i + 1 < a.count { choice = a[i + 1] == "關掉" ? 2 : 1 }
+        // 測試實例沒指定答案就不跳 runModal（會卡住主執行緒，還可能出現在使用者的螢幕上）
+        if choice == 0, a.contains("--state-dir") { return }
+        while choice == 0 {
+            let al = NSAlert()
+            al.alertStyle = .warning
+            al.messageText = L("agy 功能：使用前請先知道這件事")
+            al.informativeText = Self.agyNoticeBody
+            al.addButton(withTitle: L("我知道了"))
+            al.addButton(withTitle: L("關掉 agy 功能"))
+            al.addButton(withTitle: L("看 FAQ 原文"))
+            switch al.runModal() {
+            case .alertFirstButtonReturn: choice = 1
+            case .alertSecondButtonReturn: choice = 2
+            case .alertThirdButtonReturn: if let u = URL(string: "https://antigravity.google/docs/faq/") { NSWorkspace.shared.open(u) }
+            default: return
+            }
+        }
+        if choice == 2 { agyEnabled = false }
+        agyNoticeSeen = true
     }
 
     func applyAppearance() {

@@ -45,7 +45,15 @@ extension TerminalPane {
         if let img = NSImage(pasteboard: pb), let tiff = img.tiffRepresentation,
            let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
             let f = Self.dropFolder.appendingPathComponent("拖放-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(6)).png")
-            if (try? png.write(to: f)) != nil { pastePaths([f]); return true }
+            do {
+                try FileManager.default.createDirectory(at: Self.dropFolder, withIntermediateDirectories: true)
+                try png.write(to: f)
+                pastePaths([f]); return true
+            } catch {
+                let ns = error as NSError
+                NSLog("無法儲存拖放圖片：%@", error.localizedDescription)
+                EventLog.log(L("檔案"), L("無法儲存拖放圖片（\(ns.domain) \(ns.code)）"))
+            }
         }
         return false
     }
@@ -67,8 +75,20 @@ extension TerminalPane {
         window?.makeFirstResponder(terminal)
     }
 
-    /// 跟 iTerm 一樣用反斜線跳脫
+    /// 跟 iTerm 一樣用反斜線跳脫。檔名含換行、Esc 之類的控制字元時反斜線擋不住（換行會直接把一行拆成兩個指令，
+    /// Esc[201~ 還能提早結束括號貼上），整個路徑改用 $'…' 的寫法（bash、zsh 都懂），控制字元寫成 \xHH
     static func shellEscape(_ s: String) -> String {
+        if s.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) {
+            var out = "$'"
+            for u in s.unicodeScalars {
+                switch u {
+                case "\\": out += "\\\\"
+                case "'": out += "\\'"
+                default: out += (u.value < 0x20 || u.value == 0x7f) ? String(format: "\\x%02x", u.value) : String(u)
+                }
+            }
+            return out + "'"
+        }
         let special = Set(" \\'\"`$!&*()[]{}<>|;?#~=%^,\t")
         var out = ""
         for ch in s { if special.contains(ch) { out.append("\\") }; out.append(ch) }

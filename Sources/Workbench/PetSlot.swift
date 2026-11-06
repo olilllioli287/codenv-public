@@ -24,7 +24,7 @@ enum PetSlot {
     /// 設定頁用：照「builtin／external」讀寫
     static func size(forKey k: String) -> NSSize {
         if let s = (d.dictionary(forKey: "petSlotSize") as? [String: [Double]])?[k], s.count == 2 { return NSSize(width: s[0], height: s[1]) }
-        return size(on: nil)
+        return NSSize(width: 197, height: 158)
     }
     static func setSize(_ size: NSSize, forKey k: String) {
         var all = d.dictionary(forKey: "petSlotSize") as? [String: [Double]] ?? [:]

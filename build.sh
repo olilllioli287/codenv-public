@@ -15,6 +15,10 @@ swift build -c release
 
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
+# App 記住建置它的原始碼目錄；打包／匯出流程可用空值避免留下建置機路徑。
+SOURCE_DIR="$(pwd -P)"
+# plutil 把路徑當獨立參數：資料夾名稱有空白、引號也不會寫錯（PlistBuddy -c 會把空白當分隔）
+/usr/bin/plutil -replace CodenvSourceDir -string "$SOURCE_DIR" "$APP/Contents/Info.plist"
 # 先刪再放：正在跑的 App 還用著舊檔（不同的檔案），不會被改到一半而當掉，下次打開才換新版
 rm -f "$APP/Contents/MacOS/Workbench"
 cp .build/release/Workbench "$APP/Contents/MacOS/Workbench"
@@ -22,6 +26,8 @@ cp .build/release/Workbench "$APP/Contents/MacOS/Workbench"
 cp icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 rm -rf "$APP/Contents/Resources/chat"
 rsync -a --exclude test.html Resources/chat "$APP/Contents/Resources/"
+# nono 沙盒設定（右鍵「在沙盒裡跑」；NonoSandbox.swift）
+rsync -a Resources/nono "$APP/Contents/Resources/"
 # 程式碼學習專區的編輯器（Monaco）
 rm -rf "$APP/Contents/Resources/codelab"
 rsync -a Resources/codelab "$APP/Contents/Resources/"

@@ -32,12 +32,48 @@ final class LocalServer {
             return
         }
         // 一次只開得了一個本機模型：別的聊天室的模型正在回答（users 含自己這一輪，所以 > 1），不要把它半路關掉
-        if process?.isRunning == true, let other = self.model, users > 1 {
+        // 還在等埠空出來、準備開別的模型的（process 還是 nil，只有 launching）也算
+        if let other = (process?.isRunning == true ? self.model : nil) ?? launching, other != model, users > 1 {
             done(L("另一個聊天室的 \(LocalBridge.name(other)) 正在回答。本機模型一次只能開一個，等它答完再送"))
             return
         }
+        // 正在等埠空出來、準備開同一個模型：跟著等，不要再開第二個
+        if launching == model { waiters.append(done); return }
         stop()
-        launch(model, done)
+        launching = model
+        waiters = [done]
+        // 埠已經有別的程式在聽（可能是上次沒關掉的、或別的服務）：不開，也不去問它——它只要回 200 就會被當成自己的伺服器，對話就送到它那裡了。
+        // 自己剛 terminate 的上一個伺服器還在收尾，最多等 2.5 秒讓它放掉埠
+        let port = self.port
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var busy = true
+            for _ in 0..<12 {
+                if !Self.portAnswers(port) { busy = false; break }
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+            DispatchQueue.main.async {
+                guard let self, self.launching == model else { return }
+                self.launching = nil
+                if busy { self.flush(L("本機模型要用的埠 \(port) 已經被別的程式占用了（可能是上次沒關掉的伺服器），先不開，免得對話送到它那裡。把它關掉再試")); return }
+                guard !self.waiters.isEmpty else { return }   // 等的時候被 stop() 取消了
+                let w = self.waiters
+                self.launch(model) { err in w.forEach { $0(err) } }
+            }
+        }
+    }
+
+    private var launching: String?
+
+    /// 127.0.0.1 的這個埠現在有沒有東西在聽
+    private static func portAnswers(_ port: Int) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var a = sockaddr_in()
+        a.sin_family = sa_family_t(AF_INET)
+        a.sin_port = in_port_t(port).bigEndian
+        a.sin_addr.s_addr = inet_addr("127.0.0.1")
+        return withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } } == 0
     }
 
     /// 包一層：每 2 秒看一次開它的 App 還在不在，不在了（當掉、被強制結束，收不到 willTerminate）就自己結束，不會留著吃記憶體
@@ -138,6 +174,7 @@ final class LocalServer {
     func stop() {
         idle?.invalidate(); idle = nil
         if let p = process { process = nil; p.terminate() }
+        launching = nil
         ready = false
         model = nil
         if !waiters.isEmpty { flush(L("本機模型伺服器被關掉了")) }
@@ -145,7 +182,7 @@ final class LocalServer {
 }
 
 final class LocalBridge {
-    /// 怎麼開關思考：lfm＝範本自己補 </think>（template）；qwen＝範本本來就認 enable_thinking；
+    /// 怎麼開關思考：lfm＝範本自己補 </think>（template）；qwen＝範本本來就認 enable_thinking（Qwen、Nemotron E4B）；
     /// harmony＝gpt-oss 的 reasoning_effort；none＝不會思考（面板不給拉桿）
     enum Think { case lfm, qwen, harmony, none }
     struct Model {
@@ -166,6 +203,8 @@ final class LocalBridge {
         Model(id: "mlx-community/Qwen3.5-4B-MLX-4bit", name: "Qwen3.5 4B", gb: 3, think: .qwen, temperature: 0.7, vision: true),   // 看得到圖但小，42 讀成 47
         Model(id: "mlx-community/gemma-3-4b-it-qat-4bit", name: "Gemma 3 4B", gb: 3, think: .none, temperature: 1.0, tools: false, vision: true),
         Model(id: "mlx-community/Ministral-3-3B-Instruct-2512-4bit", name: "Ministral 3 3B", gb: 3, think: .none, temperature: 0.15, tools: false, vision: true),
+        // gemma4 架構的 4-bit；mlx_lm 伺服器會把思考段（<|channel>thought…<channel|>）拆進 delta.reasoning、答案放在 delta.content，不用自己解析分隔符號。範本認得 enable_thinking（預設關，開了前面加 <|think|>），所以沿用 .qwen；tools 實測會叫（Read 工具有正確的 tool_calls）。vision 尚未驗過，先不開（權重有 optiq_vision.safetensors，要用 mlx_vlm 實測看圖後再開）。10/30 實測 100 題 87 分、約 33 tok/s、峰值約 7.2GB。
+        Model(id: "mlx-community/NVIDIA-Nemotron-3.5-Bolt-E4B-OptiQ-4bit", name: "Nemotron E4B", gb: 8, think: .qwen, temperature: 1.0),
         Model(id: "MXLouis/Llama-Breeze2-3B-Instruct-Text-mlx-8Bit", name: "Breeze2 3B", gb: 4, think: .none, temperature: 0.7, tools: false),
     ]
     static var available: [Model] {
@@ -247,6 +286,12 @@ final class LocalBridge {
     var effort: String?
     /// 交給畫面的事件（Claude 格式）
     var emit: (([String: Any]) -> Void)?
+    /// 聊天室現在的名字（每次組系統提示時問，改名下一輪就生效）
+    var chatName: (() -> String?)?
+    private func nameLine() -> String {
+        guard let n = chatName?()?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty else { return "" }
+        return "\n這段對話的聊天室名稱目前是「\(n)」（使用者在側欄看到的名字）。被問到聊天室名稱就直接回這個，不要依對話內容編。"
+    }
 
     private var messages: [[String: Any]] = []          // 送給模型的整段對話（OpenAI 格式，不含系統提示）
     private var queue: [(uuid: String, text: String, msg: [String: Any])] = []   // msg：輪到它時才記進紀錄（排隊時記會插在上一則回覆前面）
@@ -284,7 +329,8 @@ final class LocalBridge {
         switch obj["type"] as? String {
         case "user":
             guard let msg = obj["message"] as? [String: Any] else { return }
-            if let s = msg["content"] as? String, s.hasPrefix("/") { return }   // /effort 之類是給 Claude 的
+            // 內部送的 /effort 之類（沒有 uuid）是給 Claude 的；使用者打的 / 開頭路徑有 uuid，要照送，吃掉了狀態會一直是工作中
+            if obj["uuid"] == nil, let s = msg["content"] as? String, s.hasPrefix("/") { return }
             let uuid = (obj["uuid"] as? String)?.lowercased() ?? UUID().uuidString.lowercased()
             queue.append((uuid, Self.text(msg), msg))
             next()
@@ -312,10 +358,13 @@ final class LocalBridge {
         shell = nil
         for rid in approvals.keys { emit?(["type": "control_cancel_request", "request_id": rid]) }
         approvals.removeAll()
+        let partial = open?.kind == "text" ? (open?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : ""
         closeOpen()
         // 模型要了工具但還沒做完的：補上結果，不然下一輪的對話格式不對
         for c in calls { messages.append(["role": "tool", "tool_call_id": c.id, "content": "Interrupted by the user."]) }
         calls.removeAll()
+        // 對話要 user／assistant 交替（很多本機模型的範本不接受連續兩個 user）：中斷的這輪補一則 assistant 收尾，已經串流出來的字也帶進去
+        messages.append(["role": "assistant", "content": (partial.isEmpty ? "" : partial + "\n\n") + "[Request interrupted by user]"])
         emit?(["type": "user", "message": ["role": "user", "content": "[Request interrupted by user]"]])
         emit?(["type": "result", "subtype": "error_during_execution", "is_error": true, "duration_ms": ms()])
         done()
@@ -330,7 +379,8 @@ final class LocalBridge {
 
     /// 格子關掉：停下來，不再送事件
     func close() {
-        if busy { turn += 1; sse?.cancel(); if shell?.isRunning == true { shell?.terminate() }; LocalServer.shared.end() }
+        if busy { turn += 1; sse?.cancel(); if shell?.isRunning == true { shell?.terminate() }; if !compacting { LocalServer.shared.end() } }      // 壓縮中已經交還過使用名額（done 先 end 才進 compact），再扣一次會把別的聊天室的模型關掉
+        queue.removeAll()
         emit = nil
     }
 
@@ -358,11 +408,13 @@ final class LocalBridge {
         compacting = true
         busy = true
         let pre = lastTokens
+        let t = turn
         emit?(["type": "system", "subtype": "status", "status": "compacting"])
         LocalCompact.summarize(messages, model: Self.name(model)) { [weak self] summary, err in
             guard let self else { return }
             self.compacting = false
             self.busy = false
+            guard self.turn == t else { return }      // 壓縮的時候這格被關了（close 會把 turn 加一）：不要再接著做佇列裡的訊息和工具
             if let summary {
                 let note = LocalCompact.summaryMessage(summary)
                 self.messages = [["role": "user", "content": note], ["role": "assistant", "content": LocalCompact.ack]]
@@ -382,7 +434,16 @@ final class LocalBridge {
     }
 
     private func fail(_ msg: String) {
+        let partial = open?.kind == "text" ? (open?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : ""
         closeOpen()
+        // 跟 interrupt 一樣：補工具結果、補一則 assistant 收尾，不然下一則會是連續兩個 user（Gemma 等範本會一直報錯）
+        if busy {
+            for c in calls { messages.append(["role": "tool", "tool_call_id": c.id, "content": "Failed."]) }
+            calls.removeAll()
+            if messages.last?["role"] as? String != "assistant" {
+                messages.append(["role": "assistant", "content": (partial.isEmpty ? "" : partial + "\n\n") + "[Request failed]"])
+            }
+        }
         emit?(["type": "result", "subtype": "error_during_execution", "is_error": true, "result": msg, "duration_ms": ms()])
         done()
     }
@@ -432,13 +493,24 @@ final class LocalBridge {
         // LFM 關掉思考時還是常常先講一小段、吐一個 </think> 才正式回答（實測）：開頭先壓著，
         // 看到 </think> 就把前面那段當思考；壓了 200 字還沒看到、或講完了，就當一般回答放出來。其他模型不用壓
         var held = "", decided = m?.think != .lfm || level == "high"
+        // LFM 放行之後還是可能吐 </think>，而且會被切在兩段之間（"</thi" + "nk>"）：結尾可能是半個標記的先留著，跟下一段接起來再刪
+        var carry = ""
+        let tag = "</think>"
+        func flushCarry() { if !carry.isEmpty { chunk("text", carry); carry = "" } }
         func release() {
             guard !decided else { return }
             decided = true
             chunk("text", held.trimmingCharacters(in: .newlines))
         }
         func content(_ s: String) {
-            if decided { chunk("text", s.replacingOccurrences(of: "</think>", with: "")); return }
+            if decided {
+                guard m?.think == .lfm else { chunk("text", s); return }
+                let t = (carry + s).replacingOccurrences(of: tag, with: "")
+                let k = (1..<tag.count).reversed().first { t.hasSuffix(String(tag.prefix($0))) } ?? 0
+                carry = String(t.suffix(k))
+                chunk("text", String(t.dropLast(k)))
+                return
+            }
             held += s
             if let r = held.range(of: "</think>") {
                 decided = true
@@ -470,7 +542,15 @@ final class LocalBridge {
             self.sse = nil
             if let err { self.fail(L("本機模型：") + err); return }
             release()
-            self.replied(pending.keys.sorted().compactMap { pending[$0] })
+            flushCarry()
+            let tools = pending.keys.sorted().compactMap { pending[$0] }
+            // 想到結束都沒吐 </think>（伺服器整段都當思考送）：沒有正式回答也沒叫工具，不要當成功
+            let answered = self.open?.kind == "text" && !(self.open?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if m?.think == .lfm, level == "high", tools.isEmpty, !answered {
+                self.fail(L("本機模型想完之前就結束了，沒有正式回答，請重試"))
+                return
+            }
+            self.replied(tools)
         })
     }
 
@@ -509,7 +589,13 @@ final class LocalBridge {
             return
         }
         // 不用問的：讀檔；接受修改＝讀、寫、改檔；自動、全部允許＝都不問；選過「永遠允許」的
-        let auto = c.name == "Read" || always.contains(c.name) || mode == "auto" || mode == "bypassPermissions"
+        // 讀檔：在這個工作資料夾裡才不問；資料夾外的絕對路徑（模型被誘導去讀私密檔案）要問
+        let readInside: Bool = {
+            guard c.name == "Read" else { return false }
+            let root = URL(fileURLWithPath: directory).resolvingSymlinksInPath().path + "/"
+            return (URL(fileURLWithPath: Self.path(input, directory)).resolvingSymlinksInPath().path + "/").hasPrefix(root)
+        }()
+        let auto = readInside || always.contains(c.name) || mode == "auto" || mode == "bypassPermissions"
             || (mode == "acceptEdits" && c.name != "Bash")
         if auto { run(c.id, c.name, input); return }
         let rid = "local-\(UUID().uuidString.prefix(8))"
@@ -575,7 +661,7 @@ final class LocalBridge {
         工作資料夾：\(directory)
         今天：\(df.string(from: Date()))
         不確定的事實直接說不確定，不要編造。
-        """
+        """ + nameLine()
         if Self.info(model)?.tools ?? true {
             s += "\n要看檔案、跑指令、建立或修改檔案時，用提供的工具；路徑用絕對路徑。工具結果回來之前不要假設結果。"
             s += "\n使用者說「這個資料夾」「這個專案」就是工作資料夾；只給檔名沒給路徑時，先自己在工作資料夾裡找，不要反問使用者。"
@@ -637,7 +723,7 @@ final class LocalBridge {
             }
             return (out, true)
         case "Write":
-            let c = input["content"] as? String ?? ""
+            guard let c = input["content"] as? String else { return ("缺少 content（要寫入的內容，要空檔案就給空字串）；沒有動檔案", false) }      // 缺欄位當成空字串會把既有檔案清空
             do {
                 try fm.createDirectory(atPath: (p as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
                 try c.write(toFile: p, atomically: true, encoding: .utf8)
@@ -645,7 +731,8 @@ final class LocalBridge {
             } catch { return ("寫不進去：\(error.localizedDescription)", false) }
         case "Edit":
             guard let s = try? String(contentsOfFile: p, encoding: .utf8) else { return ("沒有這個檔案：\(p)", false) }
-            let old = input["old_string"] as? String ?? "", new = input["new_string"] as? String ?? ""
+            let old = input["old_string"] as? String ?? ""
+            guard let new = input["new_string"] as? String else { return ("缺少 new_string（要刪掉就給空字串）；沒有動檔案", false) }      // 缺欄位當成空字串會把 old_string 整段刪掉
             guard !old.isEmpty else { return ("old_string 是空的", false) }
             let n = s.components(separatedBy: old).count - 1
             guard n == 1 else { return (n == 0 ? "檔案裡找不到 old_string" : "old_string 出現 \(n) 次，要剛好一次", false) }
@@ -671,24 +758,36 @@ final class LocalBridge {
         p.standardError = pipe
         p.standardInput = FileHandle.nullDevice
         do { try p.run() } catch { return ("開不了 zsh：\(error.localizedDescription)", false) }
-        let timer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        let timer = DispatchWorkItem {
+            guard p.isRunning else { return }
+            p.terminate()
+            // 指令擋掉 SIGTERM（trap '' TERM）就永遠等不到：3 秒後直接 SIGKILL
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) { if p.isRunning { kill(p.processIdentifier, SIGKILL) } }
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + 120, execute: timer)
         // 不用 readDataToEndOfFile：指令留了背景程序（`sleep 500 & echo hi`）時它握著管子，讀到底要等它結束。
         // 改成邊跑邊收，zsh 結束後再等 0.3 秒收尾巴就交差，背景程序照跑
+        // 收的時候就設上限（3 萬字最多 12 萬 bytes）：超過的照讀、照丟（不讀的話管子塞滿，指令會卡住），免得 `yes` 之類兩分鐘內把記憶體吃光
         let lock = NSLock()
         var data = Data()
+        var dropped = false
+        let cap = 120_000
         pipe.fileHandleForReading.readabilityHandler = { h in
             let d = h.availableData
             if d.isEmpty { h.readabilityHandler = nil; return }   // 讀到底了
-            lock.lock(); data.append(d); lock.unlock()
+            lock.lock()
+            let room = cap - data.count
+            if room > 0 { data.append(d.prefix(room)) }
+            if d.count > max(0, room) { dropped = true }
+            lock.unlock()
         }
         p.waitUntilExit()
         timer.cancel()
         Thread.sleep(forTimeInterval: 0.3)
         pipe.fileHandleForReading.readabilityHandler = nil
-        lock.lock(); let got = data; lock.unlock()
+        lock.lock(); let got = data; let wasDropped = dropped; lock.unlock()
         var out = String(decoding: got, as: UTF8.self)
-        if out.count > 30_000 { out = String(out.prefix(30_000)) + "\n…（輸出太長，後面截掉）" }
+        if out.count > 30_000 || wasDropped { out = String(out.prefix(30_000)) + "\n…（輸出太長，後面截掉）" }
         out = out.trimmingCharacters(in: .newlines)
         let code = p.terminationStatus
         if p.terminationReason == .uncaughtSignal { out += (out.isEmpty ? "" : "\n") + "（被停掉了）" }
@@ -775,6 +874,10 @@ final class LocalBridge {
             for id in waiting { out.append(["role": "tool", "tool_call_id": id, "content": "(no result)"]) }
             waiting.removeAll()
         }
+        // 中斷或失敗的那輪紀錄裡沒有回答：補一則 assistant，不要連續兩個 user（很多本機模型的範本不接受）
+        func alternate() {
+            if out.last?["role"] as? String == "user" { out.append(["role": "assistant", "content": "[Request interrupted by user]"]) }
+        }
         for raw in d.split(separator: 0x0a) {
             guard let o = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any] else { continue }
             // 自動壓縮過（LocalCompact.swift）：從最後一次的摘要接著算，前面的不送
@@ -787,7 +890,7 @@ final class LocalBridge {
             switch o["type"] as? String {
             case "user":
                 if let s = msg["content"] as? String {
-                    if s != "[Request interrupted by user]" { closeTools(); out.append(["role": "user", "content": s]) }
+                    if s != "[Request interrupted by user]" { closeTools(); alternate(); out.append(["role": "user", "content": s]) }
                     continue
                 }
                 let results = blocks.filter { $0["type"] as? String == "tool_result" }
@@ -796,7 +899,7 @@ final class LocalBridge {
                     waiting.removeAll { $0 == id }
                     out.append(["role": "tool", "tool_call_id": id, "content": r["content"] as? String ?? ""])
                 }
-                if results.isEmpty { closeTools(); out.append(["role": "user", "content": content(msg, vision: vision)]) }
+                if results.isEmpty { closeTools(); alternate(); out.append(["role": "user", "content": content(msg, vision: vision)]) }
             case "assistant":
                 for b in blocks {
                     switch b["type"] as? String {
@@ -824,6 +927,7 @@ final class LocalBridge {
             }
         }
         closeTools()
+        alternate()     // 最後一則是 user（上次失敗或中斷、沒有回答就關了）：補 assistant，下一則送出才不會連續兩個 user
         return out
     }
 
@@ -841,13 +945,7 @@ final class LocalBridge {
             obj["message"] = msg
         }
         guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        let fm = FileManager.default
-        try? fm.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !fm.fileExists(atPath: transcriptURL.path) { fm.createFile(atPath: transcriptURL.path, contents: nil) }
-        guard let h = try? FileHandle(forWritingTo: transcriptURL) else { return }
-        defer { try? h.close() }
-        _ = try? h.seekToEnd()
-        try? h.write(contentsOf: d + Data([0x0a]))
+        Transcripts.append(d + Data([0x0a]), to: transcriptURL)      // 寫不進去會記進事件紀錄（Transcripts.append）
     }
 }
 

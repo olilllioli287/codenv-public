@@ -27,14 +27,58 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
         c.websiteDataStore = dataStore
         c.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"   // 裝成 Safari：Google 登入才不會說「這個瀏覽器不安全」
         c.preferences.isElementFullscreenEnabled = true
+        installScripts(into: c.userContentController)
         return c
     }()
+    /// 注入的腳本（⌘ Enter、版面、換皮）：每次設定改了就整組重裝，新載入的頁用新的
+    private static func installScripts(into u: WKUserContentController, keys: Bool? = nil, hide: Bool? = nil, skin: Bool? = nil, nlmSkin: Bool? = nil) {
+        u.removeAllUserScripts()
+        u.addUserScript(GeminiExport.keysScript(on: keys ?? GeminiExport.keysOn))
+        u.addUserScript(GeminiExport.layoutScript(hide: hide ?? GeminiExport.hideHistory))
+        u.addUserScript(GeminiSkin.script(on: skin ?? GeminiSkin.on))
+        u.addUserScript(NotebookSkin.script(on: nlmSkin ?? NotebookSkin.on))
+    }
+    /// 設定頁「NotebookLM 換皮」開關：同上
+    static func setNotebookSkin(_ on: Bool) {
+        installScripts(into: config.userContentController, nlmSkin: on)
+        for p in all { p.webView.evaluateJavaScript(NotebookSkin.applyJS(on: on), completionHandler: nil) }
+    }
+    /// 設定頁「Gemini 換皮」開關：新載入的頁用新的腳本，已經開著的頁直接重套
+    static func setSkin(_ on: Bool) {
+        installScripts(into: config.userContentController, skin: on)
+        for p in all { p.webView.evaluateJavaScript(GeminiSkin.applyJS(on: on), completionHandler: nil) }
+    }
+    /// 設定頁的「Gemini ⌘ Enter 送出」開關改了：新載入的頁用新的腳本，已經開著的頁直接改變數
+    static func setGeminiKeys(_ on: Bool) {
+        installScripts(into: config.userContentController, keys: on)
+        for p in all { p.webView.evaluateJavaScript("window.__codenvKeysOn = \(on)", completionHandler: nil) }
+    }
+    /// 圓形按鈕「歷史列表」開／關：新載入的頁用新的腳本，已經開著的頁直接改變數、重套
+    static func setHideHistory(_ hide: Bool) {
+        appDefaults.set(hide, forKey: "geminiHideHistory")
+        installScripts(into: config.userContentController, hide: hide)
+        for p in all {
+            p.webView.evaluateJavaScript("window.__codenvHideHistory = \(hide); window.__codenvApplyLayout && window.__codenvApplyLayout()", completionHandler: nil)
+            p.updateFloatButtons()
+        }
+    }
+
+    /// NotebookLM 圓鈕「來源欄」「筆記欄」開／關
+    static func setNotebook(sources: Bool? = nil, studio: Bool? = nil) {
+        if let sources { appDefaults.set(sources, forKey: "notebookShowSources") }
+        if let studio { appDefaults.set(studio, forKey: "notebookShowStudio") }
+        installScripts(into: config.userContentController)
+        for p in all {
+            p.webView.evaluateJavaScript("window.__codenvShowSources = \(GeminiExport.showSources); window.__codenvShowStudio = \(GeminiExport.showStudio); window.__codenvApplyLayout && window.__codenvApplyLayout()", completionHandler: nil)
+            p.updateFloatButtons()
+        }
+    }
 
     let conversationID: UUID
     let webView: WKWebView
     var petReserve: NSSize = .zero { didSet { if petReserve != oldValue { needsLayout = true } } }
     /// 空白頁：游標放網址列，直接打字（使用者 10/25）；其他：網頁本身
-    var focusTarget: NSView { isBlank ? address : webView }
+    var focusTarget: NSView { if isBlank { showAddress(); return address }; return webView }
     private var isBlank: Bool { (webView.url?.absoluteString ?? startURL) == Self.home }
     var onTitle: ((String) -> Void)?
     var onURL: ((String) -> Void)?
@@ -44,14 +88,17 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     private var zoomHost: String?
     private(set) var lastActive = Date()
 
-    private let bar = NSView()
-    private let back = NSButton(), forward = NSButton(), reload = NSButton(), gemini = NSButton()
+    /// 整條網址列拿掉了（使用者 10/29：「這個都拿掉」）：⌘ L 才在格子頂端浮出一個網址輸入框；空白頁自動浮出
+    private let addressBox = NSView()
     private let address = NSTextField()
+    /// 匯出進行中（浮動匯出鈕的忙碌狀態）
+    private var exporting = false
+    /// Gemini 頁面右上角浮在網頁上的圓形功能鍵（原生 NSView，不注入網頁，Gemini 改版也壞不了）：匯出對話、歷史列表開／關
+    private let floatExport = FloatButton(), floatHistory = FloatButton(), floatGemini = FloatButton(), floatSources = FloatButton(), floatStudio = FloatButton()
     private let progress = NSView()
     private var observers: [NSKeyValueObservation] = []
     private var theme: Theme
 
-    static let barHeight: CGFloat = 34
     /// 一般瀏覽器格子的首頁：空白頁，游標停在網址列（使用者 10/25：瀏覽器不該預設開 Gemini）
     static let home = "about:blank"
     /// 網址列旁邊那顆 ✦ 和 Gemini 掛件開的
@@ -71,17 +118,24 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
         webView.isInspectable = appDefaults !== UserDefaults.standard
         addSubview(webView)
 
-        bar.wantsLayer = true
-        addSubview(bar)
-        for (b, sym, tip, act) in [(back, "chevron.left", L("上一頁（⌘ [）"), #selector(goBack)), (forward, "chevron.right", L("下一頁（⌘ ]）"), #selector(goForward)),
-                                   (reload, "arrow.clockwise", L("重新載入（⌘ R）"), #selector(doReload)), (gemini, "sparkle", L("開 Gemini"), #selector(openGemini))] {
-            b.isBordered = false
-            b.image = NSImage(systemSymbolName: sym, accessibilityDescription: tip)?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
-            b.toolTip = tip
-            b.target = self
-            b.action = act
-            bar.addSubview(b)
-        }
+        floatExport.symbol = "square.and.arrow.down"
+        floatExport.toolTip = L("匯出這段 Gemini 對話（Markdown＋圖片，存到「下載項目」）")
+        floatExport.target = self; floatExport.action = #selector(exportChat)
+        floatHistory.symbol = "sidebar.left"
+        floatHistory.target = self; floatHistory.action = #selector(toggleHistory)
+        floatGemini.symbol = "sparkle"
+        floatGemini.toolTip = L("開 Gemini")
+        floatGemini.target = self; floatGemini.action = #selector(openGemini)
+        floatSources.symbol = "books.vertical"
+        floatSources.target = self; floatSources.action = #selector(toggleSources)
+        floatStudio.symbol = "square.stack.3d.up"
+        floatStudio.target = self; floatStudio.action = #selector(toggleStudio)
+        for b in floatButtons { b.isHidden = true; addSubview(b, positioned: .above, relativeTo: webView) }
+        addressBox.wantsLayer = true
+        addressBox.layer?.cornerRadius = 8
+        addressBox.layer?.borderWidth = 1
+        addressBox.isHidden = true
+        addSubview(addressBox, positioned: .above, relativeTo: webView)
         address.placeholderString = L("輸入網址或要搜尋的字")
         address.font = .systemFont(ofSize: 12)
         address.bezelStyle = .roundedBezel
@@ -89,24 +143,17 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
         address.lineBreakMode = .byTruncatingTail
         address.cell?.usesSingleLineMode = true
         address.delegate = self
-        bar.addSubview(address)
+        addressBox.addSubview(address)
         progress.wantsLayer = true
         progress.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        bar.addSubview(progress)
+        addSubview(progress, positioned: .above, relativeTo: webView)
 
         observers = [
             webView.observe(\.title) { [weak self] w, _ in if let t = w.title, !t.isEmpty { self?.onTitle?(t) } },
             webView.observe(\.url) { [weak self] w, _ in self?.urlChanged(w.url) },
-            webView.observe(\.canGoBack) { [weak self] w, _ in self?.back.isEnabled = w.canGoBack },
-            webView.observe(\.canGoForward) { [weak self] w, _ in self?.forward.isEnabled = w.canGoForward },
             webView.observe(\.estimatedProgress) { [weak self] _, _ in self?.needsLayout = true },
-            webView.observe(\.isLoading) { [weak self] w, _ in
-                self?.reload.image = NSImage(systemSymbolName: w.isLoading ? "xmark" : "arrow.clockwise", accessibilityDescription: nil)?
-                    .withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
-                self?.needsLayout = true
-            },
+            webView.observe(\.isLoading) { [weak self] _, _ in self?.needsLayout = true },
         ]
-        back.isEnabled = false; forward.isEnabled = false
         applyTheme(theme)
         startURL = url.isEmpty ? Self.home : url
         // 第一頁載完之前網頁不畫白底（透出底下的主題底色）：還沒載入的 WKWebView 是一整片白，從右邊滑進來時會閃白（使用者 10/25）。
@@ -124,11 +171,21 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     static func resolve(_ text: String) -> URL? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return nil }
-        if let u = URL(string: t), let s = u.scheme?.lowercased(), ["http", "https", "file", "about"].contains(s) { return u }
-        if !t.contains(" "), t.contains(".") || t.hasPrefix("localhost"), let u = URL(string: (t.hasPrefix("localhost") ? "http://" : "https://") + t) { return u }
+        if let c = URLComponents(string: t), let s = c.scheme?.lowercased(), ["http", "https", "file", "about"].contains(s), let u = c.url { return canonicalNotebookURL(u) }
+        if !t.contains(" "), t.contains(".") || t.hasPrefix("localhost"),
+           let c = URLComponents(string: (t.hasPrefix("localhost") ? "http://" : "https://") + t), let u = c.url { return canonicalNotebookURL(u) }
         var c = URLComponents(string: "https://www.google.com/search")!
         c.queryItems = [URLQueryItem(name: "q", value: t)]
         return c.url
+    }
+
+    static func canonicalNotebookURL(_ u: URL) -> URL {
+        guard var c = URLComponents(url: u, resolvingAgainstBaseURL: false),
+              let host = c.host?.lowercased(),
+              host == "notebooklm.google.com" || host == "www.notebooklm.google.com" else { return u }
+        c.host = "notebook.google.com"
+        c.scheme = "https"
+        return c.url ?? u
     }
 
     func load(_ text: String) {
@@ -139,10 +196,34 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
 
     private func urlChanged(_ u: URL?) {
         let s = u?.absoluteString ?? ""
-        if address.currentEditor() == nil { address.stringValue = s }   // 正在打網址時不要蓋掉
-        if !s.isEmpty, s != "about:blank" { onURL?(s) }
+        updateFloatButtons()
+        if address.currentEditor() == nil { address.stringValue = s == Self.home ? "" : s }   // 正在打網址時不要蓋掉；空白頁留空，提示文字才看得到
+        if !s.isEmpty, s != "about:blank" { onURL?(s); if !addressBox.isHidden, address.currentEditor() == nil { hideAddress() } }
         if u?.host != zoomHost { applySavedZoom() }
     }
+    private var floatButtons: [FloatButton] { [floatGemini, floatExport, floatHistory, floatSources, floatStudio] }
+    /// 右上角的圓鈕群：✦ 開 Gemini 每個網頁都有；匯出和歷史列表只在 Gemini；來源欄和筆記欄只在 NotebookLM。由上往下排，隱藏的不佔位置
+    func updateFloatButtons() {
+        let u = webView.url
+        let g = GeminiExport.isGemini(u), nb = GeminiExport.isNotebook(u)
+        floatGemini.isHidden = false
+        if isBlank { showAddress() }
+        floatExport.isHidden = !g; floatHistory.isHidden = !g
+        floatSources.isHidden = !nb; floatStudio.isHidden = !nb
+        floatExport.isEnabled = !exporting && GeminiExport.isConversation(u)
+        let hidden = GeminiExport.hideHistory
+        floatHistory.active = !hidden
+        floatHistory.toolTip = hidden ? L("歷史列表：已隱藏（點一下顯示）") : L("歷史列表：顯示中（點一下隱藏）")
+        floatSources.active = GeminiExport.showSources
+        floatSources.toolTip = GeminiExport.showSources ? L("來源欄：顯示中（點一下隱藏）") : L("來源欄：已隱藏（點一下顯示）")
+        floatStudio.active = GeminiExport.showStudio
+        floatStudio.toolTip = GeminiExport.showStudio ? L("筆記欄：顯示中（點一下隱藏）") : L("筆記欄：已隱藏（點一下顯示）")
+        needsLayout = true
+    }
+    @objc private func toggleHistory() { Self.setHideHistory(!GeminiExport.hideHistory) }
+    @objc private func toggleSources() { Self.setNotebook(sources: !GeminiExport.showSources) }
+    @objc private func toggleStudio() { Self.setNotebook(studio: !GeminiExport.showStudio) }
+
     /// 換到別的網站（或剛建好）：套用那個網站記過的比例，沒記過就 100%
     func applySavedZoom() {
         zoomHost = webView.url?.host
@@ -152,28 +233,72 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
         if sel == #selector(NSResponder.insertNewline(_:)) {
             load(address.stringValue)
-            window?.makeFirstResponder(webView)
+            hideAddress()
             return true
         }
         if sel == #selector(NSResponder.cancelOperation(_:)) {
-            address.stringValue = webView.url?.absoluteString ?? ""
-            window?.makeFirstResponder(webView)
+            let cur = webView.url?.absoluteString ?? ""
+            address.stringValue = cur == Self.home ? "" : cur
+            hideAddress()
             return true
         }
         return false
     }
 
     /// ⌘ L：跳到網址列
-    func focusAddress() { window?.makeFirstResponder(address); address.currentEditor()?.selectAll(nil) }
+    func focusAddress() { showAddress(); window?.makeFirstResponder(address); address.currentEditor()?.selectAll(nil) }
+    private func showAddress() { if addressBox.isHidden { addressBox.isHidden = false; needsLayout = true } }
+    /// Enter／Esc／點到別處之後收起來；空白頁沒有網頁可看，網址框一直留著
+    private func hideAddress() {
+        if !isBlank { addressBox.isHidden = true; needsLayout = true }
+        // 焦點還在網址框（正在打的 field editor 也掛在它底下）才交給網頁；網頁載入完、轉址時才呼叫到這裡的話，
+        // 使用者可能已經點到別格在打字，不要搶走（Google 登入會跳好幾次）
+        if let fr = window?.firstResponder as? NSView, fr.isDescendant(of: addressBox) { window?.makeFirstResponder(webView) }
+    }
+    func controlTextDidEndEditing(_ obj: Notification) { if !isBlank { addressBox.isHidden = true; needsLayout = true } }   // 這時 currentEditor 還沒收掉，不能拿它判斷
 
-    @objc private func goBack() { webView.goBack() }
-    @objc private func goForward() { webView.goForward() }
-    @objc private func doReload() { if webView.isLoading { webView.stopLoading() } else { webView.reload() } }
+    /// F5：重新載入（載入中就停止）
+    func reloadPage() { if webView.isLoading { webView.stopLoading() } else { webView.reload() } }
     @objc private func openGemini() { load(Self.gemini) }
+
+    /// 網址列旁的「匯出對話」：存到 ~/Downloads/<標題>-<時間>/，完成後在 Finder 顯示；有圖抓不到時說一聲
+    @objc func exportChat() {
+        guard !exporting, GeminiExport.isConversation(webView.url) else { return }
+        exporting = true
+        floatExport.isEnabled = false
+        floatExport.toolTip = L("匯出中…（舊的訊息要先捲上去載入，可能要幾十秒）")
+        exportGemini { [weak self] r in
+            guard let self else { return }
+            self.exporting = false
+            self.updateFloatButtons()
+            self.floatExport.toolTip = L("匯出這段 Gemini 對話（Markdown＋圖片，存到「下載項目」）")
+            switch r {
+            case .success(let o):
+                NSWorkspace.shared.activateFileViewerSelecting([o.folder])
+                guard !o.failed.isEmpty || o.emptyUsers > 0, let w = self.window else { return }
+                let a = NSAlert()
+                if o.emptyUsers > 0 {
+                    a.messageText = L("匯出完成，但有 \(o.emptyUsers) 輪你的訊息沒抓到")
+                    a.informativeText = L("那幾輪的文字和圖片都是空的（可能是 Gemini 網頁的結構跟預期不同）。資料夾裡的 diag.json 記了網頁的標籤摘要（沒有對話內容），把它交給 Claude 就能查原因。")
+                    if !o.failed.isEmpty { a.informativeText += "\n\n" + L("另外有 \(o.failed.count) 張圖沒抓到，chat.md 裡保留原網址。") }
+                } else {
+                    a.messageText = L("匯出完成，但有 \(o.failed.count) 張圖沒抓到")
+                    a.informativeText = L("對話文字和其他圖片都存好了；沒抓到的圖在 chat.md 裡保留原網址（網址可能過一陣子就失效）。")
+                }
+                a.beginSheetModal(for: w, completionHandler: nil)
+            case .failure(let e):
+                guard let w = self.window else { return }
+                let a = NSAlert(); a.messageText = L("匯出失敗"); a.informativeText = e.localizedDescription
+                a.beginSheetModal(for: w, completionHandler: nil)
+            }
+        }
+    }
 
     override func performKeyEquivalent(with e: NSEvent) -> Bool {
         guard window?.firstResponder is NSView, let r = window?.firstResponder as? NSView, r.isDescendant(of: self) else { return super.performKeyEquivalent(with: e) }
         let mods = e.modifierFlags.intersection([.command, .shift, .option, .control])
+        // ⌘ +（鍵盤上是 ⌘ ⇧ =）帶著 shift：也要放大
+        if mods == [.command, .shift], e.charactersIgnoringModifiers == "+" { zoom(+1); return true }
         guard mods == .command else { return super.performKeyEquivalent(with: e) }
         switch e.charactersIgnoringModifiers {
         case "l": focusAddress(); return true
@@ -213,28 +338,54 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
 
     override func layout() {
         super.layout()
-        let b = bounds, h = Self.barHeight
-        bar.frame = NSRect(x: 0, y: b.height - h, width: b.width, height: h)
-        var x: CGFloat = 8
-        for btn in [back, forward, reload] { btn.frame = NSRect(x: x, y: (h - 22) / 2, width: 24, height: 22); x += 26 }
-        gemini.frame = NSRect(x: b.width - 32, y: (h - 22) / 2, width: 24, height: 22)
-        address.frame = NSRect(x: x + 4, y: (h - 22) / 2, width: max(40, gemini.frame.minX - x - 10), height: 22)
+        let b = bounds
+        webView.frame = NSRect(x: 0, y: petReserve.height, width: b.width, height: max(0, b.height - petReserve.height))
         let p = webView.isLoading ? webView.estimatedProgress : 0
         progress.isHidden = p <= 0 || p >= 1
-        progress.frame = NSRect(x: 0, y: 0, width: b.width * p, height: 2)
-        webView.frame = NSRect(x: 0, y: petReserve.height, width: b.width, height: max(0, b.height - h - petReserve.height))
+        progress.frame = NSRect(x: 0, y: b.height - 2, width: b.width * p, height: 2)
+        // 浮出的網址框：格子頂端置中，最寬 560
+        let aw = min(560, max(120, b.width - 28))
+        addressBox.frame = NSRect(x: (b.width - aw) / 2, y: b.height - 40, width: aw, height: 30)
+        address.frame = NSRect(x: 6, y: 4, width: aw - 12, height: 22)
+        // 圓形功能鍵：網頁內容右上角往下一點（不擋網頁自己右上的按鈕），由上往下排，隱藏的跳過
+        let d = FloatButton.diameter
+        var y = webView.frame.maxY - 70
+        for btn in floatButtons where !btn.isHidden {
+            btn.frame = NSRect(x: b.width - 14 - d, y: y - d, width: d, height: d)
+            y -= d + 8
+        }
     }
 
     func applyTheme(_ t: Theme) {
         theme = t
         let pal = t.palette(for: effectiveAppearance)
         layer?.backgroundColor = pal.bg.cgColor
-        bar.layer?.backgroundColor = pal.bg.cgColor
-        for b in [back, forward, reload, gemini] { b.contentTintColor = pal.fg.withAlphaComponent(0.7) }
+        addressBox.layer?.backgroundColor = pal.bg.cgColor
+        addressBox.layer?.borderColor = pal.fg.withAlphaComponent(0.25).cgColor
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if (webView.value(forKey: "drawsBackground") as? Bool) == false { webView.setValue(true, forKey: "drawsBackground") }
+        if let host = Self.logHost(webView.url) { EventLog.log("瀏覽器", "載入完成：\(host)") }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { logLoadFailure(error) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { logLoadFailure(error) }
+
+    private func logLoadFailure(_ error: Error) {
+        let ns = error as NSError
+        let failing = (ns.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
+            ?? (ns.userInfo[NSURLErrorFailingURLStringErrorKey] as? String).flatMap(URL.init(string:))
+            ?? webView.url
+        let host = Self.logHost(failing) ?? "未知主機"
+        EventLog.log("瀏覽器", "載入失敗：\(host)（\(ns.domain) \(ns.code)）")
+    }
+
+    /// 事件紀錄只記主機名稱（不記路徑與查詢參數；空白頁略過）
+    private static func logHost(_ u: URL?) -> String? {
+        guard let u, u.absoluteString != home else { return nil }
+        if u.isFileURL { return "file" }
+        return u.host.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     func terminate() {
@@ -325,4 +476,36 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
         completionHandler(url)
     }
     func downloadDidFinish(_ download: WKDownload) {}
+}
+
+
+/// 浮在網頁上的圓形按鈕：半透明深色底，滑鼠移上去變亮
+final class FloatButton: NSButton {
+    static let diameter: CGFloat = 34
+    var symbol = "circle" { didSet { image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 14, weight: .medium)); contentTintColor = .white } }
+    /// 開著的狀態：底色帶強調色
+    var active = false { didSet { refresh() } }
+    private var hover = false { didSet { refresh() } }
+    override var isEnabled: Bool { didSet { alphaValue = isEnabled ? 1 : 0.4 } }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        isBordered = false
+        imagePosition = .imageOnly
+        imageScaling = .scaleNone
+        wantsLayer = true
+        layer?.cornerRadius = Self.diameter / 2
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        refresh()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func mouseEntered(with e: NSEvent) { hover = true }
+    override func mouseExited(with e: NSEvent) { hover = false }
+    override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
+    private func refresh() {
+        let base: NSColor = active ? NSColor.controlAccentColor : NSColor.black
+        layer?.backgroundColor = base.withAlphaComponent(hover ? 0.88 : (active ? 0.6 : 0.5)).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.white.withAlphaComponent(hover ? 0.5 : 0.2).cgColor
+    }
 }

@@ -21,7 +21,23 @@ struct LiveSession: Hashable {
 }
 
 enum ClaudeSessions {
-    static var home: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude") }
+    /// Claude 的資料夾（~/.claude）。測試 App（有 --state-dir）可以用 --claude-home 指到暫存的設定資料夾（跟 CLAUDE_CONFIG_DIR 配對），不碰正式的
+    static let home: URL = {
+        let a = CommandLine.arguments
+        if a.contains("--state-dir"), let i = a.firstIndex(of: "--claude-home"), i + 1 < a.count { return URL(fileURLWithPath: a[i + 1]) }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
+    }()
+
+    /// 這段 Claude 對話在登錄檔（sessions/<pid>.json）裡的樣子：程序還活著才有；ListAgents 看的就是這個
+    static func registration(of sid: UUID) -> (pid: Int32, name: String)? {
+        let dir = home.appendingPathComponent("sessions")
+        for f in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] where f.pathExtension == "json" {
+            guard let d = try? Data(contentsOf: f), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+                  let pid = (o["pid"] as? NSNumber)?.int32Value, (o["sessionId"] as? String).flatMap(UUID.init) == sid, kill(pid, 0) == 0 else { continue }
+            return (pid, o["name"] as? String ?? "")
+        }
+        return nil
+    }
 
     /// 現在正在跑的 Claude（程序還活著的）：對話編號 → 資訊
     static func live() -> [UUID: LiveSession] {
@@ -82,17 +98,18 @@ enum ClaudeSessions {
             if o["type"] as? String == "custom-title", let t = o["customTitle"] as? String { custom = t }
             if o["type"] as? String == "ai-title", let t = o["aiTitle"] as? String { ai = t }
         }
-        // 開頭是一大段壓縮摘要（超過 256 KB）時檔頭找不到資料夾：往後一段一段找第一個 "cwd"
+        // 開頭是一大段壓縮摘要（超過 256 KB）時檔頭找不到資料夾：逐行找 cwd
         if cwd.isEmpty {
             try? h.seek(toOffset: 0)
-            let key = Data("\"cwd\":\"".utf8)
-            var carry = Data()
-            while cwd.isEmpty, let chunk = try? h.read(upToCount: 4 * 1024 * 1024), !chunk.isEmpty {
-                let buf = carry + chunk
-                if let r = buf.range(of: key), let end = buf[r.upperBound...].firstIndex(of: 0x22) {
-                    cwd = String(decoding: buf[r.upperBound..<end], as: UTF8.self)
+            var line = Data()
+            while cwd.isEmpty {
+                guard let chunk = try? h.read(upToCount: 64 * 1024), !chunk.isEmpty else { break }
+                for byte in chunk {
+                    if byte == 0x0a {
+                        if let o = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any], let c = o["cwd"] as? String { cwd = c; break }
+                        line.removeAll(keepingCapacity: true)
+                    } else { line.append(byte) }
                 }
-                carry = buf.suffix(4096)
             }
         }
         guard !cwd.isEmpty else { return nil }

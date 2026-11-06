@@ -5,10 +5,15 @@
 <!-- 程式碼區的編輯器：Monaco（VS Code 的編輯器，MIT），放在 monaco/vs。跟 Swift（CodeLab.swift）用 window.webkit.messageHandlers.codelab 傳話 -->
 <style>
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: transparent; }
-  #editor { position: absolute; inset: 0; }
+  body { display: flex; flex-direction: column; color: var(--fg, #ddd); font: 13px system-ui; }
+  #recovery { padding: 8px; background: var(--bg, #252525); }
+  #recovery[hidden] { display: none; }
+  #recovery button { margin-left: 8px; }
+  #editor { flex: 1; min-height: 0; }
 </style>
 </head>
 <body>
+<div id="recovery" hidden role="status"><span></span><button type="button"></button><button type="button"></button></div>
 <div id="editor"></div>
 <script>
   // 介面用繁體中文（右鍵選單、搜尋框）
@@ -23,7 +28,7 @@
   require.config({ paths: { vs: 'monaco/vs' } });
   require(['vs/editor/editor.main'], function () {
     const ed = monaco.editor.create(document.getElementById('editor'), {
-      value: '', language: 'cpp', automaticLayout: true, fontSize: 14,
+      value: '', language: 'cpp', automaticLayout: true, fontSize: 14, readOnly: true,
       minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 4, insertSpaces: true,
       autoClosingBrackets: 'always', autoClosingQuotes: 'always', formatOnPaste: false,
       renderWhitespace: 'none', wordWrap: 'off', theme: 'vs-dark', fixedOverflowWidgets: true,
@@ -31,38 +36,86 @@
     let model = ed.getModel();
     let suppress = false;          // 程式自己換內容時不要回報「改過了」
     let path = '';
+    let token = '';                // Swift 每次載入給新識別碼，拒收舊檔／舊網頁排著的訊息
+    let recoveryTimer = null;
+    const recovery = document.getElementById('recovery');
+    const maxRecoveryBytes = 2 * 1024 * 1024;
+    function scheduleRecovery() {
+      clearTimeout(recoveryTimer);
+      recoveryTimer = setTimeout(() => {
+        if (!path || !recovery.hidden) return;
+        // 先用不複製內容的長度擋大檔，再檢查 UTF-8（中文不只一個 byte）。
+        if (model.getValueLength() > maxRecoveryBytes) {
+          post({ type: 'recoveryTooLarge', path, token }); return;
+        }
+        const text = model.getValue();
+        if (new TextEncoder().encode(text).byteLength > maxRecoveryBytes) {
+          post({ type: 'recoveryTooLarge', path, token }); return;
+        }
+        post({ type: 'recovery', path, token, text });
+      }, 2000);
+    }
+    recovery.querySelectorAll('button').forEach((button, i) => {
+      button.onclick = () => post({ type: 'recoveryChoice', path, token, restore: i === 0 });
+    });
 
     const cl = window.cl = {
       // 打開一個檔案（語言：cpp／python／plaintext）
-      open(p, text, lang) {
+      open(p, text, lang, id) {
+        clearTimeout(recoveryTimer);
+        recovery.hidden = true;
+        token = id;
         path = p;
         suppress = true;
         const m = monaco.editor.createModel(text, lang || 'plaintext');
         ed.setModel(m);
         if (model) model.dispose();
         model = m;
+        ed.updateOptions({ readOnly: false });
         suppress = false;
         ed.setScrollTop(0);
         ed.setPosition({ lineNumber: 1, column: 1 });
       },
-      text() { return model.getValue(); },
+      text() { return { path, text: model.getValue(), token }; },
+      offerRecovery(message, restore, discard) {
+        clearTimeout(recoveryTimer);
+        recovery.querySelector('span').textContent = message;
+        const buttons = recovery.querySelectorAll('button');
+        buttons[0].textContent = restore; buttons[1].textContent = discard;
+        recovery.hidden = false;
+        ed.updateOptions({ readOnly: true });
+        ed.layout();
+      },
+      saved(id, text) {
+        if (id !== token) return;
+        clearTimeout(recoveryTimer);
+        // Swift 等取字／處理衝突時還可能有新輸入，這些不能跟著舊的存檔清掉。
+        if (model.getValue() !== text) {
+          post({ type: 'changed', path, token }); scheduleRecovery();
+        }
+      },
       focus() { ed.focus(); },
       // 錯誤紅線：[{line, column, severity, message}]（column 0＝整行）
       markers(list) {
+        const maxLine = Math.max(1, model.getLineCount());
+        const clamp = (n) => Math.max(1, Math.min(n || 1, maxLine));
         const ms = list.map(d => {
-          const len = model.getLineMaxColumn(Math.max(1, Math.min(d.line, model.getLineCount())));
-          const sc = d.column > 0 ? d.column : model.getLineFirstNonWhitespaceColumn(d.line) || 1;
+          const ln = clamp(d.line);
+          const len = model.getLineMaxColumn(ln);
+          const sc = d.column > 0 ? Math.min(d.column, len) : (model.getLineFirstNonWhitespaceColumn(ln) || 1);
           return {
-            startLineNumber: d.line, endLineNumber: d.line,
-            startColumn: sc, endColumn: d.column > 0 ? Math.min(len, sc + 1) + 0 : len,
+            startLineNumber: ln, endLineNumber: ln,
+            startColumn: sc, endColumn: d.column > 0 ? Math.max(sc, Math.min(len, sc + 1)) : len,
             message: d.message,
             severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
           };
         });
         monaco.editor.setModelMarkers(model, 'codenv', ms);
-        if (list.length) ed.revealLineInCenterIfOutsideViewport(list[0].line);
+        if (ms.length) ed.revealLineInCenterIfOutsideViewport(ms[0].startLineNumber);
       },
       theme(dark, bg, fg, font, size) {
+        document.body.style.setProperty('--bg', bg);
+        document.body.style.setProperty('--fg', fg);
         monaco.editor.defineTheme('codenv', {
           base: dark ? 'vs-dark' : 'vs', inherit: true, rules: [],
           colors: { 'editor.background': bg, 'editor.foreground': fg },
@@ -70,12 +123,13 @@
         monaco.editor.setTheme('codenv');
         ed.updateOptions({ fontFamily: font, fontSize: size });
       },
-      focus() { ed.focus(); },
       gotoLine(n) { ed.revealLineInCenter(n); ed.setPosition({ lineNumber: n, column: 1 }); ed.focus(); },
     };
 
     // 改過內容、游標／選取：回報給 Swift（AI 要知道你在看哪一行）
-    ed.onDidChangeModelContent(() => { if (!suppress) post({ type: 'changed' }); });
+    ed.onDidChangeModelContent(() => {
+      if (!suppress) { post({ type: 'changed', path, token }); scheduleRecovery(); }
+    });
     let t = null;
     ed.onDidChangeCursorSelection(() => {
       clearTimeout(t);
@@ -86,10 +140,10 @@
     });
 
     // 跟舊版 codenv 一樣的快捷鍵：⌘ S／Ctrl+S 存檔、F9 存檔＋檢查、F10 存檔＋執行
-    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => post({ type: 'save', text: model.getValue() }));
-    ed.addCommand(monaco.KeyMod.WinCtrl | monaco.KeyCode.KeyS, () => post({ type: 'save', text: model.getValue() }));
-    ed.addCommand(monaco.KeyCode.F9, () => post({ type: 'check', text: model.getValue() }));
-    ed.addCommand(monaco.KeyCode.F10, () => post({ type: 'run', text: model.getValue() }));
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => post({ type: 'save', text: model.getValue(), path, token }));
+    ed.addCommand(monaco.KeyMod.WinCtrl | monaco.KeyCode.KeyS, () => post({ type: 'save', text: model.getValue(), path, token }));
+    ed.addCommand(monaco.KeyCode.F9, () => post({ type: 'check', text: model.getValue(), path, token }));
+    ed.addCommand(monaco.KeyCode.F10, () => post({ type: 'run', text: model.getValue(), path, token }));
 
     post({ type: 'ready' });
   });

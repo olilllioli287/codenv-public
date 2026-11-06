@@ -41,10 +41,8 @@ extension Store {
     // MARK: 切換（主畫面跟著過去）
 
     func selectWindow(id: UUID) {
-        guard let (si, _) = windowPosition(id) else { return }
-        currentSession = sessions[si].id
-        sessions[si].current = id
-        syncSelection()
+        guard let (si, wi) = windowPosition(id) else { return }
+        makeCurrent(si, wi)
     }
 
     /// 把焦點設到某格（並切到它那個 Session／Window）
@@ -59,13 +57,12 @@ extension Store {
     @discardableResult
     func replacePane(_ old: UUID, with new: UUID) -> Bool {
         guard locate(old) != nil else { return false }
+        if old == new { return true }       // 換成自己：什麼都不用做（不然下面 unplace 會先把它拿掉）
         unplace(new)
         guard let (si2, wi2) = locate(old) else { return false }
         sessions[si2].windows[wi2].root = sessions[si2].windows[wi2].root?.replacing(old, with: .leaf(new))
         if sessions[si2].windows[wi2].focused == old { sessions[si2].windows[wi2].focused = new }
-        currentSession = sessions[si2].id
-        sessions[si2].current = sessions[si2].windows[wi2].id
-        syncSelection()
+        makeCurrent(si2, wi2)
         return true
     }
 
@@ -105,10 +102,12 @@ extension Store {
     func movePaneToNewWindow(_ conv: UUID, inSession sid: UUID) {
         guard conversation(conv) != nil, let si = sessionPosition(sid) else { return }
         unplace(conv)
-        var w = WindowLayout(name: "\(sessions[si].windows.count + 1)")
+        var w = WindowLayout(name: "\(visibleWindowCount(si) + 1)")
         w.root = .leaf(conv)
         w.focused = conv
-        sessions[si].windows.append(w)
+        appendWindow(w, at: si)
+        sessions[si].current = w.id
+        currentSession = sessions[si].id
         syncSelection()
     }
 
@@ -118,14 +117,15 @@ extension Store {
     @discardableResult
     func addWindow(toSession sid: UUID) -> UUID? {
         guard let si = sessionPosition(sid) else { return nil }
-        let w = WindowLayout(name: "\(sessions[si].windows.count + 1)")
-        sessions[si].windows.append(w)
+        let w = WindowLayout(name: "\(visibleWindowCount(si) + 1)")
+        appendWindow(w, at: si)
         return w.id
     }
 
     func renameWindow(_ id: UUID, to name: String) {
         let t = name.trimmingCharacters(in: .whitespaces)
-        guard !t.isEmpty, let (si, wi) = windowPosition(id) else { return }
+        guard let (si, wi) = windowPosition(id) else { return }
+        if t.isEmpty { sessions[si].windows[wi].name = "\(wi + 1)"; sessions[si].windows[wi].renamed = false; return }   // 清空＝改回預設名字
         sessions[si].windows[wi].name = t
         sessions[si].windows[wi].renamed = true
     }
@@ -134,10 +134,9 @@ extension Store {
     func deleteWindow(_ id: UUID) {
         guard let (si, wi) = windowPosition(id) else { return }
         sessions[si].windows.remove(at: wi)
-        if sessions[si].windows.isEmpty { sessions[si].windows = [WindowLayout(name: "1")] }
-        if sessions[si].current == id || !sessions[si].windows.contains(where: { $0.id == sessions[si].current }) {
-            sessions[si].current = sessions[si].windows[min(wi, sessions[si].windows.count - 1)].id
-        }
+        if scope == id { scope = nil }
+        ensureVisibleWindow(si)     // 主視窗分頁列沒有可見的 Window 了（剩下的都是獨立視窗）：補一個空的
+        normalizeCurrent(si, near: wi)
         syncSelection()
     }
 
@@ -148,16 +147,18 @@ extension Store {
         if si == ti {
             let to = max(0, min(index, sessions[si].windows.count))
             Self.move(&sessions[si].windows, from: wi, to: to)
+            partitionDetached(si)      // 一般 Window 不能排到獨立視窗後面
             return
         }
         let wasShown = currentSession == sessions[si].id && (sessions[si].current ?? sessions[si].windows.first?.id) == id
         let w = sessions[si].windows.remove(at: wi)
-        if sessions[si].windows.isEmpty { sessions[si].windows = [WindowLayout(name: "1")] }
-        if sessions[si].current == id { sessions[si].current = sessions[si].windows[min(wi, sessions[si].windows.count - 1)].id }
+        ensureVisibleWindow(si)
+        normalizeCurrent(si, near: wi)
         let to = max(0, min(index, sessions[ti].windows.count))
         sessions[ti].windows.insert(w, at: to)
+        partitionDetached(ti)
         // 搬過去的是目前在看的 Window：主畫面跟著到新的 Session
-        if wasShown {
+        if wasShown, !w.detached {
             currentSession = sessions[ti].id
             sessions[ti].current = id
         }
@@ -173,7 +174,7 @@ extension Store {
         let names = Set(sessions.map(\.name))
         while names.contains("session \(n)") { n += 1 }
         let w = WindowLayout(name: "1")
-        let s = SessionLayout(name: name ?? "session \(n)", windows: [w], current: w.id)
+        let s = SessionLayout(name: name ?? "session \(n)", windows: [w], current: w.id, area: areaKey)
         sessions.append(s)
         return s.id
     }

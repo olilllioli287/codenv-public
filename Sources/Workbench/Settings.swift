@@ -58,6 +58,7 @@ struct SettingsView: View {
             AppearancePage(appearance: appearance).tabItem { Label(L("外觀"), systemImage: "textformat") }.tag("appearance")
             PetPrefsPage().tabItem { Label(L("桌寵與用量"), systemImage: "pawprint") }.tag("pet")
             KeysPage().tabItem { Label(L("按鍵"), systemImage: "keyboard") }.tag("keys")
+            RadialPage().tabItem { Label(L("⌥ 八宮格"), systemImage: "circle.grid.3x3") }.tag("radial")
             LocalModelsPage().tabItem { Label(L("本機模型"), systemImage: "cpu") }.tag("local")
             SchedulesPage(store: store).tabItem { Label(L("排程"), systemImage: "clock") }.tag("schedules")
             DataPage(store: store).tabItem { Label(L("資料"), systemImage: "folder") }.tag("data")
@@ -163,7 +164,7 @@ struct WindowsPage: View {
             }
         }
         .alert(deleteSessionTitle, isPresented: Binding(get: { askDeleteSession != nil }, set: { if !$0 { askDeleteSession = nil } })) {
-            Button(L("刪除"), role: .destructive) { if let id = askDeleteSession { store.deleteSession(id) }; askDeleteSession = nil }
+            Button(L("刪除"), role: .destructive) { if let id = askDeleteSession { store.deleteSession(id); if selection == .session(id) { selection = nil } }; askDeleteSession = nil }
             Button(L("取消"), role: .cancel) { askDeleteSession = nil }
         } message: {
             Text(L("只刪版面，裡面的對話都會留在側欄和「沒擺的對話」。"))

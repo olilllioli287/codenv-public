@@ -7,11 +7,12 @@ import Foundation
 // 對話紀錄跟 agy 一樣另外記一份 Claude 格式的，重開時畫面看得到；接回用 thread/resume。
 
 final class CodexBridge {
-    /// 選單上的模型（ChatGPT 免費方案 model/list 列出來的）
+    /// 選單上的模型（ChatGPT 帳號 model/list 列出來的；使用者現在是 Plus）
     static let models: [(id: String, name: String)] = [
         ("gpt-6-luna", "GPT-6 Luna"),
         ("gpt-5.6-terra", "GPT-5.6 Terra"),
         ("gpt-5.6-luna", "GPT-5.6 Luna"),
+        ("gpt-6.1-sol", "GPT-6.1 Sol"),
     ]
     /// 思考強度：~/.codex/models_cache.json 裡這幾個都支援 low～max，沒指定時是 medium
     static let levels = Effort.order
@@ -67,6 +68,9 @@ final class CodexBridge {
     private var threadID: String?
     private var turnID: String?
     private var queue: [(uuid: String, input: [[String: Any]], text: [String: Any])] = []
+    /// 插話請求送出去、還沒收到回覆的那幾則（請求編號 → 訊息）；已經記進紀錄了
+    private var steering: [Int: (uuid: String, input: [[String: Any]], text: [String: Any])] = [:]
+    /// 失敗後放回佇列的：紀錄裡已經有了，下一輪開始時不要再記一次
     private var starting: String?                      // 送出 turn/start、還沒開始的那則訊息 uuid
     private var approvals: [String: Any] = [:]         // 畫面上的 request_id → codex 請求的 id
     private var texts: [String: String] = [:]          // itemId → 累積的文字／思考
@@ -102,7 +106,8 @@ final class CodexBridge {
         switch obj["type"] as? String {
         case "user":
             guard let msg = obj["message"] as? [String: Any] else { return }
-            if let s = msg["content"] as? String, s.hasPrefix("/") { return }   // /effort 之類是給 Claude 的
+            // 內部送的 /effort 之類（沒有 uuid）是給 Claude 的；使用者打的 / 開頭路徑或 /help 有 uuid，要照送，吃掉了狀態會一直是工作中
+            if obj["uuid"] == nil, let s = msg["content"] as? String, s.hasPrefix("/") { return }
             let uuid = (obj["uuid"] as? String)?.lowercased() ?? UUID().uuidString.lowercased()
             queue.append((uuid, Self.input(msg), msg))   // 真的送出（next／steer）時才寫紀錄：排隊時就記會排在上一輪回答前面
             next()
@@ -128,7 +133,8 @@ final class CodexBridge {
     func steer(_ uuid: String) {
         guard let t = threadID, let turn = turnID, let i = queue.firstIndex(where: { $0.uuid == uuid.lowercased() }) else { return }
         let q = queue.remove(at: i)
-        record(["type": "user", "message": q.text])
+        // 紀錄等 codex 回覆插話成功才寫：失敗會退回佇列等下一輪，先寫會排在這一輪回答前面
+        steering[nextID + 1] = q          // call 會用 nextID + 1 當這個請求的編號；回覆說失敗時靠它把這則放回佇列
         call("turn/steer", ["threadId": t, "expectedTurnId": turn, "input": q.input])
         emit?(["type": "user", "isReplay": true, "uuid": q.uuid, "message": ["role": "user", "content": []]])
     }
@@ -172,6 +178,16 @@ final class CodexBridge {
     func incoming(_ o: [String: Any]) {
         // 回覆（有 id、有 result 或 error、沒有 method）
         if o["method"] == nil, let id = (o["id"] as? NSNumber)?.intValue, let m = calls.removeValue(forKey: id) {
+            if let q = steering.removeValue(forKey: id) {
+              if o["error"] == nil {
+                record(["type": "user", "message": q.text])
+              } else {
+                // 插話沒送進去：不要讓這則無聲消失，放回佇列最前面，這一輪結束後會照一般排隊的送出（那時才寫紀錄）；畫面上提示一下
+                queue.insert(q, at: 0)
+                emit?(["type": "system", "subtype": "api_retry", "attempt": 0, "error": L("插話沒送進去，這則改排在這一輪結束後再送")])
+                next()      // 插話的錯誤回覆比這一輪結束晚到：那時已經沒有下一次 next() 了，訊息會卡在佇列（next 自己會擋「這一輪還沒結束」）
+              }
+            }
             reply(m, o["result"] as? [String: Any], o["error"] as? [String: Any])
             return
         }
@@ -200,7 +216,11 @@ final class CodexBridge {
             emit?(["type": "system", "subtype": "init", "model": model, "cwd": directory, "session_id": session.uuidString.lowercased()])
             next()
         case "turn/start":
-            if let err { starting = nil; fail(L("Codex：") + (err["message"] as? String ?? L("送不出去"))); next(); return }
+            if let err {
+                // 沒進到 turn/started／turn/completed：這裡要自己把排隊泡泡移進對話，不然會一直掛在排隊
+                if let u = starting { emit?(["type": "user", "isReplay": true, "uuid": u, "message": ["role": "user", "content": []]]) }
+                starting = nil; fail(L("Codex：") + (err["message"] as? String ?? L("送不出去"))); next(); return
+            }
             if let t = (r?["turn"] as? [String: Any])?["id"] as? String, turnID == nil { turnID = t }
         default:
             if let err, method != "turn/interrupt" { emit?(["type": "system", "subtype": "api_retry", "attempt": 0, "error": err["message"] ?? ""]) }
@@ -263,6 +283,10 @@ final class CodexBridge {
             texts[id, default: ""] += d
             emit?(stream(["type": "content_block_delta", "index": 0, "delta": ["type": "thinking_delta", "thinking": d]], id))
         case "turn/completed":
+            if let u = starting {
+                starting = nil
+                emit?(["type": "user", "isReplay": true, "uuid": u, "message": ["role": "user", "content": []]])
+            }
             let t = p["turn"] as? [String: Any] ?? [:]
             let status = t["status"] as? String ?? "completed"
             var out: [String: Any] = ["type": "result", "subtype": status == "completed" ? "success" : "error_during_execution",
@@ -318,7 +342,8 @@ final class CodexBridge {
             emit?(stream(["type": "message_stop"], id))
         case "reasoning":
             guard thinkingOpen.contains(id) || !((it["summary"] as? [String])?.isEmpty ?? true) else { return }
-            let full = (it["summary"] as? [String])?.joined(separator: "\n\n") ?? texts[id] ?? ""
+            let sum = (it["summary"] as? [String])?.joined(separator: "\n\n") ?? ""
+            let full = sum.isEmpty ? (texts[id] ?? "") : sum      // summary 是空陣列時 joined 是 ""（不是 nil），不能把串流收到的思考蓋掉
             let a: [String: Any] = ["type": "assistant", "message": ["id": id, "role": "assistant", "content": [["type": "thinking", "thinking": full]]]]
             emit?(a); record(a)   // 先送整則再 stop（不然思考會畫兩次）
             if thinkingOpen.contains(id) {
@@ -426,12 +451,6 @@ final class CodexBridge {
             obj["message"] = msg
         }
         guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        let fm = FileManager.default
-        try? fm.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !fm.fileExists(atPath: transcriptURL.path) { fm.createFile(atPath: transcriptURL.path, contents: nil) }
-        guard let h = try? FileHandle(forWritingTo: transcriptURL) else { return }
-        defer { try? h.close() }
-        _ = try? h.seekToEnd()
-        try? h.write(contentsOf: d + Data([0x0a]))
+        Transcripts.append(d + Data([0x0a]), to: transcriptURL)      // 寫不進去會記進事件紀錄（Transcripts.append）
     }
 }

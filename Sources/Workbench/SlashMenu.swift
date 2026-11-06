@@ -107,7 +107,10 @@ final class SlashMenu: NSView {
 
     override func mouseDown(with e: NSEvent) {
         let p = convert(e.locationInWindow, from: nil)
-        let i = top + Int((p.y - 4) / Self.rowH)
+        // 只算畫出來的那幾列：下面 4 點的邊距（和上面的邊）點下去不能選到畫面外的下一個指令
+        let row = Int(((p.y - 4) / Self.rowH).rounded(.down))
+        guard p.y >= 4, row >= 0, row < min(items.count, Self.maxRows) else { return }
+        let i = top + row
         guard items.indices.contains(i) else { return }
         selected = i
         needsDisplay = true
@@ -117,6 +120,8 @@ final class SlashMenu: NSView {
         guard items.count > Self.maxRows else { return }
         let d = e.scrollingDeltaY > 0 ? -1 : (e.scrollingDeltaY < 0 ? 1 : 0)
         top = max(0, min(items.count - Self.maxRows, top + d))
+        // 選取的項目被捲出畫面時，改選畫面上最近的一個：不然按 Enter／Tab 會送出看不到的那個
+        selected = min(max(selected, top), top + Self.maxRows - 1)
         needsDisplay = true
     }
 }

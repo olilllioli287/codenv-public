@@ -66,8 +66,8 @@ final class ContextMonitor: ObservableObject {
     }
 
     static func text(_ n: Int) -> String { n >= 1000 ? "\(n / 1000)K" : "\(n)" }
-    /// 60 萬以上紅（很慢、很吃額度），其他不上色（自動壓縮設在 50 萬，通常不會到）
-    static func color(_ n: Int) -> Color { n >= 600_000 ? .red : .secondary }
+    /// 不上色：使用者 10/26「不要紅字標示」（原本 60 萬以上是紅的）；很長的那列下面照樣有說明和「壓縮」
+    static func color(_ n: Int) -> Color { .secondary }
 }
 
 /// 用量欄位裡「目前這個分頁」那一塊：分頁裡每一格的上下文各多少（目前那格粗體）。

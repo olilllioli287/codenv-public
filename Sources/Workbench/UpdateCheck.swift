@@ -146,6 +146,8 @@ final class UpdateCheck: ObservableObject {
         let notes = rel.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         log("popup \(rel.tag)")
         var choice = answer
+        // 測試實例沒指定答案就不跳 runModal（會卡住主執行緒、還可能出現在使用者的螢幕上）
+        if choice == nil, CommandLine.arguments.contains("--state-dir") { log("answer 測試實例不跳窗"); return }
         if choice == nil {
             let alert = NSAlert()
             alert.messageText = L("codenv 有新版 \(rel.version)")
@@ -173,7 +175,7 @@ final class UpdateCheck: ObservableObject {
 
     private func info(_ title: String, _ text: String) {
         log("info \(title)")
-        if answer != nil { return }
+        if answer != nil || CommandLine.arguments.contains("--state-dir") { return }
         let a = NSAlert(); a.messageText = title; a.informativeText = text; a.runModal()
     }
 

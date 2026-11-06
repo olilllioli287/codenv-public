@@ -6,6 +6,7 @@ import Darwin
 //   - 用 Unix socket，不開網路埠：網頁的 fetch 打不到，也沒有 DNS rebinding 的問題
 //   - 資料夾 0700、socket 和 token 檔 0600，每次啟動換一個隨機 token，請求要帶對才回
 //   - 只能讀：列出格子、網址、標題、文字、截圖；不能點、不能打字、不能跑 JS
+//   - 唯一的例外 wake（codenv-todo wake 用）：叫 codenv 把某段聊天室的 claude 程序開起來；只開程序，不送任何文字、不改模型或權限模式
 // 位置：~/Library/Application Support/AI 工作台/browser/（測試 App 在 --state-dir/browser）。
 //   裡面 token＝這次的 token、socket＝socket 的路徑（路徑超過 sun_path 的 104 字元就改放 $TMPDIR 底下的 0700 資料夾）。
 // 協定：一行 JSON 請求 {"token","cmd":"ls|text|shot","pane":"名稱或 id 開頭","max":字數} → 一行 JSON 回應 {"ok":true,...} 或 {"ok":false,"error":"..."}
@@ -14,6 +15,10 @@ final class BrowserServer {
     static let shared = BrowserServer()
     /// 名稱查得到的格子標題（側欄名稱）；MainWindow 設定
     var titleOf: ((UUID) -> String?)?
+    /// codenv-todo wake：喚醒一段聊天室（只開程序、不送訊息；MainWindow 設定）。這是唯一不是「只能讀」的指令，同樣要 token
+    var wake: ((String, @escaping ([String: Any]) -> Void) -> Void)?
+    /// codenv-todo show <目標>：打開協作看板並捲到那個目標（第二個參數＝要不要把 codenv 叫到前面）
+    var showGoal: ((String, Bool, @escaping ([String: Any]) -> Void) -> Void)?
 
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
@@ -86,6 +91,7 @@ final class BrowserServer {
         guard getpeereid(c, &uid, &gid) == 0, uid == getuid() else { close(c); return }
         var tv = timeval(tv_sec: 5, tv_usec: 0)
         setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))   // 對方連上卻不收回應：write 最多卡 5 秒就放棄、關連線
         var nosig: Int32 = 1
         setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
         var data = Data(), buf = [UInt8](repeating: 0, count: 4096)
@@ -108,7 +114,11 @@ final class BrowserServer {
             lock.lock(); let first = !answered; answered = true; lock.unlock()
             if first { DispatchQueue.global().async { self.reply(c, r) } }
         }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 15) { finish(["ok": false, "error": "網頁 15 秒都沒回應（可能卡住了），再試一次"]) }
+        let cmd = req["cmd"] as? String
+        let isWake = cmd == "wake", isExport = cmd == "export"
+        DispatchQueue.global().asyncAfter(deadline: .now() + (isExport ? 280 : isWake ? 28 : 15)) {
+            finish(["ok": false, "error": isExport ? "匯出 280 秒都沒結果（對話太長或網頁卡住了）" : isWake ? "喚醒 28 秒都沒結果（codenv 可能卡住了）" : "網頁 15 秒都沒回應（可能卡住了），再試一次"])
+        }
         DispatchQueue.main.async { self.handle(req, done: finish) }
     }
 
@@ -130,9 +140,15 @@ final class BrowserServer {
             ["id": String(p.conversationID.uuidString.prefix(8)).lowercased(), "name": titleOf?(p.conversationID) ?? "", "title": p.currentTitle, "url": p.currentURL]
         }
         switch req["cmd"] as? String {
+        case "wake":
+            guard let wake else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            wake((req["name"] as? String) ?? "", done)
+        case "show":
+            guard let showGoal else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            showGoal((req["goal"] as? String) ?? "", (req["activate"] as? Bool) ?? true, done)
         case "ls":
             done(["ok": true, "panes": panes.map(info)])
-        case "text", "shot", "url":
+        case "text", "shot", "url", "export":
             let want = (req["pane"] as? String ?? "").lowercased()
             let pick: BrowserPane?
             if want.isEmpty { pick = panes.first }
@@ -152,10 +168,20 @@ final class BrowserServer {
                     guard let d else { return done(["ok": false, "error": "截不到圖（格子可能沒在畫面上）"]) }
                     base["png"] = d.base64EncodedString(); done(base)
                 }
+            case "export":
+                let parent = (req["out"] as? String).flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+                p.exportGemini(parent: parent) { r in
+                    switch r {
+                    case .success(let o):
+                        base["folder"] = o.folder.path; base["turns"] = o.turns; base["images"] = o.images; base["failed"] = o.failed; base["emptyUsers"] = o.emptyUsers
+                        done(base)
+                    case .failure(let e): done(["ok": false, "error": e.localizedDescription])
+                    }
+                }
             default: done(base)
             }
         default:
-            done(["ok": false, "error": "不認得的指令（只能 ls、url、text、shot）"])
+            done(["ok": false, "error": "不認得的指令（只能 ls、url、text、shot、export）"])
         }
     }
 }

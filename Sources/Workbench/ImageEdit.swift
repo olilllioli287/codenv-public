@@ -4,6 +4,20 @@ import AppKit
 /// 單張模式：editor <editor.html> <圖> <輸出.png> <標籤> [語言]，存檔印 SAVED、取消印 CANCELLED 後結束。
 /// image-shelf 自己編好的放在 /private/tmp/image-shelf/bin（重開機會被清），找不到就自己編一份放在 Application Support。
 enum ImageEditor {
+    /// 要執行的編輯器可不可以信：是檔案（不是 symlink）、自己的、別人不能寫，所在資料夾也是自己的、別人不能寫
+    /// （/private/tmp 是大家都寫得進去的地方，別人放一個 editor-xxx 進去就會被這邊執行）
+    static func trusted(_ path: String) -> Bool {
+        let fm = FileManager.default
+        func ok(_ p: String, dir: Bool) -> Bool {
+            var st = stat()
+            guard lstat(p, &st) == 0 else { return false }
+            let kind = st.st_mode & S_IFMT
+            guard kind == (dir ? S_IFDIR : S_IFREG) else { return false }
+            return st.st_uid == getuid() && (st.st_mode & (S_IWGRP | S_IWOTH)) == 0
+        }
+        return fm.isExecutableFile(atPath: path) && ok(path, dir: false) && ok((path as NSString).deletingLastPathComponent, dir: true)
+    }
+
     /// editor.html：image-shelf 外掛最新版的，沒有就用原始碼資料夾的
     static func page() -> URL? {
         let fm = FileManager.default
@@ -25,7 +39,8 @@ enum ImageEditor {
         let shelfBin = URL(fileURLWithPath: "/private/tmp/image-shelf/bin")
         if let names = try? fm.contentsOfDirectory(atPath: shelfBin.path),
            let n = names.filter({ $0.hasPrefix("editor-") }).sorted().last {
-            return done(shelfBin.appendingPathComponent(n))
+            let u = shelfBin.appendingPathComponent(n)
+            if trusted(u.path) { return done(u) }      // 不可信的（別人放的、別人寫得進去的）當作沒有，往下用自己編的
         }
         let dir = Edition.supportDir
         let mine = dir.appendingPathComponent("image-editor")
@@ -75,7 +90,8 @@ enum ImageEditor {
                 try? fm.removeItem(at: output)
                 DispatchQueue.main.async { done(result) }
             }
-            if (try? p.run()) == nil { NSWorkspace.shared.open(input); done(nil) }
+            guard (try? p.run()) != nil else { NSWorkspace.shared.open(input); done(nil); return }
+            try? out.fileHandleForWriting.close()      // 父程序不用寫入端：關掉，子程序結束才讀得到 EOF
         }
     }
 }

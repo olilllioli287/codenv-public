@@ -17,7 +17,7 @@ struct Palette {
             return NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1)
         case .ansi256(let code):
             var i = Int(code)
-            if i < 8 && isBold { i += 8 }   // 粗體用亮色（跟 SwiftTerm 的 useBrightColors 一樣）
+            if i < 8 && isBold && isFg { i += 8 }   // 粗體的文字用亮色（跟 SwiftTerm 的 useBrightColors 一樣）；背景色不跟著變
             if i < 16 { return ansi[i] }
             if i < 232 {
                 let n = i - 16

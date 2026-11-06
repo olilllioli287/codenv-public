@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftTerm
 
 /// 一格終端機：SwiftTerm 負責跑程式、輸入、輸入法；往上捲時改用平滑捲動閱讀層
@@ -61,6 +62,9 @@ final class TerminalPane: NSView, LocalProcessTerminalViewDelegate {
 
     /// 這格跑的是哪段 Claude 對話：用來找 image-shelf 的圖片架
     func attachImageShelf(claudeSession: UUID) {
+        shelfTimer?.invalidate()
+        shelfTimer = nil
+        shelf?.removeFromSuperview()
         let o = ImageShelfOverlay(claudeSession: claudeSession)
         o.background = theme.palette(for: effectiveAppearance).bg
         addSubview(o, positioned: .below, relativeTo: scrollback)
@@ -119,7 +123,7 @@ final class TerminalPane: NSView, LocalProcessTerminalViewDelegate {
     // MARK: 捲動
 
     private func handleScroll(_ e: NSEvent) -> Bool {
-        guard let window, e.window === window, !isHidden else { return false }
+        guard let window, e.window === window, !isHiddenOrHasHiddenAncestor else { return false }
         let p = convert(e.locationInWindow, from: nil)
         guard bounds.contains(p) else { return false }
         // 閱讀層開著：交給它自己（原生捲動）
@@ -163,5 +167,27 @@ final class TerminalPane: NSView, LocalProcessTerminalViewDelegate {
         shelfTimer?.invalidate()
         refreshTimer?.invalidate()
         onExit?(exitCode)
+    }
+
+    /// 終端機裡有沒有前景程式在跑（非閒置的 shell）
+    var hasRunningProcess: Bool {
+        guard terminal.process.running else { return false }
+        let shellPid = terminal.process.shellPid
+        guard shellPid > 0 else { return false }
+        let fd = terminal.process.childfd
+        if fd >= 0 {
+            let fgPgid = tcgetpgrp(fd)
+            let shellPgid = getpgid(shellPid)
+            if fgPgid > 0, shellPgid > 0 {
+                return fgPgid != shellPgid
+            }
+        }
+        // tcgetpgrp / getpgid 拿不到時才退回檢查子程序：先用 nil 問大小
+        let bytes = proc_listchildpids(shellPid, nil, 0)
+        guard bytes > 0 else { return false }
+        let count = max(16, Int(bytes) / MemoryLayout<pid_t>.size)
+        var buf = [pid_t](repeating: 0, count: count)
+        let n = proc_listchildpids(shellPid, &buf, Int32(buf.count * MemoryLayout<pid_t>.size))
+        return n > 0 && buf.prefix(Int(n)).contains(where: { $0 > 0 })
     }
 }

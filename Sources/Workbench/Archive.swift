@@ -23,7 +23,7 @@ extension Store {
 
     func isArchived(_ c: Conversation) -> Bool {
         if c.manualArchive == true { return true }               // 自己按了封存
-        if status[c.id] != nil { return false }                 // 正在跑
+        if status[c.id] == .working || status[c.id] == .waiting { return false } // 正在跑
         if locate(c.id) != nil { return false }                  // 擺在畫面上
         return Date().timeIntervalSince(lastTouched(c)) > Store.archiveAfter
     }
@@ -35,6 +35,12 @@ extension Store {
         // 取消封存：當作剛碰過，不然一個禮拜沒碰的規則又會馬上把它收回去
         if !on { conversations[i].lastOpened = Date() }
         if on { pruneBundles() }   // 自己封存＝離開掛件框
+    }
+
+    /// 右鍵「在沙盒裡跑（nono）」
+    func setSandbox(_ id: UUID, _ on: Bool) {
+        guard let i = conversations.firstIndex(where: { $0.id == id }) else { return }
+        conversations[i].sandbox = on ? true : nil
     }
 
     // MARK: 固定順序
@@ -62,6 +68,7 @@ extension Store {
     func reorder(_ id: UUID, before target: UUID) {
         guard id != target, let t = conversation(target), let i = conversations.firstIndex(where: { $0.id == id }) else { return }
         if let g = groupOf(t), groupOf(conversations[i]) != g { move(id, toGroup: g) }
+        assignMissingOrders()
         // 鄰居從目標那一串（畫面上看到的那份清單）找：排在目標正上方那個和目標的中間
         let list = siblings(of: t)
         let to = t.order ?? 0
@@ -75,6 +82,7 @@ extension Store {
     func reorder(_ id: UUID, after target: UUID) {
         guard id != target, let t = conversation(target), let i = conversations.firstIndex(where: { $0.id == id }) else { return }
         if let g = groupOf(t), groupOf(conversations[i]) != g { move(id, toGroup: g) }
+        assignMissingOrders()
         let list = siblings(of: t)
         let to = t.order ?? 0
         let next = list.first { ($0.order ?? 0) > to && $0.id != id }?.order ?? (to + 1)
@@ -102,10 +110,12 @@ extension Store {
     /// 右鍵「上移／下移／移到最上面」：在同一個資料夾的清單裡換位置
     func shift(_ id: UUID, by delta: Int) {
         guard let c = conversation(id) else { return }
-        let list = siblings(of: c)
+        var list = siblings(of: c)
         guard let k = list.firstIndex(where: { $0.id == id }) else { return }
         let j = max(0, min(list.count - 1, k + delta))
         guard j != k, let i = conversations.firstIndex(where: { $0.id == id }) else { return }
+        assignMissingOrders()
+        list = siblings(of: c)
         if delta < 0 {
             let above = list[j].order ?? 0
             let before = j > 0 ? (list[j - 1].order ?? above - 1) : above - 1

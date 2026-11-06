@@ -37,9 +37,21 @@ extension MainWindowController {
     func sweepDrafts() {
         for c in store.conversations where c.draft == true {
             let path = store.project(c.projectID)?.path ?? NSHomeDirectory()
-            if Store.claudeHasSession(c.claudeSession, path: path) {
+            // 任何一家的紀錄檔有了，就不是空草稿（agy、Codex、Copilot、本機、Apple 的紀錄不在 Claude 的資料夾）
+            let others = [AgyBridge.transcript(for: c.claudeSession), CodexBridge.transcript(for: c.claudeSession), CopilotBridge.transcript(for: c.claudeSession),
+                          LocalBridge.transcript(for: c.claudeSession), AppleBridge.transcript(for: c.claudeSession)]
+            if Store.claudeHasSession(c.claudeSession, path: path) || others.contains(where: { FileManager.default.fileExists(atPath: $0.path) })
+                || FileManager.default.fileExists(atPath: OutboxPersistence(directory: store.directory, conversationID: c.id).fileURL.path)
+                || OutboxPersistence(directory: store.directory, conversationID: c.id).hasLeftovers {
                 if let i = store.conversations.firstIndex(where: { $0.id == c.id }) { store.conversations[i].draft = nil }
-            } else if store.locate(c.id) == nil, store.selected != c.id, store.status[c.id] == nil {
+            } else if store.locate(c.id) == nil, store.selected != c.id, store.status[c.id] == nil,
+                      (workspace.panes[c.id] as? ChatPane)?.inputBar.hasPendingInput != true,   // 打了字還沒送的草稿不刪
+                      // 格子關了、或重開 App 還沒開格子：輸入框看不到，改看磁碟上的草稿檔（DraftPersistence；Astra 11/5：原本會連草稿檔一起刪）
+                      !FileManager.default.fileExists(atPath: DraftPersistence(directory: store.directory, conversationID: c.id).fileURL.path),
+                      !DraftPersistence(directory: store.directory, conversationID: c.id).hasQuarantined,   // 讀不懂隔離起來的草稿（含新版 .bad-時間）
+                      (workspace.panes[c.id] as? ChatPane)?.isBangRunning != true,              // ! 指令還在跑、或已經有指令紀錄的不刪（紀錄放在自己的檔，不算 AI 對話）
+                      (workspace.panes[c.id] as? ChatPane)?.codeLab?.hasUnsaved != true,        // 程式碼區有沒存的修改：刪掉會繞過存檔
+                      BangStore.load(c.id).isEmpty {
                 deleteConversation(c.id)
             }
         }

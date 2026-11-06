@@ -51,7 +51,9 @@ enum ModelTab: String, CaseIterable {
     private static var cache: [String: NSImage] = [:]
     private static func load(_ name: String) -> NSImage? {
         if let i = cache[name] { return i }
-        guard let u = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "icons"), let i = NSImage(contentsOf: u) else { return nil }
+        // 不是打包過的 App（swift build 直接跑、測試用）時 Bundle.main 沒有 icons：退回原始碼資料夾的 Resources/icons
+        let dev = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/icons/\(name).svg")
+        guard let u = Bundle.main.url(forResource: name, withExtension: "svg", subdirectory: "icons") ?? (FileManager.default.fileExists(atPath: dev.path) ? dev : nil), let i = NSImage(contentsOf: u) else { return nil }
         cache[name] = i
         return i
     }
@@ -95,7 +97,7 @@ final class ModelPanelModel: ObservableObject {
     }
     var shownTab: ModelTab {
         if let t = tab, tabs.contains(t) { return t }
-        return sections.joined().first(where: \.checked)?.tab ?? .claude
+        return sections.joined().first(where: \.checked)?.tab ?? (tabs.contains(.claude) ? .claude : (tabs.first ?? .local))
     }
     /// 這個分頁要列的組（每組只留這頁的模型，空的組拿掉）。
     /// Claude 分頁：經 agy 的放在同名的 Claude Code 那列正下面（Opus 5.5 (cc)、Opus 5.5 (agy)）；找不到同名的才另成一組放最後

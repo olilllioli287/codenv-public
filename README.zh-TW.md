@@ -80,15 +80,19 @@ codenv 開啟 30 秒後會檢查一次 GitHub Releases 有沒有新版，之後�
 
 設定頁和選單裡都有「回報問題…」，可以寄 email 到 codenvstudio@gmail.com，或到 GitHub 開 issue。錯誤紀錄預設不附；要附的話自己勾選，附之前會先把路徑裡的使用者名稱換掉。
 
-## agy（Google Antigravity CLI）：預設關閉
+## agy（Google Antigravity CLI）：使用前請看
 
-Gemini 聊天室、灰字下一句建議、用量查詢、看板自動做事，都是由 codenv 去呼叫 Google 的 `agy`。Google 官方 FAQ（<https://antigravity.google/docs/faq/>）寫著：
+Gemini 聊天室、灰字下一句建議、用量查詢、看板讓 Claude 自動派工作給 agy，都是由 codenv 去呼叫 Google 的 `agy`。Google 官方 FAQ（<https://antigravity.google/docs/faq/>）講了兩件不同的事：
 
-> Antigravity CLI headless mode (`agy -p`) is intended for direct scripting and CI workflows. Wrapping `agy` inside third-party coding agents or applications, or automating account rotation, is not supported under consumer plans.
+1. 拿 agy 的登入去開第三方軟體（例如 Claude Code、OpenCode）是違反服務條款，可能被停權。codenv 沒有這樣做：它不讀、不轉用你的登入，只是呼叫官方的 `agy -p`。
 
-> Using third-party software, tools, or services to access Antigravity is a violation of our Terms of Service … Such actions can result in suspension or termination of your account.
+   > Using third-party software, tools, or services to access Antigravity is a violation of our Terms of Service … Such actions can result in suspension or termination of your account.
 
-所以這個功能**預設關閉**。要打開（設定 → 對話 → agy）會先跳出上面這段警告。打開之後，你的 Google 帳號可能會被停權，風險由你自己承擔；codenv 沒有做任何隱藏自己的處理。
+2. `agy -p` 是給「直接寫腳本和 CI」用的；把 agy 包進第三方的 coding agent 或 App，個人方案「不支援」。codenv 的上述功能都屬於這一類。
+
+   > Antigravity CLI headless mode (`agy -p`) is intended for direct scripting and CI workflows. Wrapping `agy` inside third-party coding agents or applications, or automating account rotation, is not supported under consumer plans.
+
+這個功能**預設開啟**，第一次使用前會跳一次提醒；不想用可以在設定 → 對話 → agy 關掉。實際狀況請自己查證相關文章與 Google 的最新說明；codenv 不保證你的帳號不會出事，風險由你自己承擔，也沒有做任何隱藏自己的處理。
 
 ## 從原始碼編譯
 

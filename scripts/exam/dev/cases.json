@@ -1,0 +1,12 @@
+[
+  {"id":"A06","name":"選項文字含分隔符仍完整還原","runner":"logic.mjs","before":"bfbe834^","files":["Resources/chat/chat.js"]},
+  {"id":"A07","name":"看板步驟不誤拆 email／@State","runner":"todo.py","before":"593aaf7^","files":["scripts/codenv-todo"]},
+  {"id":"A08","name":"HANDOFF 後有補充仍判對狀態","runner":"todo.py","before":"593aaf7^","files":["scripts/codenv-todo"]},
+  {"id":"A03","name":"歷史重載剝掉內部附加行","runner":"logic.mjs","before":"e93a637^","files":["Resources/chat/chat.js"]},
+  {"id":"A05","name":"依指定 UUID 精準撤泡泡","runner":"logic.mjs","before":"122e79d^","files":["Resources/chat/chat.js"]},
+  {"id":"A02","name":"半圓定義域端點接合","runner":"logic.mjs","before":"a657704^","files":["Resources/chat/plot.js"]},
+  {"id":"A01","name":"圓與格子等比例","runner":"logic.mjs","before":"a657704^","files":["Resources/chat/plot.js"],"extraBefore":["9457591^"]},
+  {"id":"B01","name":"完成前串流即排版數學式","runner":"browser.mjs","before":"8cd5f38^","files":["Resources/chat/chat.js"]},
+  {"id":"B10","name":"未讀排隊訊息標沒送到","runner":"browser.mjs","before":"066d226^","files":["Resources/chat/chat.js"]},
+  {"id":"B04","name":"內容縮短不解除貼底、真捲動才解除","runner":"browser.mjs","before":"a70357d^","files":["Resources/chat/chat.js"]}
+]

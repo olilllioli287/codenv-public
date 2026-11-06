@@ -5,6 +5,9 @@ import AppKit
 
 struct ChatPrefsPage: View {
     @ObservedObject var p = Prefs.shared
+    @ObservedObject var board = CollabBoardModel.shared
+    @ObservedObject private var sourceUpdate = SourceUpdate.shared
+    @State private var eventLogOn = EventLog.enabled
 
     private var models: [ModelChoice] { ModelChoice.known.filter { $0.value != "default" } }
 
@@ -37,19 +40,31 @@ struct ChatPrefsPage: View {
                     Text(L("Enter 送出、Shift+Enter 換行")).tag(true)
                 }
                 .pickerStyle(.radioGroup)
-                Text(L("ctrl+x ctrl+s 兩種都可以送出；Esc 停止；Claude 還在做的時候 ⌃ Enter 馬上插話（停下目前這一步，先讀你的訊息）。")).font(.caption).foregroundStyle(.secondary)
+                Text(L("ctrl+x ctrl+s 兩種都可以送出；⌃ C 停止（Esc 不會停止）；Claude 還在做的時候 ⌃ Enter 馬上插話（停下目前這一步，先讀你的訊息）。")).font(.caption).foregroundStyle(.secondary)
                 Toggle(L("回答完用灰字猜下一句（Tab 採用）"), isOn: $p.promptSuggestions)
                 Toggle(L("模型清單列出全部（關著只列 Opus／Sonnet／Haiku 5.5、Gemini 3.8 Flash 和全部本機模型）"), isOn: $p.allModels)
                 Toggle(L("讓 Claude 能操作 Chrome（Claude in Chrome，新開的對話生效）"), isOn: $p.claudeInChrome)
                 Toggle(L("讓 Claude 能發布網頁（Artifact，claude.ai/artifact 網址，新開的對話生效）"), isOn: $p.artifacts)
                 Toggle(L("記錄 Claude 的除錯紀錄（查 MCP 斷線等問題用；存在 ~/Library/Logs/codenv，3 天前的自動刪；新開的對話生效）"), isOn: $p.claudeDebugLog)
+                HStack {
+                    Text(L("記錄事件（回報問題用；3 天前的自動刪）"))
+                    Spacer()
+                    Button(L("打開事件紀錄…")) { EventConsoleWindowController.shared.present() }
+                    Toggle(L("記錄事件（回報問題用；3 天前的自動刪）"), isOn: Binding(get: { eventLogOn }, set: { eventLogOn = $0; EventLog.enabled = $0 }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
                 Toggle(L("打開 App 時接回版面裡每一格的 Claude（不用先送訊息，其他聊天室就聯絡得到；每格約 400 MB 記憶體）"), isOn: $p.reconnectOnLaunch)
             }
             Section(L("agy（Google Antigravity CLI）")) {
                 Toggle(L("使用 agy：Gemini 聊天室、灰字建議、用量查詢、看板 @agy 自動做事"), isOn: Binding(
                     get: { p.agyEnabled },
                     set: { on in if !on { p.agyEnabled = false } else if Prefs.confirmEnableAgy() { p.agyEnabled = true } }))
-                Text(L("打開前會先請你看一段 Google 官方 FAQ 的說明：用別的程式去呼叫 agy，Google 說個人方案不支援、可能停權帳號。")).font(.caption).foregroundStyle(.secondary)
+                Text(L("呼叫官方 agy -p；Google 寫明個人方案不支援包進 App，風險自負。")).font(.caption).foregroundStyle(.secondary)
+            }
+            Section(L("協作看板")) {
+                Toggle(L("Claude 開的目標自動生效"), isOn: Binding(get: { board.autoApprove }, set: { board.setAutoApprove($0) }))
+                Text(L("打開時，Claude 用 codenv-todo 開的目標直接是「進行中」，不用你在看板上按「同意」。「使用者驗收」那一步還是只有你本人能勾；agy 的每日件數上限、退回三次就卡住、來回太多次的警告都照舊。這個設定 Claude 不能用指令改。")).font(.caption).foregroundStyle(.secondary)
             }
             if Edition.updateRepo != nil {
                 Section(L("更新與回報")) {
@@ -62,6 +77,22 @@ struct ChatPrefsPage: View {
                     Text(L("檢查更新只會向 api.github.com 問最新版的版號，不送任何使用者資料；有新版也只會提醒，不會自己下載。")).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            if Edition.isPublic {
+                Section(L("公版原始碼更新")) {
+                    HStack {
+                        Button(L("檢查官方原始碼")) { sourceUpdate.check() }
+                            .disabled(sourceUpdate.busy)
+                        if sourceUpdate.hasUpdate {
+                            Button(L("按一下更新")) { sourceUpdate.update() }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        if sourceUpdate.busy { ProgressView().controlSize(.small) }
+                    }
+                    Text(sourceUpdate.message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(L("更新會在 Terminal 執行 public/update.command。它只會 fetch 和 merge；有未提交改動或衝突時會停下，不會自動下載或背景替換 App。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Section(L("瀏覽器格子")) {
                 Picker(L("核心"), selection: $p.browserEngine) {
                     Text(L("WebKit（Safari 的核心，系統內建、最省記憶體）")).tag("webkit")
@@ -70,6 +101,15 @@ struct ChatPrefsPage: View {
                 Text(p.browserEngine == "chromium"
                      ? L("Chromium 版還沒做好，現在照樣用 WebKit 開；做好之後新開的瀏覽器格子才會換。")
                      : L("側欄「瀏覽器」或 ⌘ ⇧ B 開一格。登入資料只存在 codenv 自己的資料庫，不跟 Safari 共用。Claude 用 codenv-browser 指令讀得到網址、文字和截圖，不能點也不能打字。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle(L("Gemini 網頁換皮（codenv 聊天室的配色和字型）"), isOn: $p.geminiSkin)
+                Text(L("只改 gemini.google.com 的外觀（背景、字型、顏色、訊息、輸入框、模型選單），不動功能；NotebookLM 不受影響。關掉就是 Gemini 原樣，已經開著的頁立刻生效。Google 改版讓某一塊對不上時，那一塊會自己恢復原樣。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle(L("NotebookLM 網頁換皮（codenv 的配色和字型）"), isOn: $p.notebookSkin)
+                Text(L("只改 NotebookLM（notebook.google.com）首頁和筆記本內頁的外觀（背景、卡片、文字、按鈕、選單的顏色和字型），不動功能。關掉就是原樣，已經開著的頁立刻生效。Google 改版讓某個地方沒換到時，那裡會維持原樣。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle(L("Gemini／NotebookLM 網頁：⌘ Enter 送出、Enter 換行"), isOn: $p.geminiCmdEnter)
+                Text(L("只對 gemini.google.com 和 NotebookLM（notebooklm.google.com、notebook.google.com）的輸入框有效；找不到送出鈕時不攔 Enter；輸入法選字時的 Enter 不受影響，⇧ Enter 照原樣。已經開著的頁立刻生效。瀏覽器格子右上角的圓形下載鈕（只在 Gemini 對話頁出現）可以把整段對話匯成 Markdown 和圖片。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L("自動壓縮上下文")) {
@@ -89,7 +129,7 @@ struct ChatPrefsPage: View {
                     ForEach(CodeLabView.Mode.allCases, id: \.rawValue) { m in Text(m.detail).tag(m.rawValue) }
                 }
                 .pickerStyle(.radioGroup)
-                Text(L("每個練習也可以在程式碼區上面的「版面」臨時換。執行完按任意鍵回到程式碼；按著 ⌘、⌥、⌃ 的鍵不算（可以先 ⌘ C 複製結果）。")).font(.caption).foregroundStyle(.secondary)
+                Text(L("每個練習也可以在程式碼區上面的「版面」臨時換。執行完按任意鍵回到程式碼，按著 ⌘、⌥、⌃ 的不算（可以先 ⌘ C 複製）；換畫面和視窗版面會同時收起執行畫面。")).font(.caption).foregroundStyle(.secondary)
             }
             Section(L("對話清單")) {
                 Stepper(value: $p.archiveDays, in: 1...60) { Text(L("幾天沒碰收進封存：\(p.archiveDays) 天")) }
@@ -98,6 +138,9 @@ struct ChatPrefsPage: View {
             }
         }
         .formStyle(.grouped)
+        .onReceive(NotificationCenter.default.publisher(for: EventLog.changed)) { _ in
+            eventLogOn = EventLog.enabled
+        }
     }
 }
 
@@ -152,7 +195,7 @@ struct KeysPage: View {
         (L("Ctrl+A s／w"), L("列出 Session 和 Window 來選")), ("Ctrl+A $", L("幫 Session 改名")), ("Ctrl+A ( )", L("上一個／下一個 Session")),
         ("Ctrl+A b", L("開／關右邊的桌寵欄位")), ("Ctrl+A a", L("把 Ctrl+A 本身送出（輸入框跳到行首）")), ("Ctrl+A Ctrl+A", L("中文指令選單")),
         ("⌘ N", L("新對話（資料夾選單）")), ("⌘ ⇧ I", L("從 Claude Code 匯入對話")), (L("⌘ =／⌘ -／⌘ 0"), L("放大／縮小／實際文字大小")),
-        (L("⌘ Enter、ctrl+x ctrl+s"), L("送出訊息")), ("Esc", L("停止 Claude")), ("⇧ Tab", L("換權限模式（每次都問 → 改檔不問 → 只規劃 → 自動）")), ("⌘ ,", L("設定")),
+        (L("⌘ Enter、ctrl+x ctrl+s"), L("送出訊息")), ("⌃ C", L("停止 Claude")), ("⇧ Tab", L("換權限模式（每次都問 → 改檔不問 → 只規劃 → 自動）")), ("⌘ ,", L("設定")),
     ]
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -165,6 +208,19 @@ struct KeysPage: View {
             }
         }
         .padding()
+    }
+}
+
+extension LocalModel {
+    /// 伺服器位址不合規定的原因（nil＝可以用）：http 只准本機（localhost、127.0.0.1、::1），其他位址一律要 https；
+    /// 不然金鑰和對話會明文送到別台機器、路上的人看得到（使用者 10/27 決定）
+    var addressProblem: String? {
+        guard let u = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)), let scheme = u.scheme?.lowercased(), let host = u.host?.lowercased() else {
+            return L("伺服器位址看不懂：要寫成 https://… 或 http://127.0.0.1:8080")
+        }
+        if scheme == "https" { return nil }
+        if scheme == "http", ["localhost", "127.0.0.1", "::1"].contains(host) { return nil }
+        return L("只有本機（localhost、127.0.0.1、::1）可以用 http://，其他位址一律要 https://（不然金鑰和對話會明文傳送）")
     }
 }
 
@@ -193,6 +249,9 @@ struct LocalModelsPage: View {
                         SecureField(L("金鑰（伺服器不需要就留空）"), text: binding(id, \.token))
                     }
                     .formStyle(.grouped)
+                    if let why = list.first(where: { $0.id == id })?.addressProblem {
+                        Text(why).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                    }
                 } else {
                     Text(L("左邊選一個，或按 ＋ 新增。")).foregroundStyle(.secondary)
                 }

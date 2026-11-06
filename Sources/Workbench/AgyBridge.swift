@@ -27,8 +27,8 @@ final class AgyBridge {
         return base(model) + "-" + e
     }
 
-    /// agy 功能有沒有打開（設定頁；公版預設關）。關著時：模型清單不列 agy、不查 agy 用量、不用 agy 猜下一句、看板不自動叫 agy
-    static var enabled: Bool { Prefs.shared.agyEnabled }
+    /// agy 功能有沒有打開（設定頁；預設開）而且提醒看過了（公版第一次用前要先看，Prefs.checkAgyNotice）。沒打開或沒看過時：模型清單不列 agy、不查 agy 用量、不用 agy 猜下一句、看板不自動叫 agy
+    static var enabled: Bool { Prefs.shared.agyEnabled && Prefs.shared.agyNoticeSeen }
 
     /// agy 的位置：裝在 ~/.local/bin（官方安裝方式），登入 shell 的 PATH 不一定有
     static var executable: String {
@@ -95,11 +95,15 @@ final class AgyBridge {
     func outgoing(_ obj: [String: Any]) -> [String: Any]? {
         guard obj["type"] as? String == "user", let msg = obj["message"] as? [String: Any] else { return nil }
         // /effort 之類的斜線指令是給 Claude 的；/compact（＋可接一句話）agy 自己也有，照送
-        if let s = msg["content"] as? String, s.hasPrefix("/"), s != "/compact", !s.hasPrefix("/compact ") { return nil }
+        let text = (msg["content"] as? String) ?? ((msg["content"] as? [[String: Any]] ?? []).compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined(separator: "\n"))
+        // 內部送的沒有 uuid；使用者打的一定有。使用者打的 / 開頭路徑或 /help 不能吃掉（吃掉了狀態會一直是工作中）
+        if obj["uuid"] == nil, text.hasPrefix("/"), text != "/compact", !text.hasPrefix("/compact ") { return nil }
         waiting.append(((obj["uuid"] as? String)?.lowercased(), msg))   // 紀錄留原本的圖（重開時畫面看得到）
         var send = msg
         if let blocks = msg["content"] as? [[String: Any]] { send["content"] = blocks.map(Self.textOnly) }
-        if !cancelled.isEmpty {
+        // /compact 要在開頭 agy 才認得：附註留到下一則一般訊息再附
+        let isCompact = text == "/compact" || text.hasPrefix("/compact ")
+        if !cancelled.isEmpty, !isCompact {
             let quoted = cancelled.map { "「" + ($0.count > 200 ? String($0.prefix(200)) + "…" : $0) + "」" }.joined(separator: "、")
             let note = "（codenv 自動附註，不是使用者打的：使用者剛才按了停止，取消了 \(quoted) 這則訊息。那則不用回答，也不要把它的內容當成這次問題的一部分。下面才是使用者這次的訊息。）\n\n"
             cancelled = []
@@ -232,7 +236,7 @@ final class AgyBridge {
             let id = "agy-tool-\(session.uuidString.prefix(8))-\(idx)"
             let path = params["Path"] as? String ?? params["TargetFile"] as? String ?? params["AbsolutePath"] as? String
             if state == "ACTIVE" {
-                if raw == "edit_file" || raw == "write_file", let path { before[idx] = Self.peek(path) ?? "" }
+                if ["edit_file", "write_file", "replace_file_content", "multi_replace_file_content"].contains(raw), let path { before[idx] = Self.peek(path) ?? "" }
                 return [toolUse(id, idx, msgID, raw, params, path, done: false)]
             }
             guard state == "DONE" || state == "ERROR" else { return [] }
@@ -243,8 +247,8 @@ final class AgyBridge {
             let err = (info["error"] as? [String: Any])?["message"] as? String
             var content = info["output"] as? String ?? ""
             if raw == "run_command" { content = Self.commandOutput(content) }
-            if raw == "read_file", err == nil, let path {
-                // PDF 不是純文字，peek 讀不出來（卡片只剩「完成」）：另外抽每頁的文字給畫面看
+            // read_file：工具沒回內容時才自己補（PDF 要另外抽文字，peek 讀不出來）；工具有回的（只讀某幾行）照它的，不拿整份檔案蓋掉
+            if raw == "read_file", err == nil, content.isEmpty, let path {
                 if path.lowercased().hasSuffix(".pdf") { if let t = Self.pdfText(path) { content = t } }
                 else if let c = Self.peek(path) { content = c }
             }
@@ -294,7 +298,7 @@ final class AgyBridge {
             name = "Read"; input = ["file_path": path ?? ""]
         case "write_file", "write_to_file":
             name = "Write"; input = ["file_path": path ?? ""]
-            if done, let path { input["content"] = Self.peek(path) ?? "" }
+            if done { input["content"] = p["Content"] as? String ?? p["content"] as? String ?? p["CodeContent"] as? String ?? (path.flatMap { Self.peek($0) }) ?? "" }
         case "edit_file", "replace_file_content", "multi_replace_file_content":
             name = "Edit"; input = ["file_path": path ?? ""]
             if done, let path { input["old_string"] = before[idx] ?? ""; input["new_string"] = Self.peek(path) ?? "" }
@@ -303,9 +307,9 @@ final class AgyBridge {
         case "grep_search":
             name = "Grep"; input = ["pattern": p["Query"] as? String ?? "", "path": p["SearchPath"] as? String ?? ""]
         case "search_web":
-            name = "WebSearch"; input = ["query": p["Query"] as? String ?? ""]
+            name = "WebSearch"; input = ["query": p["query"] as? String ?? p["Query"] as? String ?? ""]
         case "read_url_content":
-            name = "WebFetch"; input = ["url": p["Url"] as? String ?? ""]
+            name = "WebFetch"; input = ["url": p["url"] as? String ?? p["Url"] as? String ?? ""]
         default: break
         }
         return ["type": "assistant", "message": ["id": msgID, "role": "assistant", "content": [["type": "tool_use", "id": id, "name": name, "input": input]]]]
@@ -355,12 +359,6 @@ final class AgyBridge {
         var obj = obj
         obj["timestamp"] = obj["timestamp"] ?? Transcripts.stamp()   // 跟 Claude 紀錄同欄位：md 和交接看得到時間
         guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        let fm = FileManager.default
-        try? fm.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !fm.fileExists(atPath: transcriptURL.path) { fm.createFile(atPath: transcriptURL.path, contents: nil) }
-        guard let h = try? FileHandle(forWritingTo: transcriptURL) else { return }
-        defer { try? h.close() }
-        _ = try? h.seekToEnd()
-        try? h.write(contentsOf: d + Data([0x0a]))
+        Transcripts.append(d + Data([0x0a]), to: transcriptURL)      // 寫不進去會記進事件紀錄（Transcripts.append）
     }
 }

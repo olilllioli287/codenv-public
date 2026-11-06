@@ -9,15 +9,19 @@ import FoundationModels
 enum NextGuess {
     /// 每個聊天室一個：記下這輪使用者打的字和助手說的話，這輪結束就去猜
     final class Tracker {
-        private var user = ""
+        private var user = ""                     // 最近送出的一則（沒有回送事件的橋接，就配這個）
+        private var pending: [String: String] = [:]   // uuid → 送出的字：等「真的讀進去」的回送事件再配上這一輪
+        private var current: String?              // 正在做的這一輪，是哪一則讀進去的
         private var texts: [String] = []
         private var cancel: (() -> Void)?        // 還沒猜完的那個：新的一輪開始就停掉
         private var round = 0                     // 每輪加一：舊的猜測晚到就丟掉
 
         /// 使用者送出一則（新的一輪開始）：之前還沒猜完的作廢
-        func sent(_ text: String) {
+        func sent(_ text: String, uuid: String? = nil) {
             user = text
-            texts = []
+            if let uuid { if pending.count >= 20 { pending.removeAll() }; pending[uuid.lowercased()] = text }
+            // 上一輪還在做（current 有值）就別動 texts：它的回覆和 result 還會陸續來，不能拿新訊息去配舊回覆
+            if current == nil { texts = [] }
             round += 1
             cancel?()
             cancel = nil
@@ -27,12 +31,20 @@ enum NextGuess {
         /// flash：這是 Gemini 3.8 Flash 的聊天室，用 Flash 自己猜
         func saw(_ obj: [String: Any], flash: Bool, done: @escaping (String) -> Void) {
             switch obj["type"] as? String {
+            case "user":
+                // 回送：這則訊息真的被讀進去了，新的一輪從這裡開始
+                if obj["isReplay"] as? Bool == true, let u = (obj["uuid"] as? String)?.lowercased(), let t = pending.removeValue(forKey: u) {
+                    current = t
+                    texts = []
+                }
             case "assistant":
                 let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
                 for b in content where b["type"] as? String == "text" {
                     if let t = b["text"] as? String, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { texts.append(t) }
                 }
             case "result":
+                let user = current ?? self.user      // 有回送就用讀進去的那一則，沒有回送的橋接照舊配最近送的
+                current = nil
                 guard obj["is_error"] as? Bool != true, !texts.isEmpty else { texts = []; return }
                 let reply = texts.joined(separator: "\n\n")
                 texts = []

@@ -12,6 +12,18 @@ struct ConvGroup: Codable, Identifiable, Hashable {
     var parentID: UUID? = nil
 }
 
+/// 舊存檔沒有的欄位（expanded、archiveOpen、parentID）缺了就用預設值：Swift 自動產生的解碼不吃屬性的預設值，缺一個鍵整份 state.json 就讀不進來
+extension ConvGroup {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        expanded = try c.decodeIfPresent(Bool.self, forKey: .expanded) ?? true
+        archiveOpen = try c.decodeIfPresent(Bool.self, forKey: .archiveOpen) ?? false
+        parentID = try c.decodeIfPresent(UUID.self, forKey: .parentID)
+    }
+}
+
 extension Store {
     static let otherGroupName = "其他"
 
@@ -26,7 +38,11 @@ extension Store {
     }
 
     /// 沒歸組的對話、資料夾放哪一組（「其他」；沒有就最後一組）
-    var fallbackGroupID: UUID? { groups.first { $0.name == Store.otherGroupName }?.id ?? groups.last?.id }
+    /// 不挑「程式碼學習專區」：它一定排在最後（ensureCodeLabGroup 用 append），挑到它的話沒分組的對話和資料夾全被當成學習專區的——首頁不列、打開還會跑到學習專區那一區
+    var fallbackGroupID: UUID? {
+        groups.first { $0.name == Store.otherGroupName }?.id
+            ?? groups.last { $0.name != Store.codeLabGroupName }?.id ?? groups.last?.id
+    }
 
     func conversations(inGroup g: UUID) -> [Conversation] {
         conversations.filter { groupOf($0) == g && !$0.isGadget }.sorted(by: orderedBefore)
@@ -47,10 +63,11 @@ extension Store {
         let defaults = projects.filter { $0.groupID == g }
         let envs = ClaudeEnvs.load()
         if let p = envs.first(where: { e in defaults.contains { $0.path == e } }) { return p }
-        if let p = projects.first(where: { ($0.path as NSString).lastPathComponent == x.name }) { return p.path }
+        if let p = projects.first(where: { $0.groupID == g && ($0.path as NSString).lastPathComponent == x.name }) { return p.path }
         if let p = defaults.first { return p.path }
         guard let parent = x.parentID, let up = folder(ofGroup: parent, seen: seen.union([g])) else { return nil }
         var d: ObjCBool = false
+        guard !x.name.contains("/"), x.name != "..", x.name != "." else { return up }    // 組名當子資料夾用：含 / 或 .. 的會跑到上一層以外
         let sub = (up as NSString).appendingPathComponent(x.name)
         return FileManager.default.fileExists(atPath: sub, isDirectory: &d) && d.boolValue ? sub : up
     }
@@ -176,13 +193,15 @@ extension Store {
     }
 
     func removeGroup(_ g: UUID) {
+        let fallback = group(g)?.parentID ?? groups.first { $0.id != g && $0.name == Store.otherGroupName }?.id
+            ?? groups.first { $0.id != g && $0.name != Store.codeLabGroupName }?.id ?? groups.first { $0.id != g }?.id   // 學習專區最後才挑（理由同 fallbackGroupID）
         // 底下的子組往上提一層（不跟著刪）
         let up = group(g)?.parentID
         for i in groups.indices where groups[i].parentID == g { groups[i].parentID = up }
         groups.removeAll { $0.id == g }
         // 這組的對話、資料夾回到上一層的組（最上層的組就回「其他」）
-        for i in conversations.indices where conversations[i].groupID == g { conversations[i].groupID = up }
-        for i in projects.indices where projects[i].groupID == g { projects[i].groupID = up }
+        for i in conversations.indices where conversations[i].groupID == g { conversations[i].groupID = fallback }
+        for i in projects.indices where projects[i].groupID == g { projects[i].groupID = fallback }
     }
 
     // MARK: 分類檔：放在資料夾裡的 classification.json，啟動時套用一次（套完改名成 .applied）
@@ -200,7 +219,12 @@ extension Store {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         let c: Classification
         do { c = try JSONDecoder().decode(Classification.self, from: try Data(contentsOf: url)) }
-        catch { NSLog("AI 工作台：分類檔讀不了：%@", "\(error)"); return }
+        catch {
+            let ns = error as NSError
+            NSLog("AI 工作台：分類檔讀不了：%@", "\(error)")
+            EventLog.log(L("檔案"), L("classification.json 無法讀取（\(ns.domain) \(ns.code)）"))
+            return
+        }
         for n in c.groups { addGroup(named: n) }
         if let ids = c.importSessions {
             let want = Set(ids.compactMap { UUID(uuidString: $0) })
@@ -225,7 +249,8 @@ extension Store {
         // 套用過就改名（加上時間，避免跟上次的撞名而改名失敗、每次啟動都重套一次）
         let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"
         let done = dir.appendingPathComponent("classification-\(f.string(from: Date())).json.applied")
-        do { try FileManager.default.moveItem(at: url, to: done) } catch { try? FileManager.default.removeItem(at: url) }
-        saveNow()
+        // 先確定套用的結果存好，才把分類檔收起來；存不了就留著原檔，下次啟動再套一次（不要為了「不重套」把檔案刪掉）
+        guard saveNow() else { return }
+        do { try FileManager.default.moveItem(at: url, to: done) } catch { try? FileManager.default.removeItem(at: url) }   // 結果已存好，改名不成才刪，免得每次啟動都重套
     }
 }

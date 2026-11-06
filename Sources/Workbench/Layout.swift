@@ -115,6 +115,30 @@ struct WindowLayout: Codable, Identifiable, Equatable {
     var zoomed = false        // Ctrl+A z：只顯示目前那格
     /// 使用者自己取過名字；沒取的話名字跟著目前那格的對話標題
     var renamed = false
+    /// 拉出去變成獨立視窗了（使用者 10/29：⌘ Q 再回來不用再移動位置，所以存檔、重開還原）。獨立的 Window 一律排在 Session 的 windows 最後面，主視窗的分頁用前面那幾個，位置編號不會錯
+    var detached = false
+    /// 獨立視窗的位置和大小：x、y、寬、高，x、y 是相對它所在螢幕左下角的位移（螢幕排列變了也不會跑掉）；detachedScreen＝那個螢幕的名字（NSScreen.localizedName）
+    var detachedFrame: [Double]? = nil
+    var detachedScreen: String? = nil
+    /// 那個螢幕的 frame 原點（x、y）：兩台同型號螢幕名字一樣，還原時先找名字和原點都對得上的
+    var detachedScreenOrigin: [Double]? = nil
+}
+
+/// 舊存檔沒有 zoomed、renamed 這些後來加的欄位：缺了用預設值（自動產生的解碼不吃屬性預設值）
+extension WindowLayout {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        root = try c.decodeIfPresent(PaneNode.self, forKey: .root)
+        focused = try c.decodeIfPresent(UUID.self, forKey: .focused)
+        zoomed = try c.decodeIfPresent(Bool.self, forKey: .zoomed) ?? false
+        renamed = try c.decodeIfPresent(Bool.self, forKey: .renamed) ?? false
+        detached = try c.decodeIfPresent(Bool.self, forKey: .detached) ?? false
+        detachedFrame = try c.decodeIfPresent([Double].self, forKey: .detachedFrame)
+        detachedScreen = try c.decodeIfPresent(String.self, forKey: .detachedScreen)
+        detachedScreenOrigin = try c.decodeIfPresent([Double].self, forKey: .detachedScreenOrigin)
+    }
 }
 
 struct SessionLayout: Codable, Identifiable, Equatable {
@@ -129,7 +153,20 @@ struct SessionLayout: Codable, Identifiable, Equatable {
 extension Store {
     // MARK: 目前的 Session／Window
 
-    var sessionIndex: Int? { sessions.firstIndex { $0.id == currentSession && inArea($0) } ?? sessions.firstIndex(where: inArea) }
+    var sessionIndex: Int? {
+        // 範圍（scope）：獨立視窗拿到鍵盤焦點時，所有「改目前的 Window」的操作（切格、拖曳、關格、比例…）都落在它身上，不動主視窗現在看的那個
+        // 指著的 Window 已經不在（獨立視窗的版面被搬空、刪掉）：回 nil，不要退回主視窗那個——不然獨立視窗會畫主視窗的格子，把主視窗的聊天畫面搶走
+        if let sc = scope { return sessions.firstIndex(where: { $0.windows.contains { $0.id == sc } }) }
+        return sessions.firstIndex { $0.id == currentSession && inArea($0) } ?? sessions.firstIndex(where: inArea)
+    }
+
+    /// 在某個 Window 的範圍裡做事（nil＝主視窗那邊）：做完還原
+    func scoped<T>(_ id: UUID?, _ f: () -> T) -> T {
+        let old = scope
+        scope = id
+        defer { scope = old }
+        return f()
+    }
 
     // MARK: 兩區（首頁／程式碼學習專區）各一套 Session
 
@@ -150,6 +187,7 @@ extension Store {
     /// 側欄圖示列換區：上面的 Session／Window 換成那一區的那一套（回到上次看的那個）
     func switchArea(_ a: String) {
         guard a != area else { return }
+        scope = nil      // 換區是主視窗的事：不要讓後面的 editWindow 落在獨立視窗身上
         area = a
         ensureAreaSession()
         if let last = appDefaults.string(forKey: "areaSession." + a).flatMap(UUID.init(uuidString:)),
@@ -172,7 +210,82 @@ extension Store {
     var windowIndex: Int? {
         guard let si = sessionIndex else { return nil }
         let s = sessions[si]
-        return s.windows.firstIndex { $0.id == s.current } ?? (s.windows.isEmpty ? nil : 0)
+        if let sc = scope, let wi = s.windows.firstIndex(where: { $0.id == sc }) { return wi }
+        // 主視窗：獨立視窗不算（它們排在最後面）
+        let shown = s.windows.firstIndex { $0.id == s.current && !$0.detached }
+        return shown ?? s.windows.firstIndex { !$0.detached } ?? (s.windows.isEmpty ? nil : 0)
+    }
+
+    /// 加一個 Window 到 Session 的最後（獨立視窗的 Window 一律排在最後面，新的插在它們前面，主視窗分頁的位置編號才不會錯）
+    func appendWindow(_ w: WindowLayout, at si: Int) {
+        sessions[si].windows.insert(w, at: sessions[si].windows.firstIndex { $0.detached } ?? sessions[si].windows.count)
+    }
+
+    /// 這個 Session 主視窗分頁列上的 Window 數（沒拉出去的）
+    func visibleWindowCount(_ si: Int) -> Int { sessions[si].windows.filter { !$0.detached }.count }
+
+    /// 不變量：獨立視窗的 Window 一律排在 Session 最後面（主視窗分頁列的編號才不會錯）。穩定排序，一般 Window 彼此的順序不變
+    func partitionDetached(_ si: Int) {
+        let w = sessions[si].windows
+        let sorted = w.filter { !$0.detached } + w.filter { $0.detached }
+        if sorted.map(\.id) != w.map(\.id) { sessions[si].windows = sorted }
+    }
+
+    /// 主視窗分頁列上一個可見的 Window 都沒有了（最後一個被關掉、刪掉、搬走）：在最前面補一個空的（獨立視窗不算主視窗的分頁）。回傳補的那個的 id
+    @discardableResult
+    func ensureVisibleWindow(_ si: Int) -> UUID? {
+        guard visibleWindowCount(si) == 0 else { return nil }
+        let p = WindowLayout(name: "1")
+        sessions[si].windows.insert(p, at: 0)
+        return p.id
+    }
+
+    /// 主視窗的 current 要指向可見的 Window：不是（被關掉了、或指到獨立視窗）就挑離 near 最近的那個可見的
+    func normalizeCurrent(_ si: Int, near wi: Int) {
+        let vis = sessions[si].windows.filter { !$0.detached }
+        guard !vis.isEmpty else { sessions[si].current = nil; return }
+        if let c = sessions[si].current, vis.contains(where: { $0.id == c }) { return }
+        sessions[si].current = vis[min(max(0, wi), vis.count - 1)].id
+    }
+
+    /// 切到某個 Window：一般的 Window 變成主視窗的 current；在獨立視窗裡的不動主視窗（不然主視窗會跳回第一頁），改成把那個獨立視窗叫到最前面
+    func makeCurrent(_ si: Int, _ wi: Int) {
+        let w = sessions[si].windows[wi]
+        if w.detached {
+            scope = w.id
+            onRaiseWindow?(w.id)
+        } else {
+            currentSession = sessions[si].id
+            sessions[si].current = w.id
+        }
+        syncSelection()
+    }
+
+    /// Window 拉出去變成獨立視窗：回傳 true＝成功（至少要留一個在主視窗的分頁列上）
+    @discardableResult
+    func detachWindow(_ id: UUID) -> Bool {
+        guard let si = sessions.firstIndex(where: { $0.windows.contains { $0.id == id } }),
+              let wi = sessions[si].windows.firstIndex(where: { $0.id == id }), !sessions[si].windows[wi].detached,
+              visibleWindowCount(si) > 1 else { return false }
+        sessions[si].windows[wi].detached = true
+        sessions[si].windows.append(sessions[si].windows.remove(at: wi))      // 獨立的排最後面
+        if sessions[si].current == id { sessions[si].current = sessions[si].windows.first { !$0.detached }?.id }
+        syncSelection()
+        return true
+    }
+
+    /// 獨立視窗關掉：回到主視窗的分頁列（排在可見的最後一個、變成目前的 Window）
+    func attachWindow(_ id: UUID) {
+        guard let si = sessions.firstIndex(where: { $0.windows.contains { $0.id == id } }),
+              let wi = sessions[si].windows.firstIndex(where: { $0.id == id }), sessions[si].windows[wi].detached else { return }
+        var w = sessions[si].windows.remove(at: wi)
+        w.detached = false
+        w.detachedFrame = nil; w.detachedScreen = nil; w.detachedScreenOrigin = nil
+        let at = sessions[si].windows.firstIndex { $0.detached } ?? sessions[si].windows.count
+        sessions[si].windows.insert(w, at: at)
+        sessions[si].current = id
+        if scope == id { scope = nil }
+        syncSelection()
     }
 
     var currentWindow: WindowLayout? {
@@ -219,6 +332,10 @@ extension Store {
                 sessions[si].windows[wi] = w
             }
             if sessions[si].windows.isEmpty { sessions[si].windows = [WindowLayout(name: "1")] }
+            // 還原獨立視窗之後：獨立的排最後、至少留一個可見的 Window、主視窗的 current 要是可見的
+            partitionDetached(si)
+            ensureVisibleWindow(si)
+            normalizeCurrent(si, near: 0)
         }
         ensureAreaSession()
         // 存檔裡記的 Session 不在目前這一區（例：上次關 App 時側欄停在 codelab，可是記的是首頁的 Session）：對齊畫面上的那個
@@ -237,26 +354,56 @@ extension Store {
     // MARK: 打開對話
 
     /// 打開一段對話：已經擺在某格就跳過去；不然放進目前那格（換掉原本的對話）
-    func show(_ id: UUID) {
+    func show(_ id: UUID, replaceFocused: Bool = false) {
+        if windowSelected { windowSelected = false }
         // 這段對話屬於哪一區（codelab 的對話放 codelab 那套 Session，其他放首頁那套）
         let want = conversation(id).map(wantsCodeLab) == true ? Store.codeLabArea : "home"
         // 擺在另一區、可是它本來屬於這一區（例：codelab 的對話以前開在首頁的 Window 裡）：從那邊拿下來，放到這一區
         if let (si, _) = locate(id), sessions[si].area != areaKey, want == area { unplace(id) }
         if let (si, wi) = locate(id) {
-            currentSession = sessions[si].id
-            sessions[si].current = sessions[si].windows[wi].id
             sessions[si].windows[wi].focused = id
-            syncSelection()
+            makeCurrent(si, wi)
             return
         }
         // 還沒擺著：放進它那一區的 Session
         if want != area { switchArea(want) }
+        // 使用者 10/29：所有 Window 裡都沒有這個聊天室，就開在新的 Window（目前的 Window 是空的就開在那裡），不再換掉紫框那格；
+        // 它在掛件框裡，框裡還沒擺出來的聊天室和掛件一起開。瀏覽器、終端機、草稿、codelab 那一區照舊
+        if !replaceFocused, want == "home", let c = conversation(id), Store.isChat(c) { openUnplaced(c); return }
         editWindow { w in
             // 焦點那格要真的在版面上；不在（舊資料）就在旁邊切開，不要把對話弄丟
             if let f = w.focused, let root = w.root, root.contains(f) { w.root = root.replacing(f, with: .leaf(id)) }
             else if let root = w.root { w.root = .split(vertical: false, ratio: 0.5, a: root, b: .leaf(id)) }
             else { w.root = .leaf(id) }
             w.focused = id
+        }
+    }
+
+    /// 還沒擺在任何 Window 的聊天室：開在空的目前 Window、不然新開一個 Window；掛件框裡還沒擺出來的聊天室左右平分一起開，框的掛件（沒擺在別處的）排最右邊，焦點在點的那一格。
+    /// 框裡已經擺在別的 Window 的不動
+    private func openUnplaced(_ c: Conversation) {
+        scope = nil      // 開在主視窗：scope 還指著獨立視窗的話，後面的 editWindow 會把獨立視窗的版面整個蓋掉
+        // 「空」的 Window：沒有任何格子，或每一格都是空格子（⌘ T 開出來的就是一格空格子）：聊天室開在這裡、把空格子換掉
+        let blank = currentWindow?.root.map { $0.leaves.allSatisfy { isEmptySlot($0) } } ?? true
+        if !blank { newWindow(with: nil) }
+        else { for slot in currentWindow?.root?.leaves ?? [] { Store.emptySlots.remove(slot) } }
+        var members = [c.id]
+        if let b = c.bundle {
+            members = conversations.filter { $0.bundle == b && Store.isChat($0) && locate($0.id) == nil }.sorted(by: orderedBefore).map(\.id)
+            if !members.contains(c.id) { members.insert(c.id, at: 0) }
+        }
+        var root: PaneNode = .leaf(members[0])
+        for (i, m) in members.enumerated().dropFirst() {
+            root = .split(vertical: false, ratio: Double(i) / Double(i + 1), a: root, b: .leaf(m))     // 一格一格接在右邊，寬度平分
+        }
+        editWindow { w in
+            w.root = root
+            w.focused = c.id
+            w.zoomed = false
+        }
+        if let b = c.bundle {
+            for g in gadgets(of: b) where locate(g.id) == nil { appendRight(g.id) }
+            editWindow { $0.focused = c.id }      // appendRight 會把焦點給掛件：還給使用者點的那格
         }
     }
 
@@ -281,7 +428,14 @@ extension Store {
     func split(vertical: Bool, with conv: UUID) {
         unplace(conv)   // 已經在別格：先從那裡拿掉（連那個 Window 的焦點一起換好）
         editWindow { w in
-            guard let f = w.focused, let root = w.root else { w.root = .leaf(conv); w.focused = conv; return }
+            guard let root = w.root else { w.root = .leaf(conv); w.focused = conv; return }
+            guard let f = w.focused, root.contains(f) else {
+                let anchor = root.leaves.first!       // 焦點不在版面上：接在第一格旁邊，其他格原樣留著
+                w.root = root.replacing(anchor, with: .split(vertical: vertical, ratio: 0.5, a: .leaf(anchor), b: .leaf(conv)))
+                w.focused = conv
+                w.zoomed = false
+                return
+            }
             w.root = root.replacing(f, with: .split(vertical: vertical, ratio: 0.5, a: .leaf(f), b: .leaf(conv)))
             w.focused = conv
             w.zoomed = false
@@ -319,6 +473,7 @@ extension Store {
 
     /// 換到旁邊那格：dx/dy 是方向（-1、0、1）
     func focus(dx: Int, dy: Int) {
+        if windowSelected { windowSelected = false }
         editWindow { w in
             guard let f = w.focused, let root = w.root else { return }
             let rects = root.rects()
@@ -341,6 +496,17 @@ extension Store {
         }
     }
 
+    /// ⌘ [ ／ ⌘ ]（學 Ghostty）：照版面順序換到上一格／下一格，到頭繞回來
+    func focusCycle(_ step: Int) {
+        if windowSelected { windowSelected = false }
+        editWindow { w in
+            guard let leaves = w.root?.leaves, leaves.count > 1 else { return }
+            let i = w.focused.flatMap { leaves.firstIndex(of: $0) } ?? 0
+            w.focused = leaves[((i + step) % leaves.count + leaves.count) % leaves.count]
+            w.zoomed = false
+        }
+    }
+
     /// Ctrl+A Ctrl+h/j/k/l：把目前那格的邊往那個方向推
     func resize(dx: Int, dy: Int) {
         editWindow { w in
@@ -350,17 +516,19 @@ extension Store {
     }
 
     func setFocus(_ id: UUID) {
+        if windowSelected { windowSelected = false }
         editWindow { w in if w.root?.contains(id) == true { w.focused = id } }
     }
 
     // MARK: Window
 
     func newWindow(with conv: UUID?) {
+        scope = nil      // 新 Window 開在主視窗的分頁列
         guard let si = sessionIndex else { return }
         if let conv { unplace(conv) }
-        var w = WindowLayout(name: "\(sessions[si].windows.count + 1)")
+        var w = WindowLayout(name: "\(visibleWindowCount(si) + 1)")
         if let conv { w.root = .leaf(conv); w.focused = conv }
-        sessions[si].windows.append(w)
+        appendWindow(w, at: si)
         sessions[si].current = w.id
         syncSelection()
     }
@@ -376,9 +544,12 @@ extension Store {
 
     func closeWindow() {
         guard let si = sessionIndex, let wi = windowIndex else { return }
-        let closed = sessions[si].windows.remove(at: wi)
-        var placeholder: UUID?
-        if sessions[si].windows.isEmpty { let p = WindowLayout(name: "1"); placeholder = p.id; sessions[si].windows = [p] }
+        var closed = sessions[si].windows.remove(at: wi)
+        // 存進 closed 的不再是獨立的（獨立視窗已經跟著關了）：不然 ⌘ ⇧ T 找回來會變成一個看不見的幽靈 Window
+        closed.detached = false
+        if scope == closed.id { scope = nil }
+        // 主視窗分頁列沒有可見的 Window 了（獨立視窗不算）：補一個空的
+        let placeholder = ensureVisibleWindow(si)
         if closed.root != nil {   // 空的 Window 不記：找回一個空白的沒用
             // 同一段聊天室只記最後一份（側欄點它要找回的是最近那次關掉的版面）：先前記的 Window，裡面的聊天室全都在這次這份裡，就丟掉；
             // 只重疊一部分的留著（不然另一段聊天室的版面就找不回來；還原時已經在別處的格子會略過）。掛件和空格子不列入比對
@@ -392,7 +563,7 @@ extension Store {
             Store.closed.append(.window(session: sessions[si].id, index: wi, window: closed, placeholder: placeholder))
             if Store.closed.count > 20 { Store.closed.removeFirst() }
         }
-        sessions[si].current = sessions[si].windows[min(wi, sessions[si].windows.count - 1)].id
+        normalizeCurrent(si, near: wi)
         syncSelection()
     }
 
@@ -419,7 +590,30 @@ extension Store {
         for (i, item) in Store.closed.enumerated().reversed() {
             guard case .window(let session, let index, let window, let placeholder) = item, window.root?.contains(conv) == true else { continue }
             Store.closed.remove(at: i)
-            if restoreWindow(session: session, index: index, window: window, placeholder: placeholder, focus: conv) { return true }
+            // 記下點擊前的主視窗；還原成功後，若它是同一 Session 的空 Window，就由找回的 Window 接替原位。
+            let current = currentWindow
+            let currentSessionID = sessionIndex.map { sessions[$0].id }
+            let currentIsBlank = current?.root.map { $0.leaves.allSatisfy { isEmptySlot($0) } } ?? true
+            let currentSlots = current?.root?.leaves ?? []
+            if restoreWindow(session: session, index: index, window: window, placeholder: placeholder, focus: conv) {
+                if let current, currentIsBlank, currentSessionID == session,
+                   let si = sessions.firstIndex(where: { $0.id == session }),
+                   let wi = sessions[si].windows.firstIndex(where: { $0.id == current.id }),
+                   !sessions[si].windows[wi].detached {
+                    // 移除空視窗及其空格子；還原的 Window 插回原位置並成為目前視窗。
+                    if let ri = sessions[si].windows.firstIndex(where: { $0.id == window.id }) {
+                        for slot in currentSlots { Store.emptySlots.remove(slot) }
+                        let restored = sessions[si].windows[ri]
+                        sessions[si].windows[wi] = restored          // 直接蓋掉空 Window 那一格，位置不跑
+                        sessions[si].windows.remove(at: ri)
+                        currentSession = session
+                        sessions[si].current = restored.id
+                        syncSelection()
+                    }
+                }
+                return true
+            }
+            Store.closed.insert(item, at: min(i, Store.closed.count))      // 還原不了（原本的 Session 已經關了）：紀錄放回去，不能白白消失
             return false
         }
         return false
@@ -429,16 +623,18 @@ extension Store {
     private func restoreWindow(session: UUID, index: Int, window: WindowLayout, placeholder: UUID?, focus: UUID? = nil) -> Bool {
         guard let si = sessions.firstIndex(where: { $0.id == session }) else { return false }
         var w = window
+        w.detached = false
         let alive = Set(conversations.map(\.id)).union(Store.emptySlots)
         for id in w.root?.leaves ?? [] where !alive.contains(id) || locate(id) != nil { w.root = w.root?.removing(id) }
         if w.root == nil { return false }   // 裡面的對話都已經不在了：不放一個空 Window 回去，讓 ⌘ ⇧ T 繼續找更早的
         if let f = focus, w.root?.contains(f) == true { w.focused = f }   // 側欄點的那段：紫框給它
         else if let f = w.focused, !(w.root?.contains(f) ?? false) { w.focused = w.root?.leaves.first }
         if w.root == nil { w.zoomed = false }
-        if let p = placeholder, sessions[si].windows.count == 1, sessions[si].windows[0].id == p, sessions[si].windows[0].root == nil {
-            sessions[si].windows = []
+        if let p = placeholder, let pi = sessions[si].windows.firstIndex(where: { $0.id == p }), sessions[si].windows[pi].root == nil, visibleWindowCount(si) == 1 {
+            sessions[si].windows.remove(at: pi)
         }
-        sessions[si].windows.insert(w, at: min(index, sessions[si].windows.count))
+        // 插在獨立視窗前面（獨立的一律排最後）
+        sessions[si].windows.insert(w, at: min(index, sessions[si].windows.firstIndex { $0.detached } ?? sessions[si].windows.count))
         currentSession = sessions[si].id
         sessions[si].current = w.id
         syncSelection()
@@ -456,35 +652,52 @@ extension Store {
                 let node: (PaneNode) -> PaneNode = { s in .split(vertical: p.vertical, ratio: p.ratio, a: p.first ? .leaf(pane) : s, b: p.first ? s : .leaf(pane)) }
                 if let r = cur.replacingSubtree(p.sibling, with: node(p.sibling)) { w.root = r }
                 else if let near = p.sibling.leaves.first(where: { cur.contains($0) }) { w.root = cur.replacing(near, with: node(.leaf(near))) }
-                else if let f = w.focused ?? cur.leaves.first { w.root = cur.replacing(f, with: .split(vertical: false, ratio: 0.5, a: .leaf(f), b: .leaf(pane))) }
-            } else if let f = w.focused ?? cur.leaves.first { w.root = cur.replacing(f, with: .split(vertical: false, ratio: 0.5, a: .leaf(f), b: .leaf(pane))) }
+                else if let f = (w.focused.flatMap { cur.contains($0) ? $0 : nil }) ?? cur.leaves.first { w.root = cur.replacing(f, with: .split(vertical: false, ratio: 0.5, a: .leaf(f), b: .leaf(pane))) }
+            } else if let f = (w.focused.flatMap { cur.contains($0) ? $0 : nil }) ?? cur.leaves.first { w.root = cur.replacing(f, with: .split(vertical: false, ratio: 0.5, a: .leaf(f), b: .leaf(pane))) }
         } else {
             w.root = .leaf(pane)
         }
+        guard w.root?.contains(pane) == true else { return false }
         w.focused = pane
         w.zoomed = false
         sessions[si].windows[wi] = w
-        currentSession = sessions[si].id
-        sessions[si].current = w.id
-        syncSelection()
+        makeCurrent(si, wi)
         return true
     }
 
     func selectWindow(at i: Int) {
-        guard let si = sessionIndex, sessions[si].windows.indices.contains(i) else { return }
+        // 分頁列和 Session 是主視窗的：獨立視窗在前景（scope 指著它）時按快捷鍵，也要照主視窗算，不然會切錯、關錯 Session。
+        // 只在這次操作裡切回主視窗範圍，做完還原（直接清掉 scope 的話，獨立視窗還在前景，之後的分割、關格會落到主視窗）
+        if scope != nil { scoped(nil) { selectWindow(at: i) }; return }
+        if windowSelected { windowSelected = false }
+        guard let si = sessionIndex, sessions[si].windows.indices.contains(i), !sessions[si].windows[i].detached else { return }   // 主視窗的分頁只有一般的 Window
         sessions[si].current = sessions[si].windows[i].id
         syncSelection()
     }
 
+    /// 點上方的 Window 分頁、或按 ⌘ 數字（使用者 10/26）：選取整個 Window；再點同一個 Window 一次＝回到原本那一格
+    /// （紫框那格 focused 在選取期間沒變；原本那格被關掉了，focused 已經由關格子時換到別格，直接用它）
+    func toggleWindowSelection(at i: Int) {
+        let again = windowSelected && windowIndex == i
+        selectWindow(at: i)
+        windowSelected = !again
+    }
+
     func selectWindow(offset: Int) {
-        guard let si = sessionIndex, let wi = windowIndex else { return }
-        let n = sessions[si].windows.count
-        selectWindow(at: ((wi + offset) % n + n) % n)
+        if scope != nil { scoped(nil) { selectWindow(offset: offset) }; return }
+        guard let si = sessionIndex else { return }
+        // 只在主視窗分頁列上的 Window 之間循環（獨立視窗不算）
+        let vis = sessions[si].windows.indices.filter { !sessions[si].windows[$0].detached }
+        let n = vis.count
+        guard n > 0 else { return }
+        let cur = windowIndex.flatMap { vis.firstIndex(of: $0) } ?? 0
+        selectWindow(at: vis[((cur + offset) % n + n) % n])
     }
 
     func renameWindow(_ name: String) {
         let t = name.trimmingCharacters(in: .whitespaces)
-        guard !t.isEmpty else { return }
+        // 清空＝改回預設名字（Window N），側欄的 Window 框跟著拿掉
+        guard !t.isEmpty else { if let wi = windowIndex { editWindow { $0.name = "\(wi + 1)"; $0.renamed = false } }; return }
         editWindow { $0.name = t; $0.renamed = true }
     }
 
@@ -504,6 +717,7 @@ extension Store {
     func selectSession(_ id: UUID) { currentSession = id; syncSelection() }
 
     func selectSession(offset: Int) {
+        if scope != nil { scoped(nil) { selectSession(offset: offset) }; return }
         let list = areaSessions
         guard let cur = currentSessionLayout, let i = list.firstIndex(where: { $0.id == cur.id }) else { return }
         let n = list.count
@@ -518,6 +732,7 @@ extension Store {
     }
 
     func closeSession() {
+        if scope != nil { scoped(nil) { closeSession() }; return }
         guard let si = sessionIndex else { return }
         let i = areaSessions.firstIndex { $0.id == sessions[si].id } ?? 0
         sessions.remove(at: si)

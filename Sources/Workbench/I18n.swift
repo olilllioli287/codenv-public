@@ -63,12 +63,14 @@ enum I18n {
         }
         guard !args.isEmpty else { return s }
         // %1$@ 這種有編號的先換，再依序換 %@
-        for (i, a) in args.enumerated() { s = s.replacingOccurrences(of: "%\(i + 1)$@", with: a) }
+        var indexed = [String: String]()
+        for (i, a) in args.enumerated() { indexed["%\(i + 1)$@"] = a }
         var out = "", rest = Substring(s), n = 0
-        while let r = rest.range(of: "%@") {
+        while let r = rest.range(of: #"%\d+\$@|%@"#, options: .regularExpression) {
             out += rest[..<r.lowerBound]
-            out += n < args.count ? args[n] : "%@"
-            n += 1
+            let token = String(rest[r])
+            if token == "%@" { out += n < args.count ? args[n] : token; n += 1 }
+            else { out += indexed[token] ?? token }
             rest = rest[r.upperBound...]
         }
         return out + rest

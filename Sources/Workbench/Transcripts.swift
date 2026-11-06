@@ -54,7 +54,7 @@ enum Transcripts {
             var text = parts.joined(separator: "\n")
             if type == "user" {
                 if text.hasPrefix("<local-command") || text.hasPrefix("<command-") { continue }
-                for m in ["\n\n" + ModelCarry.marker, "\n\n" + ModelCarry.codeLabMarker] { if let r = text.range(of: m) { text = String(text[..<r.lowerBound]) } }
+                for m in ["\n\n" + ModelCarry.marker, "\n\n" + ModelCarry.codeLabMarker, "\n\n" + ChatSession.nameMarker, "\n\n" + QuoteText.marker] { if let r = text.range(of: m) { text = String(text[..<r.lowerBound]) } }
             }
             text = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
@@ -87,13 +87,44 @@ enum Transcripts {
     }
 
     /// 檔名：聊天室名稱去掉不合法字元；跟別的聊天室同名就加短 id
+    private static var appendFailed = Set<URL>()
+    /// 非 Claude 聊天室記一行進自己的紀錄檔。建立資料夾、開檔、寫入任何一步失敗都記進事件紀錄（每個檔案只記一次）：
+    /// 以前整個吞掉，磁碟滿了或沒權限時對話照常顯示、重開卻少一大段，使用者和回報都看不出原因
+    static func append(_ line: Data, to url: URL) {
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !fm.fileExists(atPath: url.path), !fm.createFile(atPath: url.path, contents: nil) { throw CocoaError(.fileWriteUnknown) }
+            let h = try FileHandle(forWritingTo: url)
+            defer { try? h.close() }
+            _ = try h.seekToEnd()
+            try h.write(contentsOf: line)
+        } catch {
+            guard !appendFailed.contains(url) else { return }
+            appendFailed.insert(url)
+            let ns = error as NSError
+            EventLog.log(L("檔案"), L("對話紀錄寫入失敗（\(url.lastPathComponent)，\(ns.domain) \(ns.code)）：重開後這段對話可能不完整"))
+        }
+    }
+
     static func fileName(title: String, id: UUID, taken: Set<String>) -> String {
         var base = String(title.map { "/:\\\0".contains($0) ? "_" : $0 }).trimmingCharacters(in: .whitespacesAndNewlines)
         if base.hasPrefix(".") { base = "_" + base.dropFirst() }
         if base.isEmpty { base = "聊天室" }
-        base = String(base.prefix(80))
+        base = utf8Prefix(base, maxBytes: 180)
         let name = base + ".md"
-        return taken.contains(name) ? base + "-" + id.uuidString.prefix(6).lowercased() + ".md" : name
+        if !Set(taken.map { $0.lowercased() }).contains(name.lowercased()) { return name }      // macOS 預設不分大小寫：Report 和 report 是同一個檔
+        let suffix = "-" + id.uuidString.prefix(6).lowercased()
+        return utf8Prefix(base, maxBytes: 180 - suffix.utf8.count) + suffix + ".md"
+    }
+
+    private static func utf8Prefix(_ text: String, maxBytes: Int) -> String {
+        var out = ""
+        for c in text {
+            guard out.utf8.count + String(c).utf8.count <= maxBytes else { break }
+            out.append(c)
+        }
+        return out
     }
 
     private static func loadIndex() -> [String: String] {
@@ -112,11 +143,22 @@ enum Transcripts {
         let plain = fileName(title: title, id: id, taken: [])
         let withID = fileName(title: title, id: id, taken: [plain])
         if let old, old == plain || old == withID, !others.contains(old) { return dir.appendingPathComponent(old) }
-        let name = fileName(title: title, id: id, taken: others.union(existingNames(except: old)))
+        var taken = others.union(existingNames(except: old))
+        var name = fileName(title: title, id: id, taken: taken)
+        var collision = 1
+        while Set(taken.map { $0.lowercased() }).contains(name.lowercased()) {
+            let suffix = "-" + id.uuidString.prefix(6).lowercased() + "-\(collision)"
+            name = utf8Prefix(String(name.dropLast(3)), maxBytes: 180 - suffix.utf8.count) + suffix + ".md"   // 用已經淨化過的檔名（標題裡的 / 之類不能進檔名）
+            collision += 1
+        }
         let url = dir.appendingPathComponent(name)
+        var placed = false
         if let old, old != name {
             let from = dir.appendingPathComponent(old)
-            if FileManager.default.fileExists(atPath: from.path), !FileManager.default.fileExists(atPath: url.path) { try? FileManager.default.moveItem(at: from, to: url) }
+            if FileManager.default.fileExists(atPath: from.path) {
+                do { try FileManager.default.moveItem(at: from, to: url); placed = true }
+                catch { return from }
+            }
         }
         idx[key] = name
         return url
@@ -128,9 +170,9 @@ enum Transcripts {
     }
 
     /// 重寫一段聊天室的 md。files：這段對話用過的非 Claude 紀錄（目前這家排第一）＋各自的模型名稱
-    static func update(id: UUID, title: String, files: [(url: URL, model: String)], done: ((URL?) -> Void)? = nil) {
+    static func update(id: UUID, title: String, files: [(url: URL, model: String)], extra: [Turn] = [], done: ((URL?) -> Void)? = nil) {
         queue.async {
-            let all = files.flatMap { turns($0.url, model: $0.model) }
+            let all = files.flatMap { turns($0.url, model: $0.model) } + extra
             guard !all.isEmpty else { DispatchQueue.main.async { done?(nil) }; return }
             // 照時間排；沒時間的（加時間戳之前的舊紀錄）排最前面，順序不變
             let sorted = all.enumerated().sorted { a, b in
@@ -150,10 +192,20 @@ enum Transcripts {
             }
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             var idx = loadIndex()
+            let oldName = idx[id.uuidString]      // placeFile 會把索引改成新名字，舊名要在它之前取
             let url = placeFile(id: id, title: title, idx: &idx)
-            try? md.write(to: url, atomically: true, encoding: .utf8)
-            saveIndex(idx)
-            DispatchQueue.main.async { done?(url) }
+            do {
+                try md.write(to: url, atomically: true, encoding: .utf8)
+                saveIndex(idx)
+                DispatchQueue.main.async { done?(url) }
+            } catch {
+                if let oldName, oldName != url.lastPathComponent {
+                    try? FileManager.default.moveItem(at: url, to: dir.appendingPathComponent(oldName))
+                }
+                NSLog("紀錄寫入失敗：%@", url.path)
+                EventLog.log(L("檔案"), L("對話紀錄寫入失敗（對話 \(String(id.uuidString.prefix(8).uppercased()))）"))
+                DispatchQueue.main.async { done?(nil) }
+            }
         }
     }
 

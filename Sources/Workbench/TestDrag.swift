@@ -62,6 +62,8 @@ final class FakeFileDrag: NSObject, NSDraggingInfo {
                 log("updated(2) → \(target.draggingUpdated(d).rawValue)")
                 let ok = target.prepareForDragOperation(d)
                 log("prepare → \(ok)")
+                // 跟真的拖放一樣：prepare 說不收就不往下做
+                guard ok else { return }
                 log("perform → \(target.performDragOperation(d))")
                 target.concludeDragOperation(d)
             }

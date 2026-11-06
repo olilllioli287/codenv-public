@@ -2,8 +2,10 @@ import AppKit
 import UniformTypeIdentifiers
 
 /// 輸入框本體：原生文字框，輸入法（唯音）照系統的走。
-/// 按鍵照使用者在 Claude Code 的設定：Enter 換行；⌘ Enter 或 ctrl+x ctrl+s 送出；Esc 停止；⌃ C 停止並把剛送的字放回來。
+/// 按鍵照使用者在 Claude Code 的設定：Enter 換行；⌘ Enter 或 ctrl+x ctrl+s 送出；⌃ C 停止並把剛送的字放回來（Esc 不停止，只提示按 ⌃ C）。
 final class ChatTextView: NSTextView {
+    /// macOS 文字框內建的「補完單字」（F5、⌥ Esc）：只認英文單字、跳出一個小清單，在這裡沒用又讓人困惑（使用者 11/5：「點f5出現這個」）
+    override func complete(_ sender: Any?) {}
     var onSend: (() -> Void)?
     var onEscape: (() -> Void)?
     var onCycleMode: (() -> Void)?
@@ -29,16 +31,22 @@ final class ChatTextView: NSTextView {
     }
     @available(macOS 15.0, *)
     override func showContextMenuForSelection(_ sender: Any?) {
-        if let e = NSApp.currentEvent, e.type == .keyDown, e.keyCode == 36 || e.keyCode == 76 { onSendNow?(); return }
+        // 組字中（注音還沒選完）不算插話，也不彈右鍵選單：留給輸入法（agy Argon、Sonnet 11/6）
+        if hasMarkedText(), let e = NSApp.currentEvent, e.type == .keyDown, e.keyCode == 36 || e.keyCode == 76 { return }
+        if let e = NSApp.currentEvent, e.type == .keyDown,
+           e.modifierFlags.intersection([.command, .control, .option, .shift]) == .control,
+           e.keyCode == 36 || e.keyCode == 76 { onSendNow?(); return }
         super.showContextMenuForSelection(sender)
     }
 
     override func keyDown(with e: NSEvent) {
         // 組字中（選字、注音還沒送出）的按鍵一律交給輸入法
-        if hasMarkedText() { afterCtrlX = false; return super.keyDown(with: e) }
+        // ⌃ X 之後的下一個鍵才算 ⌃ X ⌃ S：一進來就取出旗標並重設，後面不管走哪個分支（方向鍵、刪除…）提早 return 都不會留著
+        let wasAfterCtrlX = afterCtrlX
+        afterCtrlX = false
+        if hasMarkedText() { return super.keyDown(with: e) }
         let mods = e.modifierFlags.intersection([.command, .control, .option, .shift])
-        let ch = e.charactersIgnoringModifiers?.lowercased() ?? ""
-        if onMenuKey?(e) == true { afterCtrlX = false; return }
+        if onMenuKey?(e) == true { return }
         // 空的輸入框按 /：直接打出 /（注音模式下這顆是 ㄥ，不用先切英文就能叫出指令選單）
         if e.keyCode == 44, mods.isEmpty, !e.modifierFlags.contains(.shift), string.isEmpty {
             insertText("/", replacementRange: selectedRange()); return
@@ -61,11 +69,9 @@ final class ChatTextView: NSTextView {
             setSelectedRange(NSRange(location: e.keyCode == 124 ? r.upperBound : r.location, length: 0))
             scrollRangeToVisible(selectedRange()); return
         }
-        if afterCtrlX {
-            afterCtrlX = false
-            if mods == .control && ch == "s" { onSend?(); return }
-        }
-        if mods == .control && ch == "x" { afterCtrlX = true; return }
+        // 用 keyCode 判斷（s＝1、x＝7）：注音模式下 charactersIgnoringModifiers 不一定是英文字母
+        if wasAfterCtrlX, mods == .control, e.keyCode == 1 { onSend?(); return }
+        if mods == .control && e.keyCode == 7 { afterCtrlX = true; return }
         // 用 keyCode（c 鍵）判斷：注音模式下 charactersIgnoringModifiers 不一定是 c
         if mods == .control && e.keyCode == 8 { onInterrupt?(); return }
         if (e.keyCode == 36 || e.keyCode == 76) && mods == .command { onSend?(); return }
@@ -386,19 +392,41 @@ private final class FileChip: NSView {
 }
 
 /// 下面那條輸入列：附件縮圖＋文字框＋送出／停止按鈕
+/// 輸入框的圓角框：點到裡面沒有按鈕的空白處（文字上下的留白、狀態列空的地方），交給 ChatInputBar 把游標放進文字框
+private final class InputBoxView: NSView {
+    var onClick: ((NSEvent) -> Void)?
+    override func mouseDown(with e: NSEvent) {
+        if let onClick { onClick(e) } else { super.mouseDown(with: e) }
+    }
+}
+
 final class ChatInputBar: NSView {
     let textView = ChatTextView()
-    /// 打到一半還沒送的字或圖（關掉格子時有這些就不要收掉 Claude，免得字不見）
-    var hasPendingInput: Bool { !textView.string.isEmpty || !attachments.isEmpty }
+    var hasQuotes = false { didSet { updateButton() } }
+    var onPendingInputChange: (() -> Void)?
+    var onDraftChange: (() -> Void)?
+    /// 草稿有內容就保留格子，引用也算。
+    var hasPendingInput: Bool { hasQuotes || !textView.string.isEmpty || !attachments.isEmpty }
     private let scroll = NSScrollView()
-    private let box = NSView()
+    private let box = InputBoxView()
     private let chips = NSStackView()
     /// 卡片多到放不下時左右捲（不要擠扁最後幾張）
     private let chipScroll = NSScrollView()
     /// 卡片那排和打字區中間的分隔線（兩端內縮，不碰外框）
     private let chipDivider = NSView()
+    /// 最下面那排（上傳檔案、權限模式、模型、送出）上面的分隔線：樣式跟 chipDivider 一樣（使用者 10/29）
+    private let statusDivider = NSView()
+    /// 「上傳檔案」：開檔案面板（可縮放、可移動，不是掛在視窗上的 sheet），選好的當成拖進來的檔案
+    private let uploadButton = BlueCircleButton()
+    /// 橘色收納鈕（使用者 10/29）：在藍色資料夾鈕左邊，樣式一樣；按下去由 ChatPane 給選單（瀏覽器格的比對、回報、匯出）
+    let toolsButton = BlueCircleButton()
+    var onToolsButton: ((NSView) -> Void)?
     /// 有卡片的檔案（拖進來或貼上的路徑）；文字裡的路徑被刪掉，卡片也跟著拿掉
     private var files: [URL] = []
+    var draftFilePaths: [String] {
+        let present = Set(textView.tokenRanges().map { (textView.string as NSString).substring(with: $0) })
+        return files.filter { present.contains(TerminalPane.shellEscape($0.path)) }.map(\.path)
+    }
     private var chipFG: NSColor = .labelColor
     private var chipAccent: NSColor = .controlAccentColor
     private let sendButton = NSButton()
@@ -410,13 +438,34 @@ final class ChatInputBar: NSView {
     var onCycleMode: (() -> Void)?
     /// no：這則訊息裡的第幾張圖，文字裡用 [Image #no] 標出位置（跟 Claude Code 一樣）
     private var attachments: [(data: Data, mediaType: String, image: NSImage, no: Int, edited: Bool)] = []
+    var draftImages: [DraftPersistence.Image] {
+        attachments.map { DraftPersistence.Image(data: $0.data, mediaType: $0.mediaType, no: $0.no, edited: $0.edited) }
+    }
     private var nextImageNo = 1
     static func imageToken(_ n: Int) -> String { "[Image #\(n)]" }
-    var onSend: ((String, [(data: Data, mediaType: String)], Bool) -> Void)?   // 最後一個：⌃ Enter 馬上插話
+    var onSend: ((String, [(data: Data, mediaType: String)], Bool) -> Bool)?   // 最後一個：⌃ Enter 馬上插話
     /// 輸入框是空的按 ⌃ Enter：排隊中的訊息全部馬上插話
     var onSendQueuedNow: (() -> Void)?
     var onStop: (() -> Void)?
     var onBlur: (() -> Void)?
+    // ! 指令（Bang.swift）：開頭是 ! 就是指令模式（框線橘色），Enter 不送給模型、交給 onBang 執行；回傳 false＝沒執行（例如上一個還在跑），字留著
+    var onBang: ((String) -> Bool)?
+    /// 指令正在跑：⌃ C 先停指令（Esc 不停）
+    var bangRunning = false
+    var onStopBang: (() -> Void)?
+    /// 還沒附給模型的指令結果數：輸入框上面顯示「下一則訊息會附上 N 個指令結果」和 ✕
+    var bangCount = 0 { didSet { if bangCount != oldValue { rebuildBangNote() } } }
+    var onBangCancel: (() -> Void)?
+    private let bangNote = NSView()
+    private let bangLabel = NSTextField(labelWithString: "")
+    private let bangX = NSButton()
+    private let bangHint = NSTextField(labelWithString: "")
+    /// 做事中按 Esc 的提示（兩秒後自己消失）
+    private let stopHint = NSTextField(labelWithString: "")
+    private var stopHintTimer: Timer?
+    var stopHintShown: Bool { !stopHint.isHidden }   // 測試用（--dump-focus 會印）
+    private static let bangRow: CGFloat = 24
+    private var inBang: Bool { Bang.isBangMode(textView.string) }
     /// 打 / 開頭時跳出的指令清單（放在上一層，蓋在對話內容上面）
     let slash = SlashMenu()
     var commands: [SlashCommand] = SlashCommand.known { didSet { updateSlash() } }
@@ -429,6 +478,8 @@ final class ChatInputBar: NSView {
         }
     }
     /// 上一則送出的字和圖：這輪還沒做完時按 ⌃ C，停下來並放回輸入框，不用重打
+    /// 每次送出都留一份（不管當時 Claude 忙不忙）：送出失敗要放回來用。lastSent 在忙的時候是 nil（排隊的那則停下來之後還是會送，不放回），不能拿來還原送不出去的
+    private var lastAttempt: (text: String, attachments: [(data: Data, mediaType: String, image: NSImage, no: Int, edited: Bool)], nextNo: Int, files: [URL])?
     private var lastSent: (text: String, attachments: [(data: Data, mediaType: String, image: NSImage, no: Int, edited: Bool)], nextNo: Int, files: [URL])?
     var suggestion: String? { get { textView.suggestion } set { textView.suggestion = newValue } }
     /// 鎖住輸入（對話正在別處進行）：顯示說明和一顆按鈕
@@ -442,6 +493,7 @@ final class ChatInputBar: NSView {
     init() {
         super.init(frame: .zero)
         box.wantsLayer = true
+        box.onClick = { [weak self] e in self?.clickBesideText(atWindowPoint: e.locationInWindow) }
         box.layer?.cornerRadius = 14
         box.layer?.borderWidth = 1
         addSubview(box)
@@ -485,9 +537,15 @@ final class ChatInputBar: NSView {
         textView.onMenuKey = { [weak self] e in self?.slashKey(e) ?? false }
         slash.isHidden = true
         slash.onPick = { [weak self] c in self?.pickSlash(c) }
-        // Esc：Claude 在做就停止；沒在做就離開輸入框（之後按 / 再回來）
-        textView.onEscape = { [weak self] in if self?.busy == true { self?.onStop?() } else { self?.onBlur?() } }
-        textView.onInterrupt = { [weak self] in self?.interruptAndRestore() }
+        // Esc：Claude（或 ! 指令）在做時不停止，只提示改按 ⌃ C（使用者 10/27：不小心按到 Esc 會中斷）；沒在做就離開輸入框（之後按 / 再回來）
+        textView.onEscape = { [weak self] in
+            guard let self else { return }
+            if self.bangRunning || self.busy { self.flashStopHint() } else { self.onBlur?() }
+        }
+        textView.onInterrupt = { [weak self] in
+            if self?.bangRunning == true { self?.onStopBang?(); return }
+            self?.interruptAndRestore()
+        }
         textView.onCycleMode = { [weak self] in self?.onCycleMode?() }
         textView.onImages = { [weak self] urls, images in self?.attach(urls: urls, images: images) }
         scroll.documentView = textView
@@ -514,6 +572,20 @@ final class ChatInputBar: NSView {
         modeButton.action = #selector(cycleModePressed)
         modeButton.toolTip = L("權限模式（⇧ Tab 切換）：每次都問 → 改檔不問 → 只規劃 → 自動")
         box.addSubview(modeButton)
+        statusDivider.wantsLayer = true
+        box.addSubview(statusDivider)
+        // 藍色圓鈕＋白色資料夾（使用者 10/29：「幫我設計藍色按鈕，裡面是資料夾圖示」）
+        uploadButton.image = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: L("上傳檔案"))?.withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
+        uploadButton.target = self
+        uploadButton.action = #selector(uploadPressed)
+        uploadButton.toolTip = L("上傳檔案（可以選好幾個檔案或資料夾）")
+        box.addSubview(uploadButton)
+        toolsButton.baseColor = .systemOrange
+        toolsButton.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: L("瀏覽器格的工具"))?.withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
+        toolsButton.target = self
+        toolsButton.action = #selector(toolsPressed)
+        toolsButton.toolTip = L("瀏覽器格的工具（請 Claude 比對、回報、匯出）")
+        box.addSubview(toolsButton)
         lockView.wantsLayer = true
         lockView.isHidden = true
         lockLabel.font = .systemFont(ofSize: 13)
@@ -524,6 +596,29 @@ final class ChatInputBar: NSView {
         lockButton.action = #selector(lockPressed)
         lockView.addSubview(lockButton)
         box.addSubview(lockView)
+        // ! 指令：上面的提示條（還沒附給模型的結果）和下面狀態列左邊的說明
+        bangNote.isHidden = true
+        bangLabel.font = .systemFont(ofSize: 12)
+        bangLabel.textColor = .systemOrange
+        bangNote.addSubview(bangLabel)
+        bangX.isBordered = false
+        bangX.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: L("不附上"))
+        bangX.contentTintColor = .secondaryLabelColor
+        bangX.target = self
+        bangX.action = #selector(bangCancelPressed)
+        bangX.toolTip = L("這次不附上指令結果")
+        bangNote.addSubview(bangX)
+        box.addSubview(bangNote)
+        bangHint.font = .systemFont(ofSize: 12)
+        bangHint.textColor = .systemOrange
+        bangHint.stringValue = L("執行指令（Enter 執行，結果會附給 Claude）")
+        bangHint.isHidden = true
+        box.addSubview(bangHint)
+        stopHint.font = .systemFont(ofSize: 12, weight: .medium)
+        stopHint.textColor = .systemOrange
+        stopHint.stringValue = L("停止請按 ⌃ C")
+        stopHint.isHidden = true
+        box.addSubview(stopHint)
         updateButton()
         NotificationCenter.default.addObserver(self, selector: #selector(textChanged), name: NSText.didChangeNotification, object: textView)
     }
@@ -532,8 +627,11 @@ final class ChatInputBar: NSView {
     func applyTheme(_ pal: Palette, mono: NSFont) {
         let dark = pal.bg.usingColorSpace(.sRGB).map { $0.brightnessComponent < 0.5 } ?? true
         box.layer?.backgroundColor = (dark ? pal.bg.blended(withFraction: 0.07, of: .white) : pal.bg.blended(withFraction: 0.04, of: .black))?.cgColor
-        box.layer?.borderColor = pal.fg.withAlphaComponent(0.15).cgColor
+        themeBorder = pal.fg.withAlphaComponent(0.15).cgColor
+        box.layer?.borderColor = themeBorder
+        updateBangMode()
         chipDivider.layer?.backgroundColor = pal.fg.withAlphaComponent(0.15).cgColor
+        statusDivider.layer?.backgroundColor = pal.fg.withAlphaComponent(0.15).cgColor
         let acc = pal.ansi.count > 12 ? pal.ansi[12] : .controlAccentColor   // 跟 WindowHost 選中格子的紫框同一色
         if chipFG != pal.fg || chipAccent != acc { chipFG = pal.fg; chipAccent = acc; rebuildChips() }
         slash.fg = pal.fg
@@ -617,22 +715,35 @@ final class ChatInputBar: NSView {
     private func measureText() -> (height: CGFloat, overflow: Bool) {
         guard let lm = textView.layoutManager, let tc = textView.textContainer else { return (24, false) }
         lm.ensureLayout(for: tc)
-        let line = lm.defaultLineHeight(for: textView.font ?? .systemFont(ofSize: 15))
+        // 行高取「字型預設」和「實際排出來最高的一行」較大者：中文會換成蘋方，行比英文字型高，
+        // 只用預設行高的話打中文不到 12 行就開始捲、頂端切半行（agy Argon 11/6）
+        var line = lm.defaultLineHeight(for: textView.font ?? .systemFont(ofSize: 15))
+        if lm.numberOfGlyphs > 0 {
+            var g = 0, seen = 0
+            while g < lm.numberOfGlyphs && seen < 40 {
+                var r = NSRange()
+                let frag = lm.lineFragmentRect(forGlyphAt: g, effectiveRange: &r)
+                line = max(line, frag.height); seen += 1
+                g = max(g + 1, NSMaxRange(r))
+            }
+        }
         let h = max(line, lm.usedRect(for: tc).height) + textView.textContainerInset.height * 2
         let cap = line * maxLines + textView.textContainerInset.height * 2
         return (min(h, cap), h > cap + 1)
     }
     /// 測試用：輸入框的捲軸現在有沒有、是哪種樣式
     var scrollerState: String { "scroller=\(scroll.hasVerticalScroller) style=\(scroll.scrollerStyle == .overlay ? "overlay" : "legacy")" }
+    /// 測試用：框高、內容高、有沒有超過上限
+    var metricsForTest: String { let m = measureText(); return "boxH=\(Int(m.height)) overflow=\(m.overflow) scrollH=\(Int(scroll.frame.height)) textW=\(Int(textView.frame.width)) scrollW=\(Int(scroll.frame.width)) atBottom=\(abs(scroll.contentView.bounds.maxY - textView.frame.height) < 1.5)" }
 
     /// 下面那排狀態列（權限模式、模型、送出鍵）的高度：打字在上面，字不會碰到這一排（使用者 10/25）
-    private static let statusRow: CGFloat = 28
+    private static let statusRow: CGFloat = 35   // 底排 28 ＋ 分隔線和按鈕之間留 7（使用者 10/29：「分隔線上來一點」）
 
     /// 卡片那排佔的高度（上緣 8、卡片、分隔線上下各留一點）
     private static let chipRow: CGFloat = AttachmentChip.height + 24
 
     func fittingHeight(width: CGFloat) -> CGFloat {
-        (chips.isHidden ? 0 : Self.chipRow) + textHeight + Self.statusRow + 4 + 16 + 16
+        (chips.isHidden ? 0 : Self.chipRow) + (bangCount > 0 ? Self.bangRow : 0) + textHeight + Self.statusRow + 4 + 16 + 16
     }
 
     override func layout() {
@@ -642,12 +753,21 @@ final class ChatInputBar: NSView {
         box.frame = NSRect(x: margin, y: 12, width: max(0, bounds.width - margin * 2), height: max(0, bounds.height - 16))
         chipDivider.isHidden = chips.isHidden
         chipScroll.isHidden = chips.isHidden
+        let bangH: CGFloat = bangCount > 0 ? Self.bangRow : 0
+        bangNote.isHidden = bangCount == 0
+        if bangCount > 0 {
+            bangNote.frame = NSRect(x: 10, y: box.bounds.height - 4 - Self.bangRow, width: max(0, box.bounds.width - 20), height: Self.bangRow)
+            bangX.frame = NSRect(x: bangNote.bounds.maxX - 22, y: 2, width: 20, height: 20)
+            bangLabel.frame = NSRect(x: 4, y: 3, width: max(0, bangNote.bounds.width - 30), height: 18)
+        }
         if !chips.isHidden {
-            chipScroll.frame = NSRect(x: 10, y: box.bounds.height - 8 - AttachmentChip.height, width: max(0, box.bounds.width - 20), height: AttachmentChip.height)
+            chipScroll.frame = NSRect(x: 10, y: box.bounds.height - 8 - bangH - AttachmentChip.height, width: max(0, box.bounds.width - 20), height: AttachmentChip.height)
             chips.frame = NSRect(x: 0, y: 0, width: max(chips.fittingSize.width, chipScroll.contentSize.width), height: AttachmentChip.height)
             chipDivider.frame = NSRect(x: 14, y: chipScroll.frame.minY - 7, width: max(0, box.bounds.width - 28), height: 1)
         }
         let inner = box.bounds.insetBy(dx: 10, dy: 8)
+        // 先用新寬度排版再量高度：視窗變窄時用舊寬度量，折出來的行會被裁掉（agy Argon 11/6；捲軸是浮出式，不佔寬）
+        if abs(textView.frame.width - inner.width) > 0.5 { textView.frame.size.width = inner.width; superview?.needsLayout = true }
         let (th, overflow) = measureText()
         // 捲軸：字超過最多行數才有，而且一律用浮出來的樣式。
         // 系統設成「一直顯示捲軸」（接滑鼠時）的話，行高差幾點就會在空的輸入框右邊畫出一條有外框的捲軸
@@ -656,6 +776,9 @@ final class ChatInputBar: NSView {
         // 兩行：最下面一排是狀態列（右邊依序 權限模式、模型、送出鍵），上面整條寬度都給打字
         let row = inner.minY
         sendButton.frame = NSRect(x: inner.maxX - 28, y: row, width: 28, height: 28)
+        bangHint.isHidden = !(inBang && lockView.isHidden) || !stopHint.isHidden   // 停止提示顯示時讓位，不疊在一起
+        bangHint.frame = NSRect(x: inner.minX + 4, y: row + 5, width: max(0, inner.width - 40), height: 18)
+        stopHint.frame = bangHint.frame
         // 空的輸入框只提示 / 指令選單（使用者 10/23：不要按鍵說明；Claude 在忙時也一樣）
         let want = L("輸入 / 開啟指令選單")
         if textView.placeholder != want { textView.placeholder = want }
@@ -668,14 +791,39 @@ final class ChatInputBar: NSView {
         modelButton.frame = NSRect(x: inner.maxX - 34 - mw, y: row + 4, width: mw, height: 20)
         let dw = modeButton.isHidden ? 0 : min(130, modeButton.intrinsicContentSize.width + 8)
         modeButton.frame = NSRect(x: modelButton.frame.minX - dw - (mw > 0 ? 2 : 0), y: row + 4, width: dw, height: 20)
+        // 上傳檔案：在「自動」的左邊（模式按鈕收起來時接在模型按鈕左邊）；太窄就收起來
+        uploadButton.isHidden = !lockView.isHidden || inner.width < 200
+        let ux = (modeButton.isHidden ? modelButton.frame.minX : modeButton.frame.minX) - 26
+        uploadButton.frame = NSRect(x: ux, y: row + 3, width: 22, height: 22)
+        // 橘色收納鈕：接在資料夾鈕左邊；上傳鈕收起來（太窄）時一起收
+        toolsButton.isHidden = uploadButton.isHidden || inner.width < 230
+        toolsButton.frame = NSRect(x: uploadButton.frame.minX - 26, y: row + 3, width: 22, height: 22)
+        statusDivider.isHidden = !lockView.isHidden
+        statusDivider.frame = NSRect(x: 14, y: row + Self.statusRow + 1, width: max(0, box.bounds.width - 28), height: 1)
         var y = row + Self.statusRow + 4
         scroll.frame = NSRect(x: inner.minX, y: y, width: inner.width, height: th)
         y += th
         textView.frame.size.width = scroll.contentSize.width
+        // 只有字數或框高變了才捲到底：往上捲著看前文時，別的事（Claude 跑完、提示出現）觸發排版不能把人拉回最底（agy Argon 11/6）
+        // 寬度和實際內容高度也算：拖寬拖窄、同字數換成會多折一行的字時，字數和框高都沒變但最後一行位置變了（agy Sonnet 11/6）
+        let usedH = textView.layoutManager.flatMap { lm in textView.textContainer.map { lm.usedRect(for: $0).height } } ?? 0
+        let revealKey = "\(textView.textStorage?.length ?? 0):\(Int(th)):\(Int(textView.frame.width)):\(Int(usedH))"
+        if overflow, revealKey != lastRevealKey { revealEndIfCaretAtEnd() }
+        lastRevealKey = revealKey
         lockView.frame = box.bounds
         let bw = lockButton.isHidden ? 0 : lockButton.intrinsicContentSize.width + 8
         lockButton.frame = NSRect(x: box.bounds.maxX - bw - 10, y: (box.bounds.height - 28) / 2, width: bw, height: 28)
         lockLabel.frame = NSRect(x: 14, y: 6, width: box.bounds.width - bw - 34, height: box.bounds.height - 12)
+    }
+
+    @objc private func toolsPressed() { onToolsButton?(toolsButton) }
+
+    /// 在輸入框最後面放一段字（不送出）；游標與焦點移到後面，使用者看過再送
+    func putText(_ s: String) {
+        let t = textView.string as NSString
+        let lead = t.length == 0 || t.hasSuffix("\n") ? "" : "\n"
+        textView.insertText(lead + s, replacementRange: NSRange(location: t.length, length: 0))
+        textChanged()
     }
 
     @objc private func textChanged() {
@@ -683,24 +831,72 @@ final class ChatInputBar: NSView {
         if !attachments.isEmpty || !files.isEmpty, !textView.hasMarkedText() {
             let s = textView.string
             let kept = attachments.filter { s.contains(Self.imageToken($0.no)) }
-            let present = Set(textView.tokenRanges().map { (s as NSString).substring(with: $0) })
-            let keptFiles = files.filter { present.contains(TerminalPane.shellEscape($0.path)) }
+            // 路徑還在文字裡就留著卡片：用 ← → 跳過路徑後直接打字，路徑後面會黏著字，不能因此把卡片丟掉（agy Argon 11/6）。
+            // 長的路徑先比、比到就遮掉：/a/b 和 /a/b.png 都有卡片時，刪掉 /a/b 不能因為 /a/b.png 裡含它而誤留（agy Sonnet 11/6）
+            let masked = NSMutableString(string: s)
+            var keptPaths = Set<String>()
+            for f in files.sorted(by: { TerminalPane.shellEscape($0.path).count > TerminalPane.shellEscape($1.path).count }) {
+                let r = masked.range(of: TerminalPane.shellEscape(f.path))
+                guard r.location != NSNotFound else { continue }
+                masked.replaceCharacters(in: r, with: String(repeating: "\u{1}", count: r.length))
+                keptPaths.insert(f.path)
+            }
+            let keptFiles = files.filter { keptPaths.contains($0.path) }
             if kept.count != attachments.count || keptFiles.count != files.count {
+                // 文字裡的標記被刪掉：圖也跟著拿掉；⌘Z 把標記救回來時圖要一起回來（不然標記在、縮圖沒了，送出也不帶圖）
+                let removed = attachments.filter { a in !kept.contains { $0.no == a.no } }
+                let removedFiles = files.filter { f in !keptFiles.contains { $0.path == f.path } }   // 檔案卡片也要能 ⌘Z 救回（agy Argon 11/6）
+                if !removed.isEmpty || !removedFiles.isEmpty, let um = textView.undoManager, !um.isUndoing {      // redo 刪標記時也要登記，不然「刪→復原→重做→再復原」只剩標記
+                    um.registerUndo(withTarget: self) { me in
+                        for a in removed where !me.attachments.contains(where: { $0.no == a.no }) { me.attachments.append(a) }
+                        me.attachments.sort { $0.no < $1.no }
+                        for f in removedFiles where !me.files.contains(where: { $0.path == f.path }) { me.files.append(f) }
+                        me.rebuildChips()
+                        me.onDraftChange?()
+                    }
+                }
                 attachments = kept; files = keptFiles; rebuildChips()
             }
         }
         updateSlash()
+        updateBangMode()
         superview?.needsLayout = true
         needsLayout = true
         updateButton()
+        onDraftChange?()
+        onPendingInputChange?()
+    }
+
+    // MARK: ! 指令外觀
+
+    private var themeBorder: CGColor?
+    private func updateBangMode() {
+        if themeBorder == nil { themeBorder = box.layer?.borderColor }
+        let on = inBang
+        box.layer?.borderColor = on ? NSColor.systemOrange.cgColor : themeBorder
+        box.layer?.borderWidth = on ? 1.5 : 1
+        textView.placeholder = on ? "" : L("輸入 / 開啟指令選單")
+    }
+    private func rebuildBangNote() {
+        bangLabel.stringValue = L("下一則訊息會附上 \(bangCount) 個指令結果")
+        needsLayout = true
+        superview?.needsLayout = true
+    }
+    @objc private func bangCancelPressed() { onBangCancel?() }
+
+    private func flashStopHint() {
+        stopHint.isHidden = false
+        needsLayout = true
+        stopHintTimer?.invalidate()
+        stopHintTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in self?.stopHint.isHidden = true; self?.needsLayout = true }
     }
 
     private func updateButton() {
         let name = busy ? "stop.circle.fill" : "arrow.up.circle.fill"
         sendButton.image = NSImage(systemSymbolName: name, accessibilityDescription: L(busy ? "停止" : "送出"))?
             .withSymbolConfiguration(.init(pointSize: 22, weight: .regular))
-        sendButton.toolTip = L(busy ? "停止（Esc）" : "送出（⌘ Enter）")
-        let empty = textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+        sendButton.toolTip = L(busy ? "停止（⌃ C）" : "送出（⌘ Enter）")
+        let empty = textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty && !hasQuotes
         sendButton.alphaValue = busy || !empty ? 1 : 0.35
     }
 
@@ -724,9 +920,63 @@ final class ChatInputBar: NSView {
         sendButton.isHidden = text != nil
         modelButton.isHidden = text != nil
         modeButton.isHidden = text != nil
+        uploadButton.isHidden = text != nil
         needsLayout = true
     }
     @objc private func lockPressed() { lockAction?() }
+
+    /// 開檔案面板：獨立視窗（不是 sheet），能放大、能移動，大小記起來；選好的圖片變縮圖附件、其他檔案插入路徑（跟拖進來一樣）
+    @objc func uploadPressed() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = L("上傳")
+        panel.message = L("選要放進這個聊天室的檔案或資料夾（可以多選）")
+        if let f = appDefaults.string(forKey: "uploadPanelFrame") { panel.setFrame(NSRectFromString(f), display: false) }
+        let ok = panel.runModal() == .OK
+        appDefaults.set(NSStringFromRect(panel.frame), forKey: "uploadPanelFrame")
+        guard ok else { window?.makeFirstResponder(textView); return }
+        takeFiles(panel.urls)
+    }
+
+    /// 選好的檔案（或測試用）：圖片變附件、其他插入路徑
+    func takeFiles(_ urls: [URL]) {
+        let imgs = urls.filter(ChatTextView.isImage)
+        let others = urls.filter { !ChatTextView.isImage($0) }
+        if !imgs.isEmpty { attach(urls: imgs, images: []) }
+        if !others.isEmpty { insertPaths(others) }
+        window?.makeFirstResponder(textView)
+    }
+
+    /// 從跨啟動草稿還原檔案卡片；檔案已不存在的路徑不會加入。
+    /// 路徑文字已經在還原的草稿裡：只登記成卡片，不再插一次字，也不拿焦點（Astra 11/5 審查：原本會重複插入、搶焦點）
+    func restoreFilePaths(_ paths: [String]) {
+        let urls = paths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !urls.isEmpty else { return }
+        for u in urls where !files.contains(u) { files.append(u) }
+        rebuildChips()
+    }
+
+    /// 草稿文字已有 [Image #n]：只還原附件與縮圖，保留編號、編輯狀態，不插字、不拿焦點。
+    func restoreImages(_ images: [DraftPersistence.Image]) {
+        for a in images where a.no > 0 && a.no < Int.max {
+            guard !attachments.contains(where: { $0.no == a.no }), let image = NSImage(data: a.data) else { continue }
+            attachments.append((a.data, a.mediaType, image, a.no, a.edited))
+            nextImageNo = max(nextImageNo, a.no + 1)
+        }
+        // 圖檔遺失仍保留文字；新貼圖不能重用該標記的編號。
+        let text = textView.string as NSString
+        if let regex = try? NSRegularExpression(pattern: #"\[Image #(\d+)\]"#) {
+            for match in regex.matches(in: textView.string, range: NSRange(location: 0, length: text.length)) {
+                if let no = Int(text.substring(with: match.range(at: 1))), no > 0, no < Int.max {
+                    nextImageNo = max(nextImageNo, no + 1)
+                }
+            }
+        }
+        rebuildChips()
+        updateButton()
+    }
 
     @objc private func buttonPressed() { busy ? onStop?() : send() }
 
@@ -737,11 +987,86 @@ final class ChatInputBar: NSView {
         restoreLastSent()
     }
 
+    /// 超過最多行數、游標在最後面：捲到最底，讓最後一行（包括換行產生的空行）一定看得到、點得到。
+    /// 直接放進草稿（setDraft、restoreLost、restoreLastSent）或輸入框高度改變時，捲動位置不會自己跟上，
+    /// 最後那條空行會落在可見範圍外（使用者 11/5：「這一行，我不管用鼠標怎麼點，都點不到」；測試掛鉤 --input-probe 量到空行在 y 323 而可見只到 300）
+    private var lastRevealKey = ""
+    private func revealEndIfCaretAtEnd() {
+        let len = (textView.string as NSString).length
+        guard textView.selectedRange().location == len, let lm = textView.layoutManager, let tc = textView.textContainer else { return }
+        lm.ensureLayout(for: tc)
+        textView.sizeToFit()
+        let clip = scroll.contentView
+        let bottom = max(0, textView.frame.height - clip.bounds.height)
+        guard abs(clip.bounds.origin.y - bottom) > 0.5 else { return }
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: bottom))
+        scroll.reflectScrolledClipView(clip)
+    }
+
+    /// 點在文字框外、圓角框裡的空白：游標放到最靠近的那一行（點在文字下面＝最後一行，點在行尾右邊＝行尾），並把焦點給文字框。
+    /// 使用者 11/5 晚上：只有 3 行時點最後一行下面那排，游標留在原處（點擊落在圓角框，不是文字框）
+    func clickBesideText(atWindowPoint w: NSPoint) {
+        guard lockView.isHidden else { return }
+        let p = textView.convert(w, from: nil)
+        let vis = textView.visibleRect
+        guard vis.width > 2, vis.height > 2 else { return }
+        let cp = NSPoint(x: min(max(p.x, vis.minX + 1), vis.maxX - 1), y: min(max(p.y, vis.minY + 1), vis.maxY - 1))
+        let i = textView.characterIndexForInsertion(at: cp)
+        window?.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: i, length: 0))
+        textView.scrollRangeToVisible(NSRange(location: i, length: 0))
+    }
+
+    /// 程式碼區的「問 AI」：把整理好的訊息放進輸入框讓使用者看過、改過再送（不直接送出）。輸入框已經有字就接在後面
+    func setDraft(_ t: String) {
+        let cur = textView.string
+        textView.string = cur.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? t : cur + "\n\n" + t
+        textView.undoManager?.removeAllActions()
+        textChanged()
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        window?.makeFirstResponder(textView)
+    }
+
+    /// 送出後程序結束、訊息沒被讀到：字和圖放回輸入框（輸入框已經有字就不蓋掉，回傳 false）
+    @discardableResult
+    func restoreLost(text: String, images: [(data: Data, mediaType: String)]) -> Bool {
+        guard textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, attachments.isEmpty, !hasQuotes else { return false }
+        var t = text
+        // 送出的字裡原本的 [Image #n] 記號已經對不上新的附件編號：全部拿掉，照新編號重放
+        t = t.replacingOccurrences(of: #"\[Image #\d+\]"#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+        attachments = []
+        nextImageNo = 1
+        for im in images {
+            guard let img = NSImage(data: im.data) else { continue }
+            attachments.append((im.data, im.mediaType, img, nextImageNo, false))
+            t += (t.isEmpty ? "" : " ") + Self.imageToken(nextImageNo)
+            nextImageNo += 1
+        }
+        textView.string = t
+        textView.undoManager?.removeAllActions()
+        rebuildChips()
+        textChanged()
+        textView.setSelectedRange(NSRange(location: (t as NSString).length, length: 0))
+        return true
+    }
+
+    /// 送出成功了：不再保留「失敗時可放回」的那一則
+    func clearAttempt() { lastAttempt = nil }
+
+    /// 送出失敗（程序開不起來、寫不進去）：這一則放回輸入框，忙不忙都一樣
+    func restoreFailedSend() {
+        guard let last = lastAttempt else { return }
+        lastSent = last
+        lastAttempt = nil
+        restoreLastSent()
+    }
+
     /// 剛送出的字放回輸入框（⌃ C；Gemini 連不上 Google 沒送出時也用）
     func restoreLastSent() {
         guard let last = lastSent else { return }
-        lastSent = nil
+        // 輸入框已經有新打的字就不蓋掉它；暫存的留著（還沒放回去，不能丟）
         guard textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, attachments.isEmpty else { return }
+        lastSent = nil
         textView.string = last.text
         textView.undoManager?.removeAllActions()   // 直接換掉整段字不會進復原紀錄，舊紀錄套上來會錯位
         attachments = last.attachments
@@ -750,7 +1075,13 @@ final class ChatInputBar: NSView {
         rebuildChips()
         textChanged()
         textView.setSelectedRange(NSRange(location: (last.text as NSString).length, length: 0))
-        window?.makeFirstResponder(textView)
+        // 送出失敗是非同步回來的，使用者可能已經在別格打字：焦點沒落在別處、或本來就在這裡才拉回（agy Argon 11/6）
+        if let w = window {
+            let fr = w.firstResponder
+            let nowhere = fr == nil || fr === w || fr === w.contentView
+            let here = (fr as? NSView).map { $0 === textView || $0.isDescendant(of: self) } ?? false
+            if nowhere || here { w.makeFirstResponder(textView) }
+        }
     }
 
     /// 焦點不在輸入框時按 ⌃ Enter（MainWindow 轉過來）：輸入框有字就馬上插話送出，空的就讓排隊的馬上插話
@@ -758,14 +1089,27 @@ final class ChatInputBar: NSView {
 
     private func send(now: Bool = false) {
         let text = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !attachments.isEmpty else {
+        // ! 指令：不走模型。只有 ! 沒有指令就什麼都不做
+        if Bang.isBangMode(text) {
+            guard let cmd = Bang.command(in: text), onBang?(cmd) == true else { return }
+            textView.string = ""
+            textView.undoManager?.removeAllActions()
+            textChanged()
+            return
+        }
+        guard !text.isEmpty || !attachments.isEmpty || hasQuotes else {
             if now { onSendQueuedNow?() }
             return
         }
         suggestion = nil
         // Claude 在做時送的是排隊的那則，停下來之後它還是會送出去，所以不放回
-        if busy { lastSent = nil } else { lastSent = (text: text, attachments: attachments, nextNo: nextImageNo, files: files) }
-        onSend?(text, attachments.map { ($0.data, $0.mediaType) }, now)
+        lastAttempt = (text: text, attachments: attachments, nextNo: nextImageNo, files: files)
+        if busy { lastSent = nil } else { lastSent = lastAttempt }
+        // 只有寄件匣已落盤、後端接受寫入才清空；失敗時字、圖、引用留在原處，不切焦點。
+        guard onSend?(text, attachments.map { ($0.data, $0.mediaType) }, now) == true else {
+            lastAttempt = nil
+            return
+        }
         textView.string = ""
         textView.undoManager?.removeAllActions()
         attachments.removeAll()
@@ -814,12 +1158,20 @@ final class ChatInputBar: NSView {
     }
 
     /// 插入檔案路徑：每個路徑上面多一張卡片，文字裡前後各留一個英文空格（前面已經是空格、換行或最前面就不再補）
+    /// 游標停在 [Image #n] 或檔案路徑整塊標記的中間（滑鼠點進去）：插東西會把標記切成兩半，原本那張圖／卡片就被當成被刪掉而丟掉。改插在標記後面
+    private func outsideTokens(_ r: NSRange) -> NSRange {
+        guard r.length == 0, let t = textView.tokenRanges().first(where: { r.location > $0.location && r.location < $0.upperBound }) else { return r }
+        return NSRange(location: t.upperBound, length: 0)
+    }
+
     func insertPaths(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         for u in urls where !files.contains(u) { files.append(u) }
         rebuildChips()   // 先登記成整塊標記，插進去的字才認得
-        let r = textView.selectedRange()
         let s = textView.string as NSString
+        var r = textView.selectedRange()
+        if r.location == NSNotFound || r.upperBound > s.length { r = NSRange(location: s.length, length: 0) }   // 還沒有有效的選取位置：放到最後面，不要用越界的位置去取字
+        r = outsideTokens(r)
         let before = r.location > 0 ? s.character(at: r.location - 1) : 0
         let after = r.upperBound < s.length ? s.character(at: r.upperBound) : 0
         let lead = before == 0 || before == 0x20 || before == 0x0a ? "" : " "   // 最前面、換行後面不補
@@ -849,7 +1201,9 @@ final class ChatInputBar: NSView {
             nextImageNo += 1
         }
         // 在游標的位置插入 [Image #n]，說明文字可以寫在它前後
-        let r = textView.selectedRange()
+        var r = textView.selectedRange()
+        if r.location == NSNotFound || r.upperBound > (textView.string as NSString).length { r = NSRange(location: (textView.string as NSString).length, length: 0) }
+        r = outsideTokens(r)
         let before = r.location > 0 ? (textView.string as NSString).substring(with: NSRange(location: r.location - 1, length: 1)) : "\n"
         let lead = before == " " || before == "\n" ? "" : " "
         textView.insertText(lead + tokens.joined(separator: " ") + " ", replacementRange: r)
@@ -954,21 +1308,31 @@ final class ChatInputBar: NSView {
     private func editImage(_ no: Int) {
         guard let a = attachments.first(where: { $0.no == no }) else { return }
         ImageEditor.edit(a.data, mediaType: a.mediaType, label: "Image #\(no)") { [weak self] data in
-            guard let self, let data, let img = NSImage(data: data), let i = self.attachments.firstIndex(where: { $0.no == no }) else { return }
+            guard let self, let data, let img = NSImage(data: data), let i = self.attachments.firstIndex(where: { $0.no == no && $0.data == a.data }) else { return }      // 編輯器開著的時候草稿送出又貼了別張圖（編號重來）：別蓋到新圖上
             let fitted = Self.fit(data, "image/png") ?? (data, "image/png")
             self.attachments[i] = (fitted.0, fitted.1, img, no, true)
             self.rebuildChips()
-            self.window?.makeFirstResponder(self.textView)
+            self.onDraftChange?()
+            // 編輯器關掉時使用者可能已經在別的地方打字：只有焦點還沒落在別的文字框時才拉回來（Astra 11/5）
+            if let w = self.window, w.isKeyWindow {
+                // 只有焦點沒落在任何地方（視窗本身）或本來就在這個輸入框時才拉回；在終端機、網頁、別格都不動（agy Sonnet 11/6）
+                let fr = w.firstResponder
+                let nowhere = fr == nil || fr === w || fr === w.contentView
+                let here = (fr as? NSView).map { $0 === self.textView || $0.isDescendant(of: self) } ?? false
+                if nowhere || here { w.makeFirstResponder(self.textView) }
+            }
         }
     }
 
     /// 點縮圖的 ×：圖和文字裡的 [Image #n] 一起拿掉
     private func removeImage(_ no: Int) {
-        attachments.removeAll { $0.no == no }
+        // 先刪文字標記、讓 textChanged 拿掉圖並登記復原（⌘Z 圖會一起回來）；先拿掉圖的話復原只救回標記（agy Argon 11/6）
         let s = textView.string as NSString
         var r = s.range(of: Self.imageToken(no) + " ")
         if r.location == NSNotFound { r = s.range(of: Self.imageToken(no)) }
         if r.location != NSNotFound { textView.insertText("", replacementRange: r) }
+        // 文字裡本來沒有標記、有兩個一樣的標記（只刪了一個）、或文字沒刪成：圖還是要拿掉（agy Sonnet 11/6）
+        if attachments.contains(where: { $0.no == no }) { attachments.removeAll { $0.no == no } }
         rebuildChips()
         textChanged()
     }
@@ -988,12 +1352,47 @@ final class ChatInputBar: NSView {
         src.draw(in: NSRect(x: 0, y: 0, width: nw, height: nh), from: .zero, operation: .copy, fraction: 1, respectFlipped: false, hints: nil)
         NSGraphicsContext.restoreGraphicsState()
         if type == "image/png", let d = rep.representation(using: .png, properties: [:]), d.count <= limit { return (d, "image/png") }
-        if let d = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.88]) { return (d, "image/jpeg") }
-        return nil
+        // JPEG：品質由高往低試，第一個不超過上限的就用；都超過就用最小的那個（長邊已經不超過 2000，這種情況很少見）
+        var smallest: Data?
+        for q in [0.88, 0.7, 0.5, 0.3] {
+            guard let d = rep.representation(using: .jpeg, properties: [.compressionFactor: q]) else { continue }
+            if d.count <= limit { return (d, "image/jpeg") }
+            if smallest == nil || d.count < smallest!.count { smallest = d }
+        }
+        return smallest.map { ($0, "image/jpeg") }
     }
 
     static func png(_ img: NSImage) -> Data? {
         guard let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
         return rep.representation(using: .png, properties: [:])
+    }
+}
+
+
+/// 藍色圓形按鈕（systemBlue，白色圖示）：滑鼠移上去稍微亮一點。深淺色主題都看得清楚
+final class BlueCircleButton: NSButton {
+    /// 圓鈕的底色（預設藍色；橘色收納鈕用 systemOrange）
+    var baseColor: NSColor = .systemBlue { didSet { refresh() } }
+    private var hover = false { didSet { refresh() } }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        isBordered = false
+        imagePosition = .imageOnly
+        imageScaling = .scaleNone
+        contentTintColor = .white
+        wantsLayer = true
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        refresh()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func layout() { super.layout(); layer?.cornerRadius = bounds.height / 2 }
+    override func mouseEntered(with e: NSEvent) { hover = true }
+    override func mouseExited(with e: NSEvent) { hover = false }
+    override func viewDidChangeEffectiveAppearance() { refresh() }
+    private func refresh() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let base = baseColor
+            layer?.backgroundColor = (hover ? (base.blended(withFraction: 0.18, of: .white) ?? base) : base).cgColor
+        }
     }
 }

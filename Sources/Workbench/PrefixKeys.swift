@@ -6,7 +6,7 @@ import AppKit
 //   c  新 Window   n / p  下一個／上一個 Window   1～9  第幾個 Window   z  放大這格
 //   s / w  列出 Session 和 Window 來選   ( / )  上一個／下一個 Session
 //   b  右下角開／關桌寵的位置
-// 不用 Ctrl+A 的：⌃ W 關 Window（對話留在側欄）、⌃ T 新 Window（終端機格裡照樣交給終端機）、⌘ 1～9 跳到第幾個 Window
+// 不用 Ctrl+A 的：⌘ W 關這格、⌃ ⌘ W 關整個 Window（對話留在側欄）、⌃ T 新 Window（終端機格裡照樣交給終端機）、⌘ 1～9 跳到第幾個 Window
 //   a  把 Ctrl+A 本身送出（輸入框跳到行首）   Ctrl+A  中文指令選單   ?  也是選單
 // 原生 App 收按鍵早於輸入法，所以唯音開著中文也不用先切英文（tmux 那邊要靠 ~/.codenv-ime）。
 
@@ -15,22 +15,81 @@ final class PrefixKeys {
     private var armed = false
     private var repeatUntil: TimeInterval = 0
     private var monitor: Any?
+    private var mouseMonitor: Any?
+    private var resignObservers: [NSObjectProtocol] = []
     private let hud = PrefixHUD()
+
+    /// Ctrl+A 按了之後又切去別的 App、別的視窗、或用滑鼠點了別處：取消等待。不然回來打的第一個字會被當成 prefix 的指令（c 開新 Window、x 跳出關閉確認…）
+    private func disarm() {
+        guard armed else { return }
+        armed = false
+        hud.hide()
+    }
 
     init(controller: MainWindowController) {
         self.controller = controller
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-            guard let self, let c = self.controller, e.window === c.window else { return e }
+            guard let self, let c = self.controller else { return e }
+            guard e.window === c.window else {
+                // 獨立視窗：沒有側欄，F3／F4 不用管；F5 在它裡面的瀏覽器格要能重新載入
+                if e.keyCode == 96, e.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+                   c.detachedWindows.values.contains(where: { $0.window === e.window }),
+                   let bp = Self.browserPane(containing: e.window?.firstResponder) { bp.reloadPage(); return nil }
+                return e
+            }
             return self.handle(e) ? nil : e
         }
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] e in
+            self?.disarm()
+            return e
+        }
+        let nc = NotificationCenter.default
+        resignObservers = [
+            nc.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.disarm() },
+            nc.addObserver(forName: NSWindow.didResignKeyNotification, object: controller.window, queue: .main) { [weak self] _ in self?.disarm() },
+        ]
     }
-    deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+    deinit {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        resignObservers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    /// 焦點在瀏覽器格或程式碼區（Monaco 編輯器、執行畫面）裡：Ghostty 那組 ⌘ 快捷鍵讓給它們
+    private func inEditorOrWeb(_ e: NSEvent) -> Bool {
+        let r = e.window?.firstResponder
+        if Self.browserPane(containing: r) != nil { return true }
+        // 從焦點往上找：在任何一格的程式碼區裡都算（不只看紫框那格，點了之後紫框可能還沒跟上）
+        var v = r as? NSView
+        while let cur = v { if cur is CodeLabView { return true }; v = cur.superview }
+        return false
+    }
+
+    /// 焦點（第一回應者）在哪個瀏覽器格裡面（網頁本身或它的網址框）；不在任何瀏覽器格回 nil
+    static func browserPane(containing r: NSResponder?) -> BrowserPane? {
+        var v = r as? NSView
+        // 網頁裡的輸入框會讓第一回應者是 WKWebView 底下的子視圖：往上找
+        while let cur = v { if let b = cur as? BrowserPane { return b }; v = cur.superview }
+        return nil
+    }
 
     private func handle(_ e: NSEvent) -> Bool {
         let mods = e.modifierFlags.intersection([.command, .control, .option])
         let ch = e.charactersIgnoringModifiers ?? ""
         let isCtrlA = mods == .control && e.keyCode == 0   // keyCode 0＝A 鍵（不管輸入法）
 
+        // 選取整個 Window 的狀態：除了 F2（改 Window 名字）和 ⌘ 數字（再選別的 Window）之外，任何按鍵（打字）都回到單格
+        if !armed, controller?.store.windowSelected == true, e.keyCode != 120, !(mods == .command && Self.digit(e.keyCode) != nil) {
+            controller?.store.windowSelected = false
+        }
+        // F3：開關左側欄（同 ⌘ ⌃ S）；F4：開關右側欄（用量欄＋桌寵格）（使用者 10/29：F5、F6 改成 F3、F4）。聊天格、終端機格、瀏覽器格都有效，所以不排除終端機（監視器先於終端機看到按鍵）
+        // F5：只在嵌入的瀏覽器格（焦點在它的網頁或它裡面）重新載入；聊天格、終端機格不處理、不吃掉（照一般按鍵交出去）。F6 沒有功能
+        // CodeLab 的 F9／F10 不受影響：這裡只吃 F3、F4、F5，沒有修飾鍵才算
+        if !armed, mods.isEmpty, e.keyCode == 99 { controller?.toggleSidebar(); return true }
+        if !armed, mods.isEmpty, e.keyCode == 118 { controller?.toggleRightPanel(); return true }
+        if !armed, mods.isEmpty, e.keyCode == 96, let bp = Self.browserPane(containing: e.window?.firstResponder) { bp.reloadPage(); return true }
+        // F2：改名。選取整個 Window 時改 Window 的名字，不然改紫框那一格；焦點在終端機（含程式碼執行區）照常交給它
+        if !armed, e.keyCode == 120, mods.isEmpty, !Self.inTerminal(e.window) { controller?.f2Rename(); return true }
         // 調大小可以連按：剛按過 Ctrl+A Ctrl+h 的一秒內，直接按 Ctrl+h 也算
         if !armed, mods == .control, Date().timeIntervalSince1970 < repeatUntil, let d = Self.resizeDir(e.keyCode) {
             controller?.store.resize(dx: d.0, dy: d.1)
@@ -45,14 +104,19 @@ final class PrefixKeys {
         // ⌃ Enter（馬上插話）／⌃ C（停止並放回剛送的字）：焦點在對話內容上、或不在任何輸入欄位時也能用
         if !armed, mods == .control, e.keyCode == 36 || e.keyCode == 76, controller?.chatCtrlKey(sendNow: true) == true { return true }
         if !armed, mods == .control, e.keyCode == 8, controller?.chatCtrlKey(sendNow: false) == true { return true }
-        // ⌃ W 關掉這個 Window（對話留在側欄）、⌃ T 開新 Window；焦點在終端機時照樣交給它（shell 的 ⌃ W 刪字、⌃ T 對調字元）
-        if !armed, mods == .control, e.keyCode == 13 || e.keyCode == 17, !Self.inTerminal(e.window) {
-            if e.keyCode == 13 { controller?.store.closeWindow() } else { controller?.newWindow() }
+        // ⌃ ⌘ W 關掉整個 Window（對話留在側欄；使用者 10/26 從 ⌃ W 改過來，終端機格裡也能用）
+        if !armed, mods == [.command, .control], e.keyCode == 13 {
+            controller?.store.closeWindow()
+            return true
+        }
+        // ⌃ T 開新 Window；焦點在終端機時照樣交給它（shell 的 ⌃ T 對調字元）
+        if !armed, mods == .control, e.keyCode == 17, !Self.inTerminal(e.window) {
+            controller?.newWindow()
             return true
         }
         // ⌘ W 在主視窗：關掉紫框那一格（對話留在側欄），只剩一格才關整個 Window（終端機不用 ⌘ W，照樣攔）；
         // 設定這類小視窗由選單「關閉這格」那項關（main.swift 的 closeSideWindow）
-        if !armed, mods == .command, e.keyCode == 13, e.window === controller?.window {
+        if !armed, mods == .command, !e.modifierFlags.contains(.shift), e.keyCode == 13, e.window === controller?.window {      // ⌘ ⇧ W 不算（使用者 10/31：加了 ⇧ 就不關格）
             controller?.store.closePaneOrWindow()
             return true
         }
@@ -66,8 +130,24 @@ final class PrefixKeys {
             if controller?.store.reopenClosedWindow() != true { NSSound.beep() }
             return true
         }
+        // 學 Ghostty 的分割快捷鍵（使用者 11/5），功能跟 ⌃ A 那組一樣：
+        // ⌘ D＝左右分（⌃ A |）、⌘ ⇧ D＝上下分（⌃ A -）、⌘ [ ／ ⌘ ]＝上一格／下一格、⌘ ⇧ Enter＝放大／還原這格（⌃ A z）
+        // 焦點在程式碼編輯器或網頁裡時 ⌘ D、⌘ [ ]、⌘ ⇧ Enter 讓給它們（編輯器的「選下一個相同字」、縮排，網頁的上一頁／下一頁）
+        if !armed, mods == .command, e.window === controller?.window, let c = controller, !inEditorOrWeb(e),
+           (e.window?.firstResponder as? NSTextInputClient)?.hasMarkedText() != true {   // 輸入法還在組字：交給輸入法
+            let shift = e.modifierFlags.contains(.shift)
+            // 按住不放的重複鍵不算（不然按住 ⌘ D 會一直分割、⌘ ⇧ Enter 會一直閃）
+            if e.isARepeat, e.keyCode == 2 || e.keyCode == 36 { return true }
+            switch e.keyCode {
+            case 2: c.split(vertical: shift); return true                 // D
+            case 33 where !shift: c.store.focusCycle(-1); return true    // [
+            case 30 where !shift: c.store.focusCycle(1); return true     // ]
+            case 36 where shift: c.store.toggleZoom(); return true       // Return
+            default: break
+            }
+        }
         // ⌘ 1～9：跳到第幾個 Window（看實體位置，輸入法開著也行）
-        if !armed, mods == .command, let d = Self.digit(e.keyCode) { controller?.store.selectWindow(at: d - 1); return true }
+        if !armed, mods == .command, !e.modifierFlags.contains(.shift), let d = Self.digit(e.keyCode) { controller?.store.toggleWindowSelection(at: d - 1); return true }   // ＝選取整個 Window，再按同一個＝回原本那格   // ⌘ ⇧ 數字不算（網頁裡的 ⌘ ⇧ 7／8 要留給網頁）
         if !armed {
             guard isCtrlA else { return false }
             armed = true
@@ -82,7 +162,7 @@ final class PrefixKeys {
         if mods == .control {
             if isCtrlA { c.showCommandMenu(); return true }
             // ⌃ 還沒放開就按方向鍵：一樣切 pane（⌃ h／j／k／l 才是調大小）
-            if let d = Self.arrowDir(e.keyCode) { c.store.focus(dx: d.0, dy: d.1); return true }
+            if let d = Self.arrowDir(e.keyCode) { c.moveFocus(dx: d.0, dy: d.1); return true }
             if let d = Self.resizeDir(e.keyCode) {
                 c.store.resize(dx: d.0, dy: d.1)
                 repeatUntil = Date().timeIntervalSince1970 + 1
@@ -91,12 +171,12 @@ final class PrefixKeys {
         }
         // 用實體按鍵的位置判斷（keyCode），唯音開著中文時 characters 會是注音
         switch e.keyCode {
-        case 4: c.store.focus(dx: -1, dy: 0)          // h
-        case 38: c.store.focus(dx: 0, dy: 1)          // j
-        case 40: c.store.focus(dx: 0, dy: -1)         // k
-        case 37: c.store.focus(dx: 1, dy: 0)          // l
+        case 4: c.moveFocus(dx: -1, dy: 0)          // h
+        case 38: c.moveFocus(dx: 0, dy: 1)          // j
+        case 40: c.moveFocus(dx: 0, dy: -1)         // k
+        case 37: c.moveFocus(dx: 1, dy: 0)          // l
         case 123, 124, 125, 126:                      // ← → ↓ ↑：跟 h／l／j／k 一樣切 pane
-            if let d = Self.arrowDir(e.keyCode) { c.store.focus(dx: d.0, dy: d.1) }
+            if let d = Self.arrowDir(e.keyCode) { c.moveFocus(dx: d.0, dy: d.1) }
         case 7: c.confirmClosePane()                  // x
         case 8: c.newWindow()                         // c
         case 45: c.store.selectWindow(offset: 1)      // n

@@ -12,12 +12,16 @@ final class ImportModel: ObservableObject {
     @Published var includeTemp = false { didSet { reload() } }
     @Published var loading = false
 
+    private var reloadSeq = 0
     func reload() {
         loading = true
         let temp = includeTemp
+        reloadSeq += 1
+        let seq = reloadSeq
         DispatchQueue.global(qos: .userInitiated).async {
             let list = ClaudeSessions.scan(includeTemp: temp)
             DispatchQueue.main.async {
+                guard seq == self.reloadSeq else { return }     // 後來又掃了一次（切開關、重新整理）：舊的結果不能蓋掉新的
                 // 正在進行的排前面，其餘照最後更新時間
                 self.sessions = list.filter { $0.live != nil } + list.filter { $0.live == nil }
                 self.loading = false
@@ -117,14 +121,22 @@ final class ImportWindowController: NSWindowController {
 
 extension ClaudeSessions {
     /// 自動同步：把正在跑、工作台還沒有的對話加進來（只看正在跑的，很快）
+    private static var importingLive = false
     static func importLive(into store: Store) {
+        guard !importingLive else { return }      // 上一次掃描還沒回來：不要同時掃好幾次，也就不會重複加
         let live = live()
         let missing = live.keys.filter { id in !store.conversations.contains { $0.claudeSession == id } }
         guard !missing.isEmpty else { return }
+        importingLive = true
         DispatchQueue.global(qos: .utility).async {
             let all = scan()
             let list = all.filter { missing.contains($0.id) }
-            DispatchQueue.main.async { if !list.isEmpty { store.importSessions(list) } }
+            DispatchQueue.main.async {
+                importingLive = false
+                // 掃描的時候使用者可能已經手動匯入了：回到主執行緒再過濾一次
+                let fresh = list.filter { s in !store.conversations.contains { $0.claudeSession == s.id } }
+                if !fresh.isEmpty { store.importSessions(fresh) }
+            }
         }
     }
 }

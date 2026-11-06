@@ -74,7 +74,7 @@ code, pre, kbd { font-family: var(--mono); }
 
 /* ── 一輪對話 ── */
 .turn { margin: 0 0 18px; }
-.turn.user { display: flex; justify-content: flex-end; margin: 10px 0 18px; }
+.turn.user { display: flex; flex-direction: column; align-items: flex-end; justify-content: flex-end; margin: 10px 0 18px; }
 .bubble {
   max-width: min(82%, 640px);
   background: var(--surface-2);
@@ -99,6 +99,9 @@ code, pre, kbd { font-family: var(--mono); }
 
 /* ── Markdown ── */
 .md { line-height: 1.75; }
+/* 獨立數學式置中；太寬時只捲動式子，不撐開聊天欄。 */
+.md .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; text-align: center; }
+.md .katex-display > .katex { display: block; width: max-content; min-width: 100%; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 0.75em; }
@@ -151,6 +154,15 @@ code, pre, kbd { font-family: var(--mono); }
 .md th { background: var(--surface); font-weight: 600; border-bottom-color: var(--tab-accent); white-space: nowrap; }
 .md tr:last-child td { border-bottom: 0; }
 .md td + td, .md th + th { border-left: 1px solid var(--tab-accent-soft); }
+
+/* 函數圖沿用主題文字色；格線與座標軸的透明度由 SVG 決定。 */
+.plot { margin: 0 0 0.9em; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--fg); overflow: hidden; }
+.plot > svg { display: block; width: 100%; height: 260px; }
+.plot > svg.eq { width: auto; height: auto; max-width: 100%; margin: 0 auto; } /* aspect: equal：照 viewBox 比例，不拉伸 */
+.plot > details { padding: 4px 12px 8px; }
+.plot summary { cursor: pointer; color: var(--muted); font: 12px var(--mono); }
+.plot pre { margin: 8px 0; padding: 0 12px; font-size: var(--mono-size); overflow-wrap: anywhere; }
+.plot-error { padding: 10px 12px; color: var(--red); }
 
 /* 程式碼區塊 */
 .code { margin: 0 0 0.9em; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
@@ -404,6 +416,7 @@ details.args > .out { margin-top: 4px; }
 
 /* ── 系統提示、結尾 ── */
 .notice { align-self: center; text-align: center; color: var(--muted); font-size: 12.5px; margin: 6px 0 18px; padding: 3px 12px; border-radius: 99px; background: var(--surface); max-width: 90%; white-space: pre-wrap; }
+.notice.task { background: none; font-size: 11.5px; margin: 2px 0 10px; padding: 0 12px; opacity: .75; cursor: help; }
 .notice.warn { color: var(--yellow); }
 /* 換過模型：各家紀錄接起來的分隔線 */
 .notice.divider { align-self: stretch; max-width: none; background: none; border-radius: 0; display: flex; align-items: center; gap: 10px; padding: 3px 0; }
@@ -454,3 +467,35 @@ details.args > .out { margin-top: 4px; }
   .bubble { max-width: 90%; }
   .tool-b { margin-left: 8px; }
 }
+
+/* ───── ! 指令卡片（docs/bang-command-spec.md）：沿用工具卡片的外觀 ───── */
+.turn.bang { margin: 10px 0 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.turn.bang.running { border-color: color-mix(in srgb, var(--ansi-yellow) 60%, var(--line)); }
+.bang-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px; font-family: var(--mono); font-size: var(--mono-size); }
+.bang-prompt { color: var(--ansi-green); font-weight: 600; }
+.bang-cmd { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-all; background: none; padding: 0; font: inherit; }
+.bang-stop { margin-left: auto; font-size: 12px; padding: 1px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--red); cursor: pointer; }
+.bang-out { margin: 0; padding: 6px 12px 8px; border-top: 1px solid var(--line-soft); font-family: var(--mono); font-size: var(--mono-size); white-space: pre-wrap; word-break: break-all; color: var(--fg); max-height: none; }
+.bang-out .err { color: color-mix(in srgb, var(--ansi-red) 70%, var(--fg)); opacity: 0.85; }
+.bang-more { display: block; margin: 0 12px 6px auto; }
+.bang-foot { padding: 4px 12px 8px; font-size: 12px; color: var(--faint); }
+.bang-foot.bad { color: var(--red); }
+.bang-hint { margin-top: 2px; color: var(--muted); }
+.bubble .bang-badge { font-size: 11.5px; color: var(--faint); margin: 0 0 4px; text-align: right; }
+
+/* 固定列貼住原生輸入框，留白隨引用收起，避免蓋住最後一則。 */
+body { padding-bottom: var(--quote-height, 0px); }
+.quote-tray { position: fixed; bottom: 0; left: 0; right: 0; height: 48px; z-index: 20; display: flex; align-items: center; gap: 6px; padding: 6px 12px; overflow-x: auto; background: var(--bg); border-top: 1px solid var(--line); }
+.quote-tray[hidden] { display: none; }
+.quote-chip, .quote-label { border: 1px solid var(--accent-line); border-radius: 14px; background: var(--accent-soft); color: var(--fg); padding: 3px 10px; cursor: pointer; font-size: 12px; }
+.quote-chip { flex: 0 0 auto; max-width: 280px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-height: 32px; }
+.quote-labels { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+.quote-label { text-align: left; }
+.user-actions { display: flex; justify-content: flex-end; margin-top: 2px; }
+.user-actions .quote-toggle { opacity: .55; }
+.turn:hover .quote-toggle, .turn:focus-within .quote-toggle, .quoted .quote-toggle { opacity: 1; }
+.quote-toggle { min-width: 32px; min-height: 32px; }
+.quote-toggle[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.turn.quoted { box-shadow: -3px 0 0 var(--accent); border-radius: 6px; }
+.turn.quote-flash { outline: 2px solid var(--accent); background: var(--accent-soft); }
+.quote-chip:focus-visible, .quote-label:focus-visible, .quote-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

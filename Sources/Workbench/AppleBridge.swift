@@ -30,6 +30,12 @@ final class AppleBridge {
     let transcriptURL: URL
     /// 交給畫面的事件（Claude 格式）
     var emit: (([String: Any]) -> Void)?
+    /// 聊天室現在的名字（每次組系統提示時問，改名下一輪就生效）
+    var chatName: (() -> String?)?
+    private func nameLine() -> String {
+        guard let n = chatName?()?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty else { return "" }
+        return "\n這段對話的聊天室名稱目前是「\(n)」（使用者在側欄看到的名字）。被問到聊天室名稱就直接回這個，不要依對話內容編。"
+    }
 
     private var history: [(user: Bool, text: String)] = []   // 前面的對話（接進提示用）
     private var queue: [(uuid: String, text: String, msg: [String: Any])] = []   // msg：輪到它時才記進紀錄（排隊時記會插在上一則回覆前面）
@@ -67,6 +73,7 @@ final class AppleBridge {
         turn += 1
         task?.cancel(); task = nil
         closeOpen(usage: nil)
+        dropUnanswered()
         emit?(["type": "user", "message": ["role": "user", "content": "[Request interrupted by user]"]])
         emit?(["type": "result", "subtype": "error_during_execution", "is_error": true, "duration_ms": ms()])
         done()
@@ -89,9 +96,10 @@ final class AppleBridge {
     private func next() {
         guard !busy, !queue.isEmpty else { return }
         let q = queue.removeFirst()
-        record(["type": "user", "message": q.msg])
         busy = true
         started = Date()
+        // 紀錄寫不進去（磁碟滿了、權限）就不送：不然這段對話看起來正常，重開 App 後卻整段不見
+        guard record(["type": "user", "message": q.msg]) else { fail(L("對話紀錄存不進去（磁碟或權限問題），這則沒有送出。")); return }
         emit?(["type": "user", "isReplay": true, "uuid": q.uuid, "message": ["role": "user", "content": []]])
         let past = history
         history.append((true, q.text))
@@ -105,8 +113,15 @@ final class AppleBridge {
         next()
     }
 
+    /// 這一輪沒有成功回答：把它的提問從記憶體裡的 history 拿掉（跟重開 App 後 rebuild 的結果一致）。
+    /// 不拿掉的話：超長的提問會一直留在前文裡，之後每一輪都因為上下文太長而失敗；中斷的也會留下孤立的使用者發言
+    private func dropUnanswered() {
+        if history.last?.user == true { history.removeLast() }
+    }
+
     private func fail(_ msg: String) {
         closeOpen(usage: nil)
+        dropUnanswered()
         emit?(["type": "result", "subtype": "error_during_execution", "is_error": true, "result": msg, "duration_ms": ms()])
         done()
     }
@@ -147,7 +162,8 @@ final class AppleBridge {
                 shown = full
             }
         } catch {
-            guard turn == t, !(error is CancellationError) else { return }
+            guard turn == t else { return }
+            if error is CancellationError { fail(L("生成已取消")); return }
             fail(Self.describe(error))
             return
         }
@@ -181,7 +197,7 @@ final class AppleBridge {
         一律用繁體中文（台灣用語）回答，語氣自然、冷靜，先講重點。
         今天：\(df.string(from: Date()))
         不確定的事實直接說不確定，不要編造。
-        """
+        """ + nameLine()
         guard !past.isEmpty else { return s }
         s += "\n\n以下是你跟使用者到目前為止的對話，回答時接著這段脈絡：\n"
         s += past.map { ($0.user ? "使用者：" : "你：") + ($0.text.count > 1200 ? $0.text.prefix(1200) + "…（後面省略）" : $0.text) }.joined(separator: "\n")
@@ -224,7 +240,11 @@ final class AppleBridge {
             var msg: [String: Any] = ["id": o.id, "role": "assistant", "content": [["type": "text", "text": body]]]
             if let usage { msg["usage"] = ["input_tokens": usage, "output_tokens": 0] }   // 上下文大小（ContextSize 看 input_tokens）
             let a: [String: Any] = ["type": "assistant", "message": msg]
-            emit?(a); record(a)
+            emit?(a)
+            // 中斷或失敗時 usage 是 nil：收到一半的回答，紀錄裡標 partial，重開 App 接回對話（rebuild）時不當成完整回覆
+            var rec = a
+            if usage == nil { rec["partial"] = true }
+            record(rec)
         }
         emit?(stream(["type": "content_block_stop", "index": 0], o.id))
         emit?(stream(["type": "message_stop"], o.id))
@@ -254,28 +274,42 @@ final class AppleBridge {
             switch o["type"] as? String {
             case "user":
                 let t = text(msg)
-                if !t.isEmpty, t != "[Request interrupted by user]" { out.append((true, t)) }
+                if !t.isEmpty, t != "[Request interrupted by user]" {
+                    if out.last?.user == true { out.removeLast() }   // 前一則提問沒有回答（失敗、中斷）：不留孤立的使用者發言
+                    out.append((true, t))
+                }
             case "assistant":
+                if o["partial"] as? Bool == true { continue }
                 let t = (msg["content"] as? [[String: Any]] ?? []).compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined()
                 if !t.isEmpty { out.append((false, t)) }
             default:
                 break
             }
         }
+        if out.last?.user == true { out.removeLast() }   // 最後一則提問沒有回答（中斷、失敗、重開前還沒答完）：不留孤立的使用者發言，接下一則提問時才不會變成連續兩則
         return out
     }
 
     /// 記一筆進自己的紀錄檔
-    private func record(_ obj: [String: Any]) {
+    @discardableResult
+    private func record(_ obj: [String: Any]) -> Bool {
         var obj = obj
         obj["timestamp"] = obj["timestamp"] ?? Transcripts.stamp()   // 跟 Claude 紀錄同欄位：md 和交接看得到時間
-        guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return false }
         let fm = FileManager.default
-        try? fm.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !fm.fileExists(atPath: transcriptURL.path) { fm.createFile(atPath: transcriptURL.path, contents: nil) }
-        guard let h = try? FileHandle(forWritingTo: transcriptURL) else { return }
-        defer { try? h.close() }
-        _ = try? h.seekToEnd()
-        try? h.write(contentsOf: d + Data([0x0a]))
+        do {
+            try fm.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !fm.fileExists(atPath: transcriptURL.path), !fm.createFile(atPath: transcriptURL.path, contents: nil) { return false }
+            let h = try FileHandle(forWritingTo: transcriptURL)
+            defer { try? h.close() }
+            _ = try h.seekToEnd()
+            try h.write(contentsOf: d + Data([0x0a]))
+            return true
+        } catch {
+            let ns = error as NSError
+            NSLog("Apple 模型對話紀錄寫入失敗：%@", error.localizedDescription)
+            EventLog.log(L("檔案"), L("Apple 模型對話紀錄寫入失敗（\(ns.domain) \(ns.code)）"))
+            return false
+        }
     }
 }

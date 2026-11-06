@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleAlternateNames</key>
+	<array>
+		<string>cdv</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_TW</string>
 	<key>CFBundleDisplayName</key>
@@ -17,10 +21,12 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>00.02.13</string>
+	<string>00.05.18</string>
 	<key>CFBundleVersion</key>
-	<string>00.02.13</string>
+	<string>00.05.18</string>
 	<key>CodenvAgyDefault</key>
+	<true/>
+	<key>CodenvAutoApprove</key>
 	<false/>
 	<key>CodenvDataFolder</key>
 	<string>codenv</string>
@@ -28,6 +34,8 @@
 	<string>public</string>
 	<key>CodenvFeedbackEmail</key>
 	<string>codenvstudio@gmail.com</string>
+	<key>CodenvSourceDir</key>
+	<string></string>
 	<key>CodenvUpdateRepo</key>
 	<string>olilllioli287/codenv-public</string>
 	<key>LSMinimumSystemVersion</key>

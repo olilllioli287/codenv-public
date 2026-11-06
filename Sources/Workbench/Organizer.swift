@@ -17,16 +17,24 @@ struct OrganizerRow: Identifiable {
 
 final class OrganizerModel: ObservableObject {
     @Published var sizes: [UUID: Int64] = [:]
+    private var sizeScan = 0
 
     /// 紀錄檔大小（在背景量，一百多個檔案一下就好）
     func loadSizes(_ store: Store) {
-        let list = store.conversations.map { c in (c.id, Store.claudeTranscript(c.claudeSession, path: store.project(c.projectID)?.path ?? NSHomeDirectory())) }
+        sizeScan += 1
+        let scan = sizeScan
+        // 別家模型（Gemini、ChatGPT、Copilot、本機、Apple）的紀錄不在 Claude 的資料夾：一起量，不然那些聊天室會被當成「空的」，選「空的」全選刪除就刪到有內容的對話
+        let list = store.conversations.map { c in
+            (c.id, [Store.claudeTranscript(c.claudeSession, path: store.project(c.projectID)?.path ?? NSHomeDirectory()),
+                    AgyBridge.transcript(for: c.claudeSession), CodexBridge.transcript(for: c.claudeSession), CopilotBridge.transcript(for: c.claudeSession),
+                    LocalBridge.transcript(for: c.claudeSession), AppleBridge.transcript(for: c.claudeSession)])
+        }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var out: [UUID: Int64] = [:]
-            for (id, url) in list {
-                out[id] = ((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize).map(Int64.init) ?? 0
+            for (id, urls) in list {
+                out[id] = urls.reduce(Int64(0)) { $0 + (((try? $1.resourceValues(forKeys: [.fileSizeKey]))?.fileSize).map(Int64.init) ?? 0) }
             }
-            DispatchQueue.main.async { self?.sizes = out }
+            DispatchQueue.main.async { if let self, self.sizeScan == scan, self.sizes != out { self.sizes = out } }   // 沒變就不通知，整理視窗才不會每 5 秒重畫一次
         }
     }
 }
@@ -67,8 +75,18 @@ struct OrganizerView: View {
             case "all": return true
             case "archived": return r.archived
             case "active": return !r.archived
-            case "empty": return r.size == 0 && !r.busy
-            default: return store.conversation(r.id).flatMap { store.groupOf($0) }?.uuidString == filter
+            case "empty":   // 還沒量到的（新開的、剛開視窗）不算空的；瀏覽器格、終端機沒有紀錄檔（大小一定是 0），不是「空對話」，全選刪除會被刪掉
+                return model.sizes[r.id] == 0 && !r.busy && (store.conversation(r.id).map { !$0.isBrowser && $0.terminal != true } ?? false)
+            default:
+                guard let selected = UUID(uuidString: filter), let conversation = store.conversation(r.id),
+                      let group = store.groupOf(conversation) else { return false }
+                var current: UUID? = group
+                var seen = Set<UUID>()
+                while let id = current, seen.insert(id).inserted {
+                    if id == selected { return true }
+                    current = store.group(id)?.parentID
+                }
+                return false
             }
         }
         .filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.folder.localizedCaseInsensitiveContains(search) }
@@ -86,6 +104,7 @@ struct OrganizerView: View {
         }
         .frame(minWidth: 760, minHeight: 460)
         .onAppear { model.loadSizes(store) }
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in model.loadSizes(store) }   // 視窗開著時對話又聊了幾句，「空的」篩選才不會過期
         .alert(L("重新命名對話"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField(L("名稱"), text: $renameText)
             Button(L("好")) { if let r = renaming { store.rename(r, to: renameText, byUser: true) }; renaming = nil }
@@ -187,7 +206,7 @@ struct OrganizerView: View {
                         }
                         .frame(width: 190)
                     }
-                    Button("Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: p.path) }
+                    Button("Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: p.path, isDirectory: true)) }
                     Button(role: .destructive) { removeFolder(p.id) } label: { Image(systemName: "minus.circle") }
                         .buttonStyle(.borderless).help(L("從側欄和 claude 選單清單移除（不會刪資料夾，也不會刪對話紀錄）"))
                 }

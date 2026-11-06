@@ -124,10 +124,18 @@ extension MainWindowController {
             }
         }
         m.addItem(.separator())
-        m.addItem(ActionItem(title: L("瀏覽器（Gemini 網頁版）")) { [weak self] in
+        let browserItem = NSMenuItem(title: L("瀏覽器"), action: nil, keyEquivalent: "")
+        let browserSub = NSMenu()
+        browserSub.addItem(ActionItem(title: "Gemini") { [weak self] in
             guard let self, let pid = self.store.selectedProject ?? self.store.projects.first?.id else { return }
-            self.fillEmpty(slot, with: self.store.createBrowser(in: pid).id)
+            self.fillEmpty(slot, with: self.store.createBrowser(in: pid, url: GadgetKind.gemini.home).id)
         })
+        browserSub.addItem(ActionItem(title: "NotebookLM") { [weak self] in
+            guard let self, let pid = self.store.selectedProject ?? self.store.projects.first?.id else { return }
+            self.fillEmpty(slot, with: self.store.createBrowser(in: pid, url: GadgetKind.notebooklm.home).id)
+        })
+        browserItem.submenu = browserSub
+        m.addItem(browserItem)
         m.addItem(ActionItem(title: L("其他資料夾…")) { [weak self] in self?.pickFolderForEmpty(slot, group: nil) })
         m.popUp(positioning: nil, at: NSPoint(x: 0, y: v.bounds.height + 4), in: v)
     }
@@ -156,6 +164,7 @@ extension MainWindowController {
     /// 把某段聊天放進空格子（原本擺在別處會搬過來）
     func fillEmpty(_ slot: UUID?, with conv: UUID) {
         if let slot, store.locate(slot) != nil {
+            store.unplace(conv)
             _ = store.replacePane(slot, with: conv)
             Store.emptySlots.remove(slot)
         } else if let w = store.currentWindow {

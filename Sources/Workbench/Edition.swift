@@ -4,8 +4,9 @@ import Foundation
 /// 私人版的 Info.plist 帶原本的值，行為跟以前一模一樣；公版是匯出腳本（scripts/export-public.sh）把這些鍵改掉或刪掉：
 ///   CodenvEdition       "public"＝公版；沒有這個鍵＝私人版
 ///   CodenvDataFolder    Application Support 底下放資料的資料夾名字（公版 codenv；沒有鍵＝AI 工作台）
-///   CodenvAgyDefault    agy 功能預設開還是關（公版 false；沒有鍵＝true）
+///   CodenvAgyDefault    agy 功能預設開還是關（公版 true，第一次用前跳一次提醒；沒有鍵＝true）
 ///   CodenvUpdateRepo    更新提醒要查的 GitHub repo（owner/name）；沒有這個鍵＝完全不檢查更新
+///   CodenvAutoApprove   看板「Claude 開的目標自動生效」預設開還是關（公版 false；沒有鍵＝true）
 ///   CodenvFeedbackEmail 「回報問題」寄到哪個信箱（要跟 CodenvUpdateRepo 兩個都有才顯示回報入口；沒有＝沒有這個入口）
 ///   CodenvProjectsFolder／CodenvPracticeFolder／CodenvLocalPython／CodenvImageShelf  家目錄底下的個人資料夾（公版沒有，對應功能就用通用的位置或不啟用）
 /// 測試 App（有 --state-dir）可以加 --edition-plist <檔案>，用那份 plist 的鍵蓋過去，在除錯版裡模擬公版。
@@ -26,8 +27,11 @@ enum Edition {
     static var bundleID: String { string("CFBundleIdentifier") ?? "com.local.aiworkbench" }
     static var version: String { string("CFBundleShortVersionString") ?? "" }
     static var updateRepo: String? { string("CodenvUpdateRepo") }
+    static var sourceDir: String? { string("CodenvSourceDir") }
     static var feedbackEmail: String? { string("CodenvFeedbackEmail") }
     static var agyDefault: Bool { info["CodenvAgyDefault"] as? Bool ?? true }
+    /// 看板「Claude 開的目標自動生效」的預設（私人版開、公版關）；使用者在設定裡改了就以他的為準
+    static var autoApproveDefault: Bool { info["CodenvAutoApprove"] as? Bool ?? true }
 
     static let home = FileManager.default.homeDirectoryForCurrentUser
 

@@ -20,7 +20,7 @@ private final class ShelfTile: NSImageView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     // 點一下用 image-shelf 的標註編輯器打開；編輯器還沒編好就用預覽程式
     override func mouseDown(with event: NSEvent) {
-        if let editor, !editor.isEmpty, let page {
+        if let editor, !editor.isEmpty, let page, ImageEditor.trusted(editor) {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: editor)
             p.arguments = [page, file, file, label.isEmpty ? "Image #\(n)" : label, "zh-Hant"]
@@ -115,8 +115,10 @@ final class ImageShelfOverlay: NSView {
         let path = folder + "/shelf.json"
         let mtime = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
         guard mtime != lastMTime else { return }
+        if mtime == nil { shelf = nil; lastMTime = nil; return }     // 檔案沒了
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)), let decoded = try? JSONDecoder().decode(ShelfFile.self, from: data) else { return }
+        shelf = decoded
         lastMTime = mtime
-        shelf = (try? Data(contentsOf: URL(fileURLWithPath: path))).flatMap { try? JSONDecoder().decode(ShelfFile.self, from: $0) }
     }
 
     private func image(_ file: String) -> NSImage? {
@@ -150,7 +152,7 @@ final class ImageShelfOverlay: NSView {
         }
 
         let isLight = (background.usingColorSpace(.sRGB)?.brightnessComponent ?? 0) > 0.5
-        let key = s.items.map { "\($0.n):\($0.thumb):\($0.edited)" }.joined(separator: ",") + "@\(width)x\(height)\(isLight ? "L" : "D")"
+        let key = s.items.map { "\($0.n):\($0.thumb):\($0.edited):\($0.label ?? "")" }.joined(separator: ",") + "@\(width)x\(height)\(isLight ? "L" : "D"):\(s.editor ?? ""):\(s.page ?? ""):\(m.tileRows)"
         guard key != drawnKey else { return }
         drawnKey = key
         let shown = s.items.compactMap { item -> (ShelfItem, NSImage)? in
@@ -184,7 +186,7 @@ final class ImageShelfOverlay: NSView {
             badge.backgroundColor = NSColor.black.withAlphaComponent(0.7)
             badge.sizeToFit()
             badge.frame.origin = NSPoint(x: x + 2, y: 4)
-            content.addSubview(badge)
+            tile.addSubview(badge)
         }
         // 新貼的圖捲到看得見
         if shown.count > lastCount {

@@ -80,15 +80,19 @@ codenv checks GitHub Releases for a new version 30 seconds after launch, then ev
 
 “Report a problem… (回報問題…)” is available in settings and the menu. You can email codenvstudio@gmail.com or open a GitHub issue. Error logs are not attached by default; to attach them, select the option yourself. Usernames in file paths are replaced before anything is attached.
 
-## agy (Google Antigravity CLI) — off by default
+## agy (Google Antigravity CLI) — please read before using
 
-Gemini chats, gray next-message suggestions, usage checks, and automatic board task execution all use codenv to call Google’s `agy`. Google’s official FAQ (<https://antigravity.google/docs/faq/>) says:
+Gemini chats, gray next-message suggestions, usage checks, and the Board feature that lets Claude hand work to agy all use codenv to call Google’s `agy`. Google’s official FAQ (<https://antigravity.google/docs/faq/>) says two different things:
 
-> Antigravity CLI headless mode (`agy -p`) is intended for direct scripting and CI workflows. Wrapping `agy` inside third-party coding agents or applications, or automating account rotation, is not supported under consumer plans.
+1. Using agy’s sign-in to run third-party software (such as Claude Code or OpenCode) violates the Terms of Service and may get your account suspended. codenv does not do this: it never reads or reuses your sign-in; it only calls the official `agy -p`.
 
-> Using third-party software, tools, or services to access Antigravity is a violation of our Terms of Service … Such actions can result in suspension or termination of your account.
+   > Using third-party software, tools, or services to access Antigravity is a violation of our Terms of Service … Such actions can result in suspension or termination of your account.
 
-This feature is **off by default**. To enable it (Settings → 對話 (Chat) → agy), you’ll first see the warning above. Your Google account may be suspended after enabling it; you accept the risk. codenv does not attempt to hide itself.
+2. `agy -p` is meant for direct scripting and CI. Wrapping agy inside a third-party coding agent or app is “not supported” under consumer plans. The codenv features above fall into this category.
+
+   > Antigravity CLI headless mode (`agy -p`) is intended for direct scripting and CI workflows. Wrapping `agy` inside third-party coding agents or applications, or automating account rotation, is not supported under consumer plans.
+
+This feature is **on by default**, and codenv shows a reminder once before first use. To turn it off: Settings → 對話 (Chat) → agy. Please verify the actual situation yourself in related articles and Google’s latest statements; codenv does not guarantee your account will be safe, you accept the risk, and codenv does not attempt to hide itself.
 
 ## Building from source
 

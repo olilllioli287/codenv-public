@@ -2,6 +2,11 @@ import AppKit
 import Combine
 import SwiftUI
 
+extension Notification.Name {
+    static let rightPanelToggleWillBegin = Notification.Name("AIWorkbenchRightPanelToggleWillBegin")
+    static let rightPanelToggled = Notification.Name("AIWorkbenchRightPanelToggled")
+}
+
 // 右邊主畫面：最上面一排是 Session 名稱和 Window 分頁（像 tmux 的狀態列，但在上面、可以點），
 // 下面照目前 Window 的分割樹擺 Pane。按鍵照使用者 ~/.tmux.conf 的 Ctrl+A 那一套（PrefixKeys）。
 
@@ -21,7 +26,12 @@ final class PaneFrame: NSView {
     /// 拖標題：.began／.moved／.ended（點位置是視窗座標）；只點一下＝onHeaderClick
     var onHeaderDrag: ((HeaderGrip.Phase, NSPoint) -> Void)?
     var onHeaderClick: (() -> Void)?
-    var showsHeader = false { didSet { header.isHidden = !showsHeader; closeButton.isHidden = !showsHeader; grip.isHidden = !showsHeader; updateRing(); needsLayout = true } }
+    /// 滑鼠停在標題上 0.8 秒要顯示的資訊（標籤、內容）；nil＝不顯示
+    var infoProvider: (() -> [(String, String)])?
+    private let infoCard = InfoCard()
+    private var hoverTimer: Timer?
+    static let hoverDelay: TimeInterval = 0.8
+    var showsHeader = false { didSet { header.isHidden = !showsHeader; closeButton.isHidden = !showsHeader; grip.isHidden = !showsHeader; if !showsHeader { hideInfo() }; updateRing(); needsLayout = true } }
     var isFocused = false { didSet { updateRing() } }
     static let headerHeight: CGFloat = 36
 
@@ -39,9 +49,10 @@ final class PaneFrame: NSView {
         closeButton.target = self
         closeButton.action = #selector(close)
         closeButton.toolTip = L("關掉這格（Ctrl+A x）；對話會留在側欄")
-        grip.toolTip = L("按住標題拖到上面的分頁列：變成新的分頁")
+        grip.toolTip = L("按住標題拖：拖到上面的分頁列＝變成新的分頁；拖到另一格的某一邊＝放在那一邊；按住 ⌘ 拖到另一格＝兩格互換")
         grip.onDrag = { [weak self] ph, p in self?.onHeaderDrag?(ph, p) }
-        grip.onClick = { [weak self] in self?.onHeaderClick?() }
+        grip.onClick = { [weak self] in self?.onHeaderClick?(); self?.hideInfo() }
+        grip.onHover = { [weak self] inside in inside ? self?.scheduleInfo() : self?.hideInfo() }
         addSubview(content)
         addSubview(header)
         addSubview(grip)
@@ -66,6 +77,32 @@ final class PaneFrame: NSView {
 
     @objc private func close() { onClose?() }
 
+    // MARK: 停在標題上 0.8 秒：在標題下方淡入一張資訊小卡（0.15 秒、邊框閃一下），移開淡出
+    private func scheduleInfo() {
+        hoverTimer?.invalidate()
+        guard infoProvider != nil, showsHeader else { return }
+        let t = Timer(timeInterval: Self.hoverDelay, repeats: false) { [weak self] _ in self?.showInfo() }
+        RunLoop.main.add(t, forMode: .common)
+        hoverTimer = t
+    }
+    func showInfo() {
+        hoverTimer?.invalidate(); hoverTimer = nil
+        guard let rows = infoProvider?(), !rows.isEmpty, showsHeader else { return }
+        infoCard.set(rows: rows, accent: accent)
+        let w = min(max(160, bounds.width - 28), 380)
+        infoCard.frame = NSRect(x: 14, y: bounds.height - Self.headerHeight - 6 - infoCard.height(for: w), width: w, height: infoCard.height(for: w))
+        if infoCard.superview == nil { addSubview(infoCard) } else { addSubview(infoCard, positioned: .above, relativeTo: nil) }
+        infoCard.fadeIn()
+    }
+    func hideInfo() {
+        hoverTimer?.invalidate(); hoverTimer = nil
+        infoCard.fadeOut()
+    }
+    /// 測試用：假裝滑鼠進來／離開標題
+    func testHover(_ inside: Bool) { grip.onHover?(inside) }
+    /// 測試用：卡片現在的狀態
+    var infoState: String { "卡片 alpha=\(String(format: "%.2f", infoCard.layer?.presentation()?.opacity ?? Float(infoCard.alphaValue))) 在畫面=\(infoCard.superview != nil && !infoCard.isHidden) 列=\(infoCard.rowCount)" }
+
     override func layout() {
         super.layout()
         let h = showsHeader ? Self.headerHeight : 0
@@ -78,8 +115,9 @@ final class PaneFrame: NSView {
         closeButton.frame = NSRect(x: bounds.width - 28, y: bounds.height - h + (h - 18) / 2, width: 18, height: 18)
         ring.frame = bounds
         ring.headerHeight = h
-        // 框永遠在最上面（拖放接收區除外：那是之後才加的，會在它上面）
+        // 框永遠在最上面（拖放接收區除外：那是之後才加的，會在它上面）；資訊小卡在框的上面
         if subviews.last !== ring, !subviews.contains(where: { $0 is DropOverlay }) { addSubview(ring, positioned: .above, relativeTo: nil) }
+        if infoCard.superview != nil, subviews.last !== infoCard { addSubview(infoCard, positioned: .above, relativeTo: nil) }
     }
 }
 
@@ -108,10 +146,20 @@ final class HeaderGrip: NSView {
     enum Phase { case began, moved, ended }
     var onDrag: ((Phase, NSPoint) -> Void)?
     var onClick: (() -> Void)?
+    /// 滑鼠進來（true）／離開（false）：停留資訊小卡用
+    var onHover: ((Bool) -> Void)?
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with e: NSEvent) { onHover?(true) }
+    override func mouseExited(with e: NSEvent) { onHover?(false) }
     override func mouseDown(with e: NSEvent) {
+        onHover?(false)      // 按下去（點、拖）就收掉小卡
         guard let w = window else { return }
         let start = e.locationInWindow
         var dragging = false
@@ -234,8 +282,18 @@ final class PaneSlide {
     private struct Anim { var kind: Kind; var start: Date; var from: Double; var v0: Double; var done: (() -> Void)? }
     private var anims: [UUID: Anim] = [:]
     private var timer: Timer?
-    /// 每一格畫面要重排時叫一次（WindowHost 設）
-    var onTick: (() -> Void)?
+    /// 每一格畫面要重排時通知每個 WindowHost（主視窗和獨立視窗各自登記；以前只有一個 onTick，只綁第一個開的視窗，
+    /// 獨立視窗裡的掛件滑進來會卡在右緣外面，第一個視窗關掉後就沒人接）
+    private final class Listener { weak var owner: AnyObject?; let f: () -> Void; init(_ o: AnyObject, _ f: @escaping () -> Void) { owner = o; self.f = f } }
+    private var listeners: [Listener] = []
+    func listen(_ owner: AnyObject, _ f: @escaping () -> Void) {
+        listeners.removeAll { $0.owner == nil || $0.owner === owner }
+        listeners.append(Listener(owner, f))
+    }
+    func notify() {
+        listeners.removeAll { $0.owner == nil }
+        listeners.forEach { $0.f() }
+    }
     /// 測試用：所有動畫停在第幾秒（--pane-slide）
     var frozen: Double?
 
@@ -248,7 +306,7 @@ final class PaneSlide {
 
     /// 彈進來；正在滑出去的就從目前位置反轉
     func slideIn(_ id: UUID) {
-        guard !Self.reduceMotion else { anims[id] = nil; onTick?(); return }
+        guard !Self.reduceMotion else { anims[id] = nil; notify(); return }
         let (s, v) = state(id) ?? (0, 0)
         anims[id] = Anim(kind: .slideIn, start: Date(), from: s, v0: v, done: nil)
         run()
@@ -292,7 +350,7 @@ final class PaneSlide {
     }
 
     private func run() {
-        onTick?()
+        notify()
         guard timer == nil else { return }
         let t = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
@@ -306,7 +364,7 @@ final class PaneSlide {
                 a.done?()
             }
         }
-        onTick?()
+        notify()
         if anims.isEmpty { timer?.invalidate(); timer = nil }
     }
 }
@@ -397,6 +455,10 @@ final class TabBar: NSView {
     var canPull: ((Int) -> Bool)?
     var onPull: ((Int, NSPoint) -> Void)?
     var onPullEnd: ((Int, NSPoint?) -> Void)?
+    /// 拖到主視窗外面放開：(位置, 螢幕座標)
+    var onDetach: ((Int, NSPoint) -> Void)?
+    /// 拖著分頁在視窗外面／回到裡面：(位置, 螢幕座標, 現在在外面嗎)；放開時也會再叫一次（外面＝false 表示取消）
+    var onOutside: ((Int, NSPoint, Bool) -> Void)?
     var onNew: (() -> Void)?
     var onToggleSidebar: (() -> Void)?
     var sessionMenu: (() -> NSMenu)?
@@ -430,7 +492,7 @@ final class TabBar: NSView {
         sideButton.target = self
         sideButton.action = #selector(toggleSidebar)
         sideButton.toolTip = L("收起／打開側欄（⌃ ⌘ S）")
-        addSubview(sideButton)
+        // 分頁列最左邊的收起側欄按鈕拿掉了（使用者 10/29）：收起／打開側欄只靠 F3（或選單的 ⌃ ⌘ S）；sideButton 只留著排版的位置，不加進畫面
         dragHandle.toolTip = L("按住拖動視窗，點兩下放大")
         addSubview(dragHandle)
         sessionButton.bezelStyle = .inline
@@ -452,11 +514,23 @@ final class TabBar: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    // MARK: 拖檔案停在分頁上：1.5 秒後切到那個 Window（像 Finder 的彈簧資料夾），再自己決定放進哪一格
+    // MARK: 拖檔案停在分頁上：停 0.8 秒、閃兩下（每下 0.15 秒、中間隔 0.15 秒），第二下閃完切到那個 Window（使用者 10/29），再自己決定放進哪一格
 
     private var currentTab = 0
     private var springTab: Int?
-    private var springTimer: Timer?
+    private var springTimers: [Timer] = []
+    private var springFlash = false          // 現在是不是閃亮的那一下
+    static let springDwell: TimeInterval = 0.8, springFlashOn: TimeInterval = 0.15, springFlashGap: TimeInterval = 0.15
+
+    private func cancelSpring() {
+        springTimers.forEach { $0.invalidate() }; springTimers = []
+        if springFlash { springFlash = false; if let old = springTab, old < buttons.count { (buttons[old] as? TabButton)?.flashing = false } }
+    }
+    private func after(_ t: TimeInterval, _ f: @escaping () -> Void) {
+        let timer = Timer(timeInterval: t, repeats: false) { _ in f() }
+        RunLoop.main.add(timer, forMode: .common)   // 拖曳中的事件迴圈不跑一般模式的計時器
+        springTimers.append(timer)
+    }
 
     override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation { draggingUpdated(s) }
     override func draggingUpdated(_ s: NSDraggingInfo) -> NSDragOperation {
@@ -472,19 +546,30 @@ final class TabBar: NSView {
     func springHover(at p: NSPoint?) {
         let i = p.flatMap { p in buttons.firstIndex { $0.frame.contains(p) } }.flatMap { $0 == currentTab ? nil : $0 }
         guard i != springTab else { return }
-        springTimer?.invalidate(); springTimer = nil
+        cancelSpring()
         if let old = springTab, old < buttons.count { (buttons[old] as? TabButton)?.springing = false }
         springTab = i
         guard let i else { return }
         (buttons[i] as? TabButton)?.springing = true
-        let t = Timer(timeInterval: 1.5, repeats: false) { [weak self] _ in
+        let d = Self.springDwell, on = Self.springFlashOn, gap = Self.springFlashGap
+        func flash(_ v: Bool) { guard self.springTab == i else { return }; Self.springLog.append((v ? "亮" : "滅", CACurrentMediaTime())); self.springFlash = v; (self.buttons.indices.contains(i) ? self.buttons[i] as? TabButton : nil)?.flashing = v }
+        Self.springLog = [("開始", CACurrentMediaTime())]
+        after(d) { flash(true) }                         // 第一下
+        after(d + on) { flash(false) }
+        after(d + on + gap) { flash(true) }              // 第二下
+        after(d + 2 * on + gap) { [weak self] in         // 第二下閃完：切過去
             guard let self, self.springTab == i else { return }
-            self.springTab = nil; self.springTimer = nil
+            flash(false)
+            self.springTab = nil; self.springTimers = []
+            (self.buttons.indices.contains(i) ? self.buttons[i] as? TabButton : nil)?.springing = false
+            Self.springLog.append(("切換", CACurrentMediaTime()))
             self.onSelect?(i)
         }
-        RunLoop.main.add(t, forMode: .common)   // 拖曳中的事件迴圈不跑一般模式的計時器
-        springTimer = t
     }
+    /// 測試用：彈簧事件的時間記錄（亮、滅、切換）
+    static var springLog: [(String, CFTimeInterval)] = []
+    /// 測試用：分頁的目前狀態（springing＝在等、flashing＝閃亮的那一下）
+    func springState() -> String { buttons.enumerated().map { i, b in (b as? TabButton).map { "\(i):\($0.springing ? "等" : "-")\($0.flashing ? "亮" : "")" } ?? "" }.joined(separator: " ") }
 
     /// 測試用：游標停在第 i 個分頁的中間（nil＝離開）
     func springHover(tab i: Int?) {
@@ -494,11 +579,26 @@ final class TabBar: NSView {
     func tabScreenRects() -> [NSRect] { buttons.compactMap { b in b.window.map { $0.convertToScreen(b.convert(b.bounds, to: nil)) } } }
 
     /// 分頁上不放「做完沒看」的小藍點：只看側欄（點側欄那段對話會跳到它在的分頁；分頁也亮的話，跳過去之後舊分頁亮著會以為標錯，使用者 10/24 要拿掉）
+    /// 滑鼠按在分頁上（點、拖、拉進畫面）的期間：分頁按鈕不要重建。聊天串流時 store 一直變、render 一直叫 update，
+    /// 重建會把手上正在拖的那顆換掉（放開時找不到它：換順序失效、拉進畫面的藍色遮罩收不掉），新按鈕拖曳中也不排版（整排看起來消失）
+    fileprivate var held = false
+    private var deferredUpdate: (() -> Void)?
+    fileprivate func flushDeferred() {
+        guard !held, dragging == nil, let f = deferredUpdate else { return }
+        deferredUpdate = nil
+        f()
+    }
+
     func update(session: String, tabs: [String], current: Int, accent: NSColor) {
+        if held || dragging != nil {
+            deferredUpdate = { [weak self] in self?.update(session: session, tabs: tabs, current: current, accent: accent) }
+            return
+        }
+        deferredUpdate = nil     // 這次是最新的：之前壓著的舊參數不要再套（不然換完順序又被舊的蓋回去）
         currentTab = current
         // 聊天進行中 store 一直變、這裡一直重建：分頁還是同一排就讓計時繼續跑，不然永遠等不到 1.5 秒
         if let i = springTab, tabs.count != buttons.count || i == current {
-            springTab = nil; springTimer?.invalidate(); springTimer = nil
+            cancelSpring(); springTab = nil
         }
         sessionButton.attributedTitle = NSAttributedString(string: " Session \(session) ", attributes: [
             .font: NSFont.systemFont(ofSize: 12 * UIScale.shared.f, weight: .semibold), .foregroundColor: NSColor.white,
@@ -511,6 +611,7 @@ final class TabBar: NSView {
             b.onDoubleClick = { [weak self] in self?.onRename?(i) }
             b.onClose = { [weak self] in self?.onClose?(i) }
             b.springing = i == springTab
+            b.flashing = i == springTab && springFlash
             addSubview(b)
             return b
         }
@@ -522,10 +623,9 @@ final class TabBar: NSView {
         // 側欄收起來時這條貼到視窗最左邊：讓開左上角的紅黃綠按鈕
         let atLeftEdge = convert(NSPoint.zero, to: nil).x < 40
         var x: CGFloat = atLeftEdge ? 80 : 8
-        sideButton.frame = NSRect(x: x, y: (bounds.height - 22) / 2, width: 24, height: 22)
-        // 側欄按鈕和 Session 中間留空：按住這塊可以拖動整個視窗
-        dragHandle.frame = NSRect(x: x + 28, y: 0, width: 44, height: bounds.height)
-        x += 30 + 44
+        // 收起側欄的按鈕拿掉了：這裡留一小塊空白，按住可以拖動整個視窗
+        dragHandle.frame = NSRect(x: x, y: 0, width: 44, height: bounds.height)
+        x += 44
         let s = sessionButton.intrinsicContentSize
         sessionButton.frame = NSRect(x: x, y: (bounds.height - s.height) / 2, width: s.width, height: s.height)
         x += s.width + 10
@@ -549,6 +649,56 @@ final class TabBar: NSView {
     }
 
     /// 拖 Pane 標題到分頁列上：顯示／收起最後面的「＋ 名字」預覽分頁
+    /// 分頁被拉走：在原位留一張它的影像，縮小淡出（不要直接消失）
+    func collapseGhost(of index: Int) {
+        guard buttons.indices.contains(index) else { return }
+        let b = buttons[index]
+        guard let rep = b.bitmapImageRepForCachingDisplay(in: b.bounds) else { return }
+        b.cacheDisplay(in: b.bounds, to: rep)
+        let img = NSImage(size: b.bounds.size); img.addRepresentation(rep)
+        let ghost = NSImageView(frame: b.frame)
+        ghost.image = img
+        ghost.imageScaling = .scaleAxesIndependently
+        addSubview(ghost)
+        if Motion.reduced {
+            NSAnimationContext.runAnimationGroup({ $0.duration = 0.2; ghost.animator().alphaValue = 0 }, completionHandler: { ghost.removeFromSuperview() })
+        } else {
+            var f = b.frame; f.size.width = 0
+            NSAnimationContext.runAnimationGroup({ $0.duration = 0.22; ghost.animator().frame = f; ghost.animator().alphaValue = 0 }, completionHandler: { ghost.removeFromSuperview() })
+        }
+    }
+    /// 新回來的分頁（第 index 個）亮一下
+    func flashTab(_ index: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.buttons.indices.contains(index) else { return }
+            let b = self.buttons[index]
+            let v = NSView(frame: b.frame)
+            v.wantsLayer = true
+            v.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.55).cgColor
+            v.layer?.cornerRadius = 6
+            self.addSubview(v)
+            NSAnimationContext.runAnimationGroup({ $0.duration = 0.7; v.animator().alphaValue = 0 }, completionHandler: { v.removeFromSuperview() })
+        }
+    }
+    /// 「＋」按鈕的中心（螢幕座標）：獨立視窗關掉時飛向新分頁的位置（新分頁排在最後，就在這附近）
+    func plusScreenCenter() -> NSPoint? {
+        guard let w = window else { return nil }
+        return w.convertPoint(toScreen: convert(NSPoint(x: plus.frame.midX, y: plus.frame.midY), to: nil))
+    }
+    func isOutsideWindow(_ p: NSPoint, _ w: NSWindow) -> Bool {
+        let r = NSRect(origin: .zero, size: w.frame.size).insetBy(dx: -4, dy: -4)
+        return !r.contains(p)
+    }
+    func index(of b: NSView) -> Int? { buttons.firstIndex { $0 === b } }
+    /// 拖曳被打斷（視窗失去焦點、換螢幕、放開的訊息沒送到）：分頁的半透明、陰影、位移都還原
+    func cancelDrag() {
+        dragTarget = nil
+        dragging = nil
+        for b in buttons { b.alphaValue = 1; b.layer?.shadowOpacity = 0 }
+        DispatchQueue.main.async { [weak self] in self?.flushDeferred() }
+        showTear(nil, accent: tearGhost.accent)
+        needsLayout = true
+    }
     func showTear(_ title: String?, accent: NSColor) {
         let show = title != nil
         tearGhost.title = title ?? ""
@@ -601,7 +751,7 @@ final class TabBar: NSView {
         let from = buttons.firstIndex(where: { $0 === b })
         let to = dragTarget ?? from
         dragTarget = nil
-        guard let from, let to, slotX.indices.contains(to) else { dragging = nil; needsLayout = true; return }
+        guard let from, let to, slotX.indices.contains(to) else { dragging = nil; needsLayout = true; flushDeferred(); return }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.18
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -611,6 +761,7 @@ final class TabBar: NSView {
             b.layer?.shadowOpacity = 0
             self?.dragging = nil
             if to != from { self?.onMove?(from, to) } else { self?.needsLayout = true }
+            self?.flushDeferred()
         })
     }
 
@@ -722,6 +873,8 @@ private final class TabButton: NSView {
     private var hover = false { didSet { x.isHidden = !(hover || selected); needsDisplay = true } }
     /// 拖著檔案停在這個分頁上、等著切過來：整個分頁亮主題色
     var springing = false { didSet { needsDisplay = true } }
+    /// 閃亮的那一下（主題色重一點）
+    var flashing = false { didSet { needsDisplay = true } }
     private let accent: NSColor
     init(index: Int, title: String, selected: Bool, accent: NSColor) {
         self.selected = selected; self.accent = accent
@@ -750,7 +903,7 @@ private final class TabButton: NSView {
     }
     override func draw(_ dirtyRect: NSRect) {
         if springing {
-            accent.withAlphaComponent(0.3).setFill()
+            accent.withAlphaComponent(flashing ? 0.75 : 0.18).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
             return
         }
@@ -777,6 +930,8 @@ private final class TabButton: NSView {
         guard let bar = superview as? TabBar, let w = window else { onClick?(); return }
         // 放開前沒拖超過 4 點：就是點一下（切到這個 Window）
         // 左右拖＝換順序；往下拖出分頁列＝把這個 Window（只有一格的）拉進目前畫面的左／右／上／下半
+        bar.held = true
+        defer { bar.held = false; bar.flushDeferred() }
         let start = e.locationInWindow
         var dragging = false, pulling = false
         var last = start
@@ -786,6 +941,7 @@ private final class TabButton: NSView {
             let dx = last.x - start.x
             if !dragging && abs(dx) < 4 && abs(last.y - start.y) < 4 { continue }
             dragging = true
+            if let i = bar.index(of: self) { bar.onOutside?(i, w.convertPoint(toScreen: last), bar.isOutsideWindow(last, w)) }
             let below = bar.convert(last, from: nil).y < -6
             pullDebug("move \(last) barY=\(bar.convert(last, from: nil).y) below=\(below) pulling=\(pulling)")
             // 一旦拉出去就一直是「拉進畫面」，直到放開（放回分頁列上＝取消）
@@ -793,6 +949,14 @@ private final class TabButton: NSView {
             bar.drag(self, dx: dx)
         }
         pullDebug("up \(last) pulling=\(pulling) dragging=\(dragging)")
+        // 拖到視窗外面放開：這個 Window 變成獨立視窗（只有聊天格，沒有側欄和用量欄）
+        if dragging, bar.isOutsideWindow(last, w), let i = bar.index(of: self) {
+            bar.collapseGhost(of: i)
+            bar.cancelDrag()
+            bar.onDetach?(i, w.convertPoint(toScreen: last))
+            return
+        }
+        if dragging, let i = bar.index(of: self) { bar.onOutside?(i, w.convertPoint(toScreen: last), false) }
         if pulling { bar.pullEnd(self, at: last) } else if dragging { bar.drop(self) } else { onClick?() }
     }
     override func mouseEntered(with e: NSEvent) { hover = true }
@@ -809,6 +973,10 @@ final class WindowHost: NSViewController {
     private var frames: [UUID: PaneFrame] = [:]
     private var shownKey = ""
     private var bag: Set<AnyCancellable> = []
+    private var lastRenderedWindow: UUID?
+    private var lastRenderedFocus: UUID?
+    private var observers: [NSObjectProtocol] = []
+    private var mouseMonitor: Any?
     var onCloseWindowRequest: ((Int) -> Void)?
     var onRenameWindowRequest: ((Int) -> Void)?
     var onNewWindow: (() -> Void)?
@@ -821,12 +989,34 @@ final class WindowHost: NSViewController {
     private let petView = PetSlotView()
     /// 右側欄位：上面放用量（token），最下面是桌寵格子；所有 Pane 都在它左邊
     private let petColumn = PetColumnView()
-    private lazy var usageView = NSHostingView(rootView: Scaled { UsagePanel(m: UsageMonitor.shared, store: self.store, compact: { [weak self] id in self?.onCompact?(id) }) })
+    private var petColumnProgress: CGFloat?
+    private var petColumnAnimationTimer: Timer?
+    private var petColumnTogglePending = false
+    private struct PetColumnAnimation {
+        let from: CGFloat
+        let to: CGFloat
+        let start: TimeInterval
+        let width: CGFloat
+        let boundsSize: CGSize
+    }
+    private var petColumnAnimation: PetColumnAnimation?
+    private lazy var usageView: NSHostingView<Scaled<UsagePanel>> = {
+        let v = NSHostingView(rootView: Scaled { UsagePanel(m: UsageMonitor.shared, store: self.store, compact: { [weak self] id in self?.onCompact?(id) }) })
+        v.clipsToBounds = true      // macOS 14 起預設不裁切：內容比欄位高時不能畫到下面的桌寵格裡
+        return v
+    }()
     var onCompact: ((UUID) -> Void)?
 
-    init(store: Store, workspace: Workspace) {
+    /// 獨立視窗用：只畫這一個 Window 的格子（沒有分頁列、用量欄、桌寵格）；nil＝主視窗那個
+    let boundWindow: UUID?
+    /// 分頁拉到視窗外面放開（位置編號是主視窗分頁列上的、螢幕座標）：由 MainWindow 開獨立視窗
+    var onDetach: ((Int, NSPoint) -> Void)?
+    private var barH: CGFloat { boundWindow == nil ? Self.barHeight : 0 }
+
+    init(store: Store, workspace: Workspace, boundWindow: UUID? = nil) {
         self.store = store
         self.workspace = workspace
+        self.boundWindow = boundWindow
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -843,7 +1033,7 @@ final class WindowHost: NSViewController {
         v.addSubview(body)
         v.addSubview(tabBar)
         view = v
-        tabBar.onSelect = { [weak self] i in self?.store.selectWindow(at: i) }
+        tabBar.onSelect = { [weak self] i in self?.store.toggleWindowSelection(at: i) }   // 點分頁＝選取整個 Window，再點同一個＝回原本那格
         tabBar.onClose = { [weak self] i in self?.onCloseWindowRequest?(i) }
         tabBar.onRename = { [weak self] i in self?.onRenameWindowRequest?(i) }
         tabBar.onMove = { [weak self] from, to in
@@ -858,6 +1048,8 @@ final class WindowHost: NSViewController {
         }
         tabBar.onPull = { [weak self] _, p in self?.pullHover(p) }
         tabBar.onPullEnd = { [weak self] i, p in self?.pullEnd(i, p) }
+        tabBar.onOutside = { [weak self] i, p, out in self?.dragOutside(i, p, out) }
+        tabBar.onDetach = { [weak self] i, p in self?.resetTransientDragState(); self?.onDetach?(i, p) }
         tabBar.onNew = { [weak self] in self?.onNewWindow?() }
         tabBar.sessionMenu = { [weak self] in self?.sessionMenu?() ?? NSMenu() }
         // 版面或對話標題變了就重畫（合併成一次）
@@ -866,17 +1058,34 @@ final class WindowHost: NSViewController {
         }.store(in: &bag)
         // 桌寵空位：開關、調大小、換螢幕都重排
         petView.onResize = { [weak self] size in PetSlot.setSize(size, on: self?.view.window?.screen) }
-        NotificationCenter.default.addObserver(forName: PetSlot.changed, object: nil, queue: .main) { [weak self] _ in self?.layoutPetSlot() }
-        NotificationCenter.default.addObserver(forName: NSWindow.didChangeScreenNotification, object: nil, queue: .main) { [weak self] n in
-            if (n.object as? NSWindow) === self?.view.window { self?.layoutPetSlot() }
-        }
+        observers.append(NotificationCenter.default.addObserver(forName: PetSlot.changed, object: nil, queue: .main) { [weak self] _ in self?.layoutPetSlot() })
+        observers.append(NotificationCenter.default.addObserver(forName: .rightPanelToggleWillBegin, object: nil, queue: .main) { [weak self] _ in self?.petColumnTogglePending = true })
+        observers.append(NotificationCenter.default.addObserver(forName: .rightPanelToggled, object: nil, queue: .main) { [weak self] _ in self?.animatePetSlotToggle() })
+        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didChangeScreenNotification, object: nil, queue: .main) { [weak self] n in
+            if (n.object as? NSWindow) === self?.view.window { self?.cancelPetColumnAnimation(); self?.layoutPetSlot(); self?.resetTransientDragState() }
+        })
+        // 拖曳到一半被切走（例如 Rectangle 的 ⌃ ⌥ 方向鍵換視窗／螢幕）：放開的訊息可能沒送到這裡，接收區和半透明的分頁會一直留著、看起來整個視窗變半透明。
+        // 失去焦點、App 不在前景、換螢幕時一律收掉
+        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { [weak self] n in
+            if (n.object as? NSWindow) === self?.view.window { self?.resetTransientDragState() }
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.resetTransientDragState()
+        })
         // 文字大小改了：分頁列、格子標題跟著重畫
         UIScale.shared.$factor.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.render() }.store(in: &bag)
         // 側欄開始拖對話：每一格蓋上接收區，放開（或拖去別處）就收起來
-        NotificationCenter.default.addObserver(forName: DropOverlay.began, object: nil, queue: .main) { [weak self] _ in self?.showDropTargets() }
+        observers.append(NotificationCenter.default.addObserver(forName: DropOverlay.began, object: nil, queue: .main) { [weak self] _ in self?.showDropTargets() })
         // 點到哪一格，那格就變成目前那格
-        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] e in
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] e in
             guard let self, e.window === self.view.window else { return e }
+            self.store.scope = self.boundWindow      // 點在哪個視窗，之後的操作就落在哪個視窗的 Window 上
+            // 選取整個 Window 的狀態下點到任何一格：回到單格
+            if self.store.windowSelected {
+                let inAny = self.frames.values.contains { $0.superview != nil && $0.bounds.contains($0.convert(e.locationInWindow, from: nil)) }
+                    || self.empties.values.contains { $0.superview != nil && $0.bounds.contains($0.convert(e.locationInWindow, from: nil)) }
+                if inAny { self.store.windowSelected = false }
+            }
             for (id, v) in self.empties where v.superview != nil && v.bounds.contains(v.convert(e.locationInWindow, from: nil)) {
                 if self.store.currentWindow?.focused != id { self.store.setFocus(id) }
             }
@@ -889,7 +1098,11 @@ final class WindowHost: NSViewController {
                     // 換到另一段聊天：游標直接進那格的輸入框（等這一下點擊處理完再放，不然會被網頁拿走）；
                     // 已經在這格裡，再點輸入框以外才會離開
                     if let c = self.workspace.panes[id] as? ChatPane {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak c] in c?.focusInput() }
+                        // 這 0.05 秒內又點了別格（或關了這格）：游標不要被拉回這裡（Astra 11/5：延遲的焦點動作要確認還是同一格）
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak c] in
+                            guard let self, let c, self.store.currentWindow?.focused == id, c.window != nil else { return }
+                            c.focusInput()
+                        }
                     }
                 }
             }
@@ -898,10 +1111,44 @@ final class WindowHost: NSViewController {
         render()
     }
 
+    deinit {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+    }
+
+    /// 拖著分頁在視窗外面：游標旁邊跟著那個 Window 版面的縮圖預覽；拖回裡面或放開取消就淡出
+    let detachPreview = DetachPreview()
+    func testPreview(_ index: Int, at p: NSPoint) { dragOutside(index, p, true) }
+    private func dragOutside(_ index: Int, _ screenPoint: NSPoint, _ out: Bool) {
+        guard boundWindow == nil else { return }
+        guard out else { detachPreview.hide(); return }
+        guard let si = store.sessionIndex else { return }
+        let visible = store.sessions[si].windows.filter { !$0.detached }
+        guard visible.indices.contains(index), visible.count > 1 else { return }    // 主視窗至少留一個：不給預覽（也拉不出去）
+        let w = visible[index]
+        let panes = (w.root?.rects() ?? [:]).map { (store.conversation($0.key)?.title ?? "", $0.value) }
+        let base = view.window?.frame.size ?? NSSize(width: 1000, height: 700)
+        let size = NSSize(width: max(220, base.width / 4), height: max(150, base.height / 4))
+        detachPreview.show(title: w.renamed ? w.name : (w.focused.flatMap { store.conversation($0)?.title } ?? w.name), panes: panes, size: size, accent: accent, at: screenPoint)
+    }
+
+    /// 視窗座標的點落在哪一格（沒有＝nil）：⌥ 八宮格用來決定「這一格」
+    func conversation(atWindowPoint p: NSPoint) -> UUID? {
+        frames.first { $0.value.superview != nil && !$0.value.isHiddenOrHasHiddenAncestor && $0.value.bounds.contains($0.value.convert(p, from: nil)) }?.key
+    }
+
+    /// 版面重建時目前那格的輸入框會被重新掛上，焦點會掉回視窗本身（或沒有）：這種要交回；焦點在別的格也交回；
+    /// 只有焦點在這個 WindowHost 外面（側欄、搜尋欄）才不搶
+    private static func shouldReclaimFocus(_ r: NSResponder?, host: NSView, frame: NSView) -> Bool {
+        guard let v = r as? NSView else { return true }
+        return v.isDescendant(of: host) && !v.isDescendant(of: frame)
+    }
+
     override func viewDidLayout() {
         super.viewDidLayout()
         let b = view.bounds
-        tabBar.frame = NSRect(x: 0, y: b.height - Self.barHeight, width: b.width, height: Self.barHeight)
+        tabBar.frame = NSRect(x: 0, y: b.height - barH, width: b.width, height: barH)
+        tabBar.isHidden = boundWindow != nil
         layoutPetSlot()
     }
 
@@ -917,15 +1164,29 @@ final class WindowHost: NSViewController {
     /// 桌寵位置：視窗最右邊一條固定欄位（寬＝桌寵格子的寬），最下面是格子、上面是用量；Pane 都排在它左邊，不會被蓋到
     func layoutPetSlot() {
         guard isViewLoaded else { return }
-        let on = PetSlot.enabled
+        if petColumnTogglePending { return }
+        if let animation = petColumnAnimation, let progress = petColumnProgress {
+            // F4 動畫進行中視窗內容區變大小（例如剛按 F3 收左欄，系統動畫一路在改寬度）：
+            // 不取消、照新寬度接著滑，不然右欄會瞬間跳到終點（使用者 11/5：「f3再f4會很像跳的」）
+            let w = petColumnRoom()
+            petColumnAnimation = PetColumnAnimation(from: animation.from, to: animation.to, start: animation.start, width: w, boundsSize: view.bounds.size)
+            layoutPetColumn(progress: progress, width: w)
+            return
+        }
+        cancelPetColumnAnimation()
+        petColumnProgress = nil
+        let on = PetSlot.enabled && boundWindow == nil
         let size = PetSlot.size(on: view.window?.screen)
         let b = view.bounds
-        let h = b.height - Self.barHeight
-        let colW = on ? min(size.width, max(0, b.width - 300)) : 0
+        let h = b.height - barH
+        // 右邊用量欄至少要這麼寬才放得下字；視窗窄到擠不出來就整欄先不畫（設定不動，寬了會自己回來），不要讓字被切掉（使用者 10/29 用 Rectangle 把視窗縮窄）
+        let room = min(size.width, max(0, b.width - 300))
+        let show = on && room >= 190
+        let colW = show ? room : 0
         for f in frames.values { (f.content as? any ConversationPane)?.petReserve = .zero }
         body.frame = NSRect(x: 0, y: 0, width: b.width - colW, height: h)
         body.subviews.first { $0 !== placeholder && !($0 is DropOverlay) }?.frame = body.bounds
-        if on {
+        if show {
             if petColumn.superview !== view { view.addSubview(petColumn) }
             if petView.superview !== petColumn { petColumn.addSubview(petView) }
             if usageView.superview !== petColumn { petColumn.addSubview(usageView) }
@@ -940,12 +1201,102 @@ final class WindowHost: NSViewController {
         }
     }
 
+    /// 只有 F4 切換桌寵欄時滑動；其他版面更新仍由 layoutPetSlot 立即排版。
+    private func animatePetSlotToggle() {
+        cancelPetColumnAnimation()
+        petColumnTogglePending = false
+        guard isViewLoaded, boundWindow == nil else { return }
+        let enabled = PetSlot.enabled
+        let b = view.bounds
+        let size = PetSlot.size(on: view.window?.screen)
+        let room = min(size.width, max(0, b.width - 300))
+        let show = enabled && room >= 190
+        guard show || petColumn.superview != nil else { layoutPetSlot(); return }
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { layoutPetSlot(); return }
+
+        let from = petColumnProgress ?? (petColumn.superview != nil ? 1 : 0)
+        let to: CGFloat = show ? 1 : 0
+        let width = min(size.width, max(0, b.width - 300))
+        let animation = PetColumnAnimation(from: from, to: to, start: ProcessInfo.processInfo.systemUptime,
+                                           width: width, boundsSize: b.size)
+        petColumnAnimation = animation
+        petColumnProgress = from
+        layoutPetColumn(progress: from)
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            guard var animation = self.petColumnAnimation else { timer.invalidate(); return }
+            if self.view.bounds.size != animation.boundsSize {
+                // 大小變了（左欄正在收合／展開）：寬度跟著更新，動畫照樣跑完
+                animation = PetColumnAnimation(from: animation.from, to: animation.to, start: animation.start, width: self.petColumnRoom(), boundsSize: self.view.bounds.size)
+                self.petColumnAnimation = animation
+            }
+            let t = min(1, (ProcessInfo.processInfo.systemUptime - animation.start) / 0.25)
+            let eased = t * t * (3 - 2 * t)
+            let progress = animation.from + (animation.to - animation.from) * eased
+            self.petColumnProgress = progress
+            self.layoutPetColumn(progress: progress, width: animation.width)
+            if t >= 1 {
+                timer.invalidate()
+                self.petColumnAnimationTimer = nil
+                self.petColumnAnimation = nil
+                self.petColumnProgress = nil
+                if animation.to == 0 { self.petColumn.removeFromSuperview() }
+                self.layoutPetSlot()
+            }
+        }
+        petColumnAnimationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// 測試用（--trace-right）：右欄目前的左緣位置與寬度、主內容寬度
+    func debugRightPanel() -> String {
+        let col = petColumn.superview != nil ? "\(Int(petColumn.frame.minX)) \(Int(petColumn.frame.width))" : "- -"
+        return "\(Int(view.bounds.width)) \(Int(body.frame.width)) \(col) on=\(PetSlot.enabled) bound=\(boundWindow != nil) pending=\(petColumnTogglePending)"
+    }
+
+    /// 右欄現在能有多寬（跟 layoutPetSlot 同一條算式）
+    private func petColumnRoom() -> CGFloat {
+        let size = PetSlot.size(on: view.window?.screen)
+        return min(size.width, max(0, view.bounds.width - 300))
+    }
+
+    private func cancelPetColumnAnimation() {
+        petColumnAnimationTimer?.invalidate()
+        petColumnAnimationTimer = nil
+        petColumnAnimation = nil
+    }
+
+    /// 依露出比例同步調整主內容寬度與右欄位置；右欄固定寬度並從視窗外滑入。
+    private func layoutPetColumn(progress: CGFloat, width animationWidth: CGFloat? = nil) {
+        guard isViewLoaded else { return }
+        let size = PetSlot.size(on: view.window?.screen)
+        let b = view.bounds
+        let h = b.height - barH
+        let room = min(size.width, max(0, b.width - 300))
+        let width = animationWidth ?? petColumnAnimation?.width ?? (PetSlot.enabled && room >= 190 ? room : 0)
+        let p = min(1, max(0, progress))
+        for f in frames.values { (f.content as? any ConversationPane)?.petReserve = .zero }
+        body.frame = NSRect(x: 0, y: 0, width: b.width - width * p, height: h)
+        body.subviews.first { $0 !== placeholder && !($0 is DropOverlay) }?.frame = body.bounds
+        guard width > 0 else { return }
+        if petColumn.superview !== view { view.addSubview(petColumn) }
+        if petView.superview !== petColumn { petColumn.addSubview(petView) }
+        if usageView.superview !== petColumn { petColumn.addSubview(usageView) }
+        petColumn.frame = NSRect(x: b.width - width * p, y: 0, width: width, height: h)
+        let slotH = min(size.height, h)
+        petView.frame = NSRect(x: 0, y: 0, width: width, height: slotH)
+        usageView.frame = NSRect(x: 0, y: slotH, width: width, height: max(0, h - slotH))
+        petView.needsDisplay = true
+        petColumn.needsDisplay = true
+    }
+
     private var accent: NSColor {
         let pal = workspace.theme.palette(for: view.effectiveAppearance)
         return pal.ansi.count > 12 ? pal.ansi[12] : .controlAccentColor
     }
 
     /// 掛件格子滑進／滑出時：所有掛件所在的切口重排（PaneSlide 每一格叫一次）
+    private var slideListening = false
     private func slideTick() {
         func walk(_ v: NSView) { if let b = v as? SplitBox, b.bPane != nil { b.needsLayout = true }; v.subviews.forEach(walk) }
         walk(body)
@@ -953,16 +1304,30 @@ final class WindowHost: NSViewController {
 
     func render() {
         guard isViewLoaded else { return }
-        if PaneSlide.shared.onTick == nil { PaneSlide.shared.onTick = { [weak self] in self?.slideTick() } }
+        // 主視窗（boundWindow＝nil）一定看不到獨立視窗的 Window；獨立視窗只看自己那個：重繪時明確指定範圍，不管現在是誰拿著焦點
+        store.scoped(boundWindow) { renderInner() }
+    }
+
+    private func renderInner() {
+        // 獨立視窗的 Window 不在了（最後一格被拖回主視窗、Window 被刪、Session 被關）：關掉這個視窗，不要留一個空殼或去畫別人的格子
+        if let b = boundWindow, store.windowPosition(b) == nil {
+            DispatchQueue.main.async { [weak self] in self?.view.window?.close() }
+            return
+        }
+        if !slideListening { slideListening = true; PaneSlide.shared.listen(self) { [weak self] in self?.slideTick() } }
         let pal = workspace.theme.palette(for: view.effectiveAppearance)
         view.layer?.backgroundColor = pal.bg.cgColor
         let s = store.currentSessionLayout
-        let windows = s?.windows ?? []
+        let windows = (s?.windows ?? []).filter { !$0.detached }      // 拉出去的獨立視窗不在分頁列上
         let wi = store.windowIndex ?? 0
         // 分頁上：取過名字的顯示「[1] 名字」，沒取過只顯示「[1]」
         tabBar.update(session: s?.name ?? "", tabs: windows.map { $0.renamed ? $0.name : "" }, current: wi, accent: accent)
 
         guard let w = store.currentWindow else { return }
+        // 這次重繪是不是換了 Window 或換了目前那格（上一次畫的記在 lastRendered*）：只有這時、或焦點本來就在某個聊天格裡，才把鍵盤焦點交給目前那格；
+        // 背景更新（Store 變了）觸發的重繪，不能把使用者正在用的側欄、搜尋欄的焦點搶走
+        let switchedPane = lastRenderedWindow != w.id || lastRenderedFocus != w.focused
+        lastRenderedWindow = w.id; lastRenderedFocus = w.focused
         let root: PaneNode? = w.zoomed ? w.focused.map { .leaf($0) } : w.root
         let key = "\(w.id)|\(String(describing: root))"
         if key != shownKey {
@@ -990,7 +1355,7 @@ final class WindowHost: NSViewController {
             empties = empties.filter { visible.contains($0.key) }
         }
         for (id, e) in empties {
-            e.isFocused = id == w.focused && (root?.leaves.count ?? 0) > 1
+            e.isFocused = (id == w.focused && (root?.leaves.count ?? 0) > 1) || store.windowSelected
             e.closable = (root?.leaves.count ?? 0) > 1
             e.accent = accent
         }
@@ -998,15 +1363,14 @@ final class WindowHost: NSViewController {
         let many = (root?.leaves.count ?? 0) > 1
         for (id, f) in frames {
             f.showsHeader = many
-            f.isFocused = id == w.focused
+            f.isFocused = id == w.focused || store.windowSelected     // 選取整個 Window：每一格都加紫框
             f.setAccent(accent)
             f.setTitle(store.conversation(id)?.title ?? "")
-            // 瀏覽器格子沒有工作資料夾的意思：不顯示路徑列
-            let dir = store.conversation(id).flatMap { $0.isBrowser ? nil : store.project($0.projectID)?.path }
-            if f.pathBar.path != dir { f.pathBar.setPath(dir); f.needsLayout = true }
+            // 路徑列（PathBar）固定隱藏（使用者 10/29）：位置改看側欄右鍵「關於…」（AboutChat.swift）；path 一直是 nil，版面不留那一條
         }
         if let f = w.focused, let frame = frames[f], let pane = frame.content as? any ConversationPane,
-           let win = view.window, !(win.firstResponder as? NSView).map({ $0.isDescendant(of: frame) }).orFalse {
+           let win = view.window,
+           switchedPane || Self.shouldReclaimFocus(win.firstResponder, host: view, frame: frame) {
             win.makeFirstResponder(pane.focusTarget)
         }
     }
@@ -1014,7 +1378,12 @@ final class WindowHost: NSViewController {
     private var overlays: [DropOverlay] = []
     private var overlayTimer: Timer?
 
+    /// 拖放接收區：跟 render 一樣明確指定範圍。從主視窗側欄拖進獨立視窗時，主視窗的 scope 是 nil，不指定就會對著主視窗的版面找格子
     private func showDropTargets() {
+        store.scoped(boundWindow) { showDropTargetsInner() }
+    }
+
+    private func showDropTargetsInner() {
         hideDropTargets()
         guard let w = store.currentWindow else { return }
         if w.root == nil {
@@ -1023,7 +1392,7 @@ final class WindowHost: NSViewController {
             o.frame = body.bounds
             // 拖進空的 Window：搬過來（原本擺在別處也一樣），不是跳回原本的位置
             let wid = w.id
-            o.onDrop = { [weak self] id, _ in self?.hideDropTargets(); self?.store.movePane(id, toWindow: wid) }
+            o.onDrop = { [weak self] id, _ in self?.hideDropTargets(); if let self { self.store.scoped(self.boundWindow) { self.store.movePane(id, toWindow: wid) } } }
             body.addSubview(o)
             overlays.append(o)
         }
@@ -1033,7 +1402,7 @@ final class WindowHost: NSViewController {
             o.autoresizingMask = [.width, .height]
             o.onDrop = { [weak self] conv, edge in
                 self?.hideDropTargets()
-                self?.store.place(conv, near: id, edge: edge)
+                if let self { self.store.scoped(self.boundWindow) { self.store.place(conv, near: id, edge: edge) } }
             }
             f.addSubview(o)
             overlays.append(o)
@@ -1044,7 +1413,7 @@ final class WindowHost: NSViewController {
             o.autoresizingMask = [.width, .height]
             o.onDrop = { [weak self] conv, _ in
                 self?.hideDropTargets()
-                if self?.store.replacePane(id, with: conv) == true { Store.emptySlots.remove(id) }
+                if let self, self.store.scoped(self.boundWindow, { self.store.replacePane(id, with: conv) }) { Store.emptySlots.remove(id) }
             }
             v.addSubview(o)
             overlays.append(o)
@@ -1082,7 +1451,10 @@ final class WindowHost: NSViewController {
         let src = store.sessions[si].windows[i]
         guard src.id != cw.id, let conv = src.root?.leaves.first, src.root?.leaves.count == 1 else { return }
         if cw.root == nil { store.movePane(conv, toWindow: cw.id) }
-        else if store.isEmptySlot(target) { if store.replacePane(target, with: conv) { Store.emptySlots.remove(target) } }   // 拉到空格子上＝放進去
+        else if store.isEmptySlot(target) {   // 拉到空格子上＝放進去；放不進去就不要刪來源 Window（對話會從版面消失）
+            guard store.replacePane(target, with: conv) else { return }
+            Store.emptySlots.remove(target)
+        }
         else { store.place(conv, near: target, edge: edge ?? .right) }
         // 那個 Window 只有這一格，搬走就空了：關掉
         store.deleteWindow(src.id)
@@ -1101,10 +1473,21 @@ final class WindowHost: NSViewController {
             k != id && root.contains(k) && v.window === view.window && !v.isHiddenOrHasHiddenAncestor && v.bounds.contains(v.convert(p, from: nil))
         }?.0
     }
+    /// 拖格子要不要當成「互換」（⌘＋左鍵拖）：判斷集中在這一個地方，之後要跟「按住 ⌘＋左鍵叫環狀選單」區分，只改這裡。
+    /// 測試用 forceSwapDrag 可以蓋掉（合成的滑鼠事件讀不到真實的 ⌘ 狀態）
+    static var forceSwapDrag: Bool?
+    static var isSwapDrag: Bool { forceSwapDrag ?? NSEvent.modifierFlags.contains(.command) }
+
+    /// 拖標題時蓋在目標格上的接收區（不按 ⌘：游標在目標格的哪一邊，就亮那一半，放開＝放到那一邊）
+    private var dragOverlay: DropOverlay?
     private func paneHeaderDrag(_ id: UUID, _ ph: HeaderGrip.Phase, _ p: NSPoint) {
         let title = store.conversation(id)?.title ?? ""
         let over = tabBar.containsWindowPoint(p)
         let target = over ? nil : swapTarget(id, at: p)
+        // 使用者 10/29：只按左鍵拖＝放到那格的左、右、上、下；按住 ⌘ 拖＝兩格互換
+        let cmd = Self.isSwapDrag
+        let swapWith = cmd ? target : nil
+        let placeNear = cmd ? nil : target
         if ph == .began {
             // 跟著滑鼠走的小名牌
             let l = NSTextField(labelWithString: "  \(title)  ")
@@ -1120,13 +1503,21 @@ final class WindowHost: NSViewController {
             tearLabel = l
         }
         if ph == .ended {
+            // 放開的位置在哪一邊：要在拿掉接收區之前算
+            let drop = dragOverlay.map { ($0.target, $0.edge(at: $0.convert(p, from: nil))) }
+            dragOverlay?.removeFromSuperview(); dragOverlay = nil
             tearLabel?.removeFromSuperview()
             tearLabel = nil
             swapMark?.removeFromSuperview()
             swapMark = nil
             tabBar.showTear(nil, accent: accent)
             if over { tearOff(id) }
-            else if let target { swapPanes(id, target) }
+            else if let swapWith { swapPanes(id, swapWith) }
+            else if !cmd, let (t, edge) = drop, placeNear == t {
+                if store.isEmptySlot(t) {
+                    if store.replacePane(t, with: id) { Store.emptySlots.remove(t) }
+                } else { store.place(id, near: t, edge: edge ?? .right) }
+            }
             return
         }
         if let l = tearLabel {
@@ -1134,8 +1525,8 @@ final class WindowHost: NSViewController {
             l.frame.origin = NSPoint(x: q.x + 14, y: q.y - l.frame.height - 6)
         }
         tabBar.showTear(over ? title : nil, accent: accent)
-        // 停在另一格上：那格蓋一層「放開＝互換位置」
-        let tv: NSView? = target.flatMap { frames[$0] ?? empties[$0] }
+        // ⌘ 拖到另一格上：那格蓋一層「放開＝互換位置」
+        let tv: NSView? = swapWith.flatMap { frames[$0] ?? empties[$0] }
         if let tv {
             if swapMark?.superview !== tv {
                 swapMark?.removeFromSuperview()
@@ -1148,6 +1539,22 @@ final class WindowHost: NSViewController {
         } else {
             swapMark?.removeFromSuperview()
             swapMark = nil
+        }
+        // 沒按 ⌘：目標格蓋四半接收區，游標在哪一邊就亮哪一邊（空格子是整塊＝放進去）
+        if let t = placeNear, let host = frames[t] ?? empties[t] {
+            if dragOverlay?.target != t {
+                dragOverlay?.removeFromSuperview()
+                let o = DropOverlay(target: t)
+                o.halvesOnly = !store.isEmptySlot(t)
+                o.frame = host.bounds
+                o.autoresizingMask = [.width, .height]
+                host.addSubview(o)
+                dragOverlay = o
+            }
+            dragOverlay?.hover(window: p)
+        } else {
+            dragOverlay?.removeFromSuperview()
+            dragOverlay = nil
         }
         if let l = tearLabel { l.superview?.addSubview(l, positioned: .above, relativeTo: nil) }   // 名牌永遠在最上面
     }
@@ -1166,6 +1573,19 @@ final class WindowHost: NSViewController {
         let title = store.conversation(id)?.title ?? ""
         store.newWindow(with: id)
         if let nw = store.currentWindow, !title.isEmpty { store.renameWindow(nw.id, to: title) }
+    }
+
+    /// 拖曳中的暫時狀態全部收掉：接收區（側欄拖進來、分頁拉進畫面兩種）、拖標題的名牌和互換標記、分頁的半透明和陰影
+    func resetTransientDragState() {
+        hideDropTargets()
+        detachPreview.hide()
+        pullOverlays.forEach { $0.removeFromSuperview() }
+        pullOverlays = []
+        tearLabel?.removeFromSuperview(); tearLabel = nil
+        swapMark?.removeFromSuperview(); swapMark = nil
+        dragOverlay?.removeFromSuperview(); dragOverlay = nil
+        tabBar.cancelDrag()
+        if let w = view.window, w.alphaValue != 1 { w.alphaValue = 1 }
     }
 
     private func hideDropTargets() {
@@ -1201,6 +1621,7 @@ final class WindowHost: NSViewController {
             let f = PaneFrame(conversation: id, content: pane)
             f.onClose = { [weak self] in self?.store.setFocus(id); self?.store.closePane() }
             f.onHeaderClick = { [weak self] in self?.store.setFocus(id) }
+            f.infoProvider = { [weak self] in self?.paneInfo(id) ?? [] }
             f.onHeaderDrag = { [weak self] ph, p in self?.paneHeaderDrag(id, ph, p) }
             frames[id] = f
             return f
@@ -1235,12 +1656,18 @@ extension Store {
     /// 把對話放到某格旁邊（edge＝nil：換掉那格的對話）
     func place(_ conv: UUID, near target: UUID, edge: DropOverlay.Edge?) {
         guard conv != target else { return }
+        var source: (Int, UUID)?
         if let (si, wi) = locate(conv) {
             sessions[si].windows[wi].root = sessions[si].windows[wi].root?.removing(conv)
             if sessions[si].windows[wi].focused == conv { sessions[si].windows[wi].focused = sessions[si].windows[wi].root?.leaves.first }
+            source = (si, sessions[si].windows[wi].id)
         }
         editWindow { w in
-            guard let root = w.root, root.contains(target) else { w.root = .leaf(conv); w.focused = conv; return }
+            guard let root = w.root else { w.root = .leaf(conv); w.focused = conv; return }
+            // target 不在這個 Window 的版面裡（不該發生）：不要把整棵版面換成一格、弄丟其他格；改接在最後一格的右邊
+            let anchorTarget = root.contains(target) ? target : (w.focused.flatMap { root.contains($0) ? $0 : nil } ?? root.leaves.last!)
+            let edge: DropOverlay.Edge? = root.contains(target) ? edge : .right
+            let target = anchorTarget
             let node: PaneNode
             switch edge {
             case nil: node = .leaf(conv)
@@ -1253,6 +1680,10 @@ extension Store {
             w.focused = conv
             w.zoomed = false
         }
+        // 搬空的來源 Window 刪掉：走 deleteWindow（主視窗分頁列空了會補一個、current 不會指到獨立視窗）；是獨立視窗的話，它下次重繪發現自己不在了會自己關
+        if let (si, id) = source, sessions.indices.contains(si), let wi = sessions[si].windows.firstIndex(where: { $0.id == id }), sessions[si].windows[wi].root == nil, sessions[si].windows.count > 1 {
+            deleteWindow(id)
+        }
     }
 }
 
@@ -1261,5 +1692,87 @@ final class PetColumnView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.separatorColor.setFill()
         NSRect(x: 0, y: 0, width: 1, height: bounds.height).fill()
+    }
+}
+
+
+/// 停在格子標題上顯示的資訊小卡：半透明深色底、圓角，每列「標籤  內容」，內容太長省略中間
+final class InfoCard: NSView {
+    private var labels: [(NSTextField, NSTextField)] = []
+    var rowCount: Int { labels.count }
+    private let rowH: CGFloat = 20, pad: CGFloat = 10
+    private var accent: NSColor = .controlAccentColor
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.94).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
+        alphaValue = 0
+        isHidden = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func hitTest(_ p: NSPoint) -> NSView? { nil }
+    func height(for w: CGFloat) -> CGFloat { CGFloat(labels.count) * rowH + pad * 2 }
+    func set(rows: [(String, String)], accent: NSColor) {
+        self.accent = accent
+        labels.forEach { $0.0.removeFromSuperview(); $0.1.removeFromSuperview() }
+        labels = rows.map { k, v in
+            let a = NSTextField(labelWithString: k); a.font = .systemFont(ofSize: 11); a.textColor = NSColor.white.withAlphaComponent(0.55)
+            let b = NSTextField(labelWithString: v); b.font = .systemFont(ofSize: 12); b.textColor = NSColor.white.withAlphaComponent(0.92)
+            b.lineBreakMode = .byTruncatingMiddle; b.toolTip = v
+            addSubview(a); addSubview(b)
+            return (a, b)
+        }
+        needsLayout = true
+    }
+    override func layout() {
+        super.layout()
+        let labelW: CGFloat = 70
+        for (i, r) in labels.enumerated() {
+            let y = bounds.height - pad - CGFloat(i + 1) * rowH + 1
+            r.0.frame = NSRect(x: pad, y: y, width: labelW, height: 18)
+            r.1.frame = NSRect(x: pad + labelW, y: y, width: max(0, bounds.width - pad * 2 - labelW), height: 18)
+        }
+    }
+    /// 淡入 0.15 秒，邊框用主題色閃一下（跟拖到分頁上的閃法同一個風格）
+    func fadeIn() {
+        guard isHidden || alphaValue < 1 else { return }
+        isHidden = false
+        layer?.removeAllAnimations()
+        NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0.15; animator().alphaValue = 1 }
+        if !Motion.reduced {
+            let a = CABasicAnimation(keyPath: "borderColor")
+            a.fromValue = accent.cgColor; a.toValue = NSColor.white.withAlphaComponent(0.2).cgColor
+            a.duration = 0.3
+            layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
+            layer?.add(a, forKey: "flash")
+        }
+    }
+    func fadeOut() {
+        guard !isHidden else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in ctx.duration = 0.15; animator().alphaValue = 0 }, completionHandler: { [weak self] in
+            if self?.alphaValue == 0 { self?.isHidden = true }
+        })
+    }
+}
+
+extension WindowHost {
+    /// 測試用：假裝滑鼠進來／離開第 id 格的標題；回傳卡片狀態
+    func testHover(_ id: UUID, inside: Bool) { frames[id]?.testHover(inside) }
+    func testInfoState(_ id: UUID) -> String { frames[id]?.infoState ?? "沒有這格" }
+
+    /// 標題停留小卡的內容：聊天室＝工作資料夾、模型、上下文大小；瀏覽器格＝網址
+    func paneInfo(_ id: UUID) -> [(String, String)] {
+        guard let c = store.conversation(id) else { return [] }
+        if c.isBrowser {
+            let u = (workspace.panes[id] as? BrowserPane)?.currentURL ?? c.browser ?? ""
+            return [(L("網址"), u.isEmpty ? "about:blank" : u)]
+        }
+        let folder = store.project(c.projectID)?.path ?? NSHomeDirectory()
+        ContextMonitor.shared.load(c, path: folder)
+        let ctx = ContextMonitor.shared.tokens[id].map { "\(ContextMonitor.text($0)) tokens" } ?? L("（還沒有紀錄）")
+        return [(L("工作資料夾"), (folder as NSString).abbreviatingWithTildeInPath), (L("模型"), store.displayModel(id)), (L("上下文大小"), ctx)]
     }
 }

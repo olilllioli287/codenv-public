@@ -40,7 +40,7 @@ enum ModelCarry {
             if type == "user" {
                 if text.hasPrefix("<local-command") || text.hasPrefix("<command-") { continue }
                 // codenv 自己附的：程式碼區的位置、上一次的交接
-                for m in ["\n\n" + marker, "\n\n" + codeLabMarker] { if let r = text.range(of: m) { text = String(text[..<r.lowerBound]) } }
+                for m in ["\n\n" + marker, "\n\n" + codeLabMarker, "\n\n" + ChatSession.nameMarker, "\n\n" + QuoteText.marker] { if let r = text.range(of: m) { text = String(text[..<r.lowerBound]) } }
             }
             text = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }

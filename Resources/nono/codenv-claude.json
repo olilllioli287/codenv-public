@@ -1,0 +1,62 @@
+{
+  "meta": {
+    "name": "codenv-claude",
+    "version": "0.2.0",
+    "description": "codenv 單一聊天室的 Claude 沙盒。聊天室資料夾可讀寫；~/.claude 只開放對話紀錄、記憶等會寫的子資料夾，設定、hooks、外掛、技能、~/.claude.json 只能讀（改了會影響沙盒外的 Claude）；鑰匙圈不開，登入用 codenv 從沙盒外帶進來的長效權杖（CLAUDE_CODE_OAUTH_TOKEN）"
+  },
+  "extends": "default",
+  "groups": {
+    "include": [
+      "git_config",
+      "node_runtime",
+      "python_runtime",
+      "rust_runtime",
+      "user_caches_macos",
+      "user_tools"
+    ]
+  },
+  "workdir": {
+    "access": "readwrite"
+  },
+  "filesystem": {
+    "allow": [
+      "~/.claude/projects",
+      "~/.claude/sessions",
+      "~/.claude/session-env",
+      "~/.claude/shell-snapshots",
+      "~/.claude/file-history",
+      "~/.claude/paste-cache",
+      "~/.claude/debug",
+      "~/.claude/telemetry",
+      "~/.claude/cache",
+      "~/.claude/state",
+      "~/Library/Application Support/AI 工作台",
+      "~/Documents/記憶樹",
+      "~/Library/Developer",
+      "~/.cache",
+      "~/.npm",
+      "~/.swiftpm"
+    ],
+    "allow_file": [
+      "~/.claude/history.jsonl",
+      "~/.claude/mcp-needs-auth-cache.json",
+      "~/.claude/.last-cleanup"
+    ],
+    "read": [
+      "~/.claude",
+      "~/.local/bin",
+      "~/.local/share/claude",
+      "~/.config/gh",
+      "/Applications/Xcode.app",
+      "/Library/Developer"
+    ],
+    "read_file": [
+      "~/.claude.json"
+    ],
+    "deny": [
+      "~/Desktop",
+      "~/Downloads",
+      "~/.claude/.credentials.json"
+    ]
+  }
+}

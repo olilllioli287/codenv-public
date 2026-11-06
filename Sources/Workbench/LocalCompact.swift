@@ -129,11 +129,16 @@ enum LocalCompact {
                 DispatchQueue.main.async { done(nil, L("開不了 claude：\(error.localizedDescription)")) }
                 return
             }
-            inPipe.fileHandleForWriting.write(Data(input.utf8))
-            try? inPipe.fileHandleForWriting.close()
-            // 逾時就停掉
-            let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+            // 逾時就停掉：要在寫 stdin 之前先排好——claude 要是不讀 stdin，輸入又比管子大（最多約 30 萬字），下面的寫入會卡住，
+            // 逾時器排在寫入之後的話永遠排不到。停掉之後寫入會收到錯誤（SIGPIPE 已忽略），就放掉
+            let killer = DispatchWorkItem {
+                guard p.isRunning else { return }
+                p.terminate()
+                DispatchQueue.global().asyncAfter(deadline: .now() + 3) { if p.isRunning { kill(p.processIdentifier, SIGKILL) } }      // 擋掉 SIGTERM 的話 waitUntilExit 會永遠等
+            }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+            try? inPipe.fileHandleForWriting.write(contentsOf: Data(input.utf8))
+            try? inPipe.fileHandleForWriting.close()
             p.waitUntilExit()
             killer.cancel()
             outPipe.fileHandleForReading.readabilityHandler = nil
@@ -143,7 +148,7 @@ enum LocalCompact {
             let text = String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             let e = String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             lock.unlock()
-            let ok = p.terminationReason == .exit && p.terminationStatus == 0 && text.count >= 20
+            let ok = p.terminationReason == .exit && p.terminationStatus == 0 && !text.isEmpty
             DispatchQueue.main.async {
                 if ok { done(text, nil) }
                 else if p.terminationReason == .uncaughtSignal { done(nil, L("Claude 整理太久（超過 \(Int(timeout)) 秒）")) }

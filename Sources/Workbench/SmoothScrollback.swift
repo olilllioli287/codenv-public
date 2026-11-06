@@ -40,6 +40,7 @@ final class ScrollbackDocument: NSView {
         guard let terminal, cell.height > 0 else { return }
         let first = max(0, Int(floor(dirty.minY / cell.height)))
         let last = Int(ceil(dirty.maxY / cell.height))
+        guard first <= last else { return }       // 橡皮筋拉過頭：重繪範圍整個在負的 y，first...last 會是倒過來的區間（執行時當掉）
         // 在鎖裡只複製這幾行的資料
         var rows: [(index: Int, cells: [Cell])] = []
         terminal.withTerminalPublic { t in

@@ -25,8 +25,16 @@ enum ClaudeEnvs {
         return s.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 
-    static func save(_ list: [String]) {
-        try? (list.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+    /// 檔案在、但讀不了（權限、編碼壞掉）：load() 這時給的是預設清單，不是使用者真正的清單，這時不能存回去蓋掉它
+    static var unreadable: Bool {
+        FileManager.default.fileExists(atPath: file.path) && (try? String(contentsOf: file, encoding: .utf8)) == nil
+    }
+
+    /// 回傳寫成功沒有；原檔讀不了或寫失敗就回 false（呼叫端不要更新畫面）
+    @discardableResult
+    static func save(_ list: [String]) -> Bool {
+        guard !unreadable else { return false }
+        do { try (list.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8); return true } catch { return false }
     }
 
     static func tilde(_ p: String) -> String {
@@ -54,11 +62,12 @@ final class DirPickerModel: ObservableObject {
     var sections: [(name: String, items: [Int])] {
         guard !topGroups.isEmpty, let groupOfPath else { return [("", Array(dirs.indices))] }
         var out = topGroups.map { (name: $0.name, items: [Int]()) }
+        var loose: [Int] = []
         for (i, p) in dirs.enumerated() {
             let g = groupOfPath(p)
-            let k = topGroups.firstIndex { $0.id == g } ?? (out.count - 1)
-            out[k].items.append(i)
+            if let k = topGroups.firstIndex(where: { $0.id == g }) { out[k].items.append(i) } else { loose.append(i) }
         }
+        if !loose.isEmpty { out.append((name: L("其他"), items: loose)) }      // 對不到任何一組的資料夾：自己一組，不要塞進最後一組
         return out.filter { !$0.items.isEmpty }
     }
     var order: [Int] { sections.flatMap(\.items) }
@@ -73,7 +82,7 @@ final class DirPickerModel: ObservableObject {
         let i = o[n]
         if removing {
             var l = dirs; l.remove(at: i)
-            ClaudeEnvs.save(l)
+            guard ClaudeEnvs.save(l) else { removing = false; return }   // 寫不進去（或原檔讀不了）：清單照舊，不假裝移除了
             dirs = l
             removing = false
             onChanged?()
