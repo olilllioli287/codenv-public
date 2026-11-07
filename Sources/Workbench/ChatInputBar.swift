@@ -539,9 +539,14 @@ final class UsageGlanceStrip: NSView, NSViewToolTipOwner {
         cells.forEach { $0.icon.removeFromSuperview(); $0.text.removeFromSuperview() }
         cells = groups.map { g in
             let iv = NSImageView()
-            iv.image = NSImage(systemSymbolName: g.symbol, accessibilityDescription: g.name)?
-                .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
-            iv.contentTintColor = fg.withAlphaComponent(0.55)
+            // 各家的圖示直接讀使用者電腦上裝的 App（不打包、不自己畫商標）；沒裝就退回 SF Symbols
+            if let img = AppIcons.icon(for: g.key) {
+                iv.image = img; iv.imageScaling = .scaleProportionallyUpOrDown; iv.contentTintColor = nil
+            } else {
+                iv.image = NSImage(systemSymbolName: g.symbol, accessibilityDescription: g.name)?
+                    .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+                iv.contentTintColor = fg.withAlphaComponent(0.55)
+            }
             let t = NSTextField(labelWithString: "")
             let str = NSMutableAttributedString()
             for p in g.parts() {
@@ -583,7 +588,7 @@ final class UsageGlanceStrip: NSView, NSViewToolTipOwner {
             c.icon.isHidden = !on; c.text.isHidden = !on
             guard on else { continue }
             x += 12
-            c.icon.frame = NSRect(x: x, y: (bounds.height - 12) / 2, width: 12, height: 12)
+            c.icon.frame = NSRect(x: x, y: (bounds.height - 13) / 2, width: 13, height: 13)
             c.text.frame = NSRect(x: x + 16, y: y, width: c.text.frame.width, height: h)
             addToolTip(NSRect(x: x - 4, y: 0, width: c.text.frame.maxX - x + 8, height: bounds.height), owner: self, userData: nil)
             x = c.text.frame.maxX

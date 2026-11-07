@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 // 聊天室資訊：右欄單擊選取（紫框）→ 按 i 或點 ⓘ 開「聊天室資訊」表單（名稱＋說明，像 Discord 頻道設定的名稱與主題）；
-// 滑鼠在某一列停 2 秒，主視窗正中央浮出資訊卡（名稱、說明、模型、狀態、資料夾、所屬總指揮），離開就收，不搶焦點、不擋輸入。
+// 滑鼠在某一列停 1.5 秒，主視窗正中央浮出資訊卡（名稱、說明、模型、狀態、資料夾、所屬總指揮），離開就收，不搶焦點、不擋輸入。
 
 /// 表單的名稱欄：打開時全文已選取（像 ⌘ A 之後），直接打字就取代
 struct SelectAllField: NSViewRepresentable {
@@ -150,7 +150,7 @@ final class ChatInfoCard {
     private var pending: DispatchWorkItem?
     private(set) var shownFor: UUID?
     /// 滑鼠停多久才浮出
-    static var delay: TimeInterval = 2
+    static var delay: TimeInterval = 1.5
 
     /// 滑鼠進入某列：停滿 delay 秒就浮出
     func hoverBegan(_ id: UUID, store: Store, workspace: Workspace, window: NSWindow?) {

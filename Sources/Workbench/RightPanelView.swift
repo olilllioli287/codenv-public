@@ -475,10 +475,9 @@ struct RPWindowsTab: View {
     }
 
     private var columns: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 5) {
             Text(L("記憶體")).frame(width: 42 * s, alignment: .trailing)
             Text(L("上下文")).frame(width: 36 * s, alignment: .trailing)
-            Spacer().frame(width: 54 * s)
         }
         .font(.system(size: 9.5 * s)).foregroundStyle(.tertiary)
     }
@@ -556,7 +555,7 @@ struct RPWindowsTab: View {
         .padding(.horizontal, 10).padding(.vertical, 2)
         .frame(minHeight: 20 * s)
         // 不要「叫出來」按鈕；滑鼠移到那一列整列淡底色、單擊選取（紫框保持）、雙擊叫出來（右鍵選單裡還有「叫出來」）；
-        // 停 2 秒浮出資訊卡
+        // 停 1.5 秒浮出資訊卡
         .background(RPRowHighlight(flash: false, hover: hoverRow == r.id, selected: panelModel.selectedChat == r.id))
         .contentShape(Rectangle())
         .onHover { inside in

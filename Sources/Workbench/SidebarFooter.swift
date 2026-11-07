@@ -15,19 +15,7 @@ struct SidebarFooter: View {
         VStack(alignment: .leading, spacing: 0) {
             Divider().opacity(0.5)
             VStack(alignment: .leading, spacing: 2 * s) {
-                Button(action: { UsageSheet.toggle() }) {
-                    VStack(alignment: .leading, spacing: 3 * s) {
-                        if usage.updated == nil && usage.buckets.isEmpty {
-                            Text(usage.loading ? L("查詢中…") : L("用量剩餘")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
-                        } else {
-                            ForEach(usage.glance, id: \.key) { g in usageLine(g) }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(L("看全部的用量（Claude、Gemini、ChatGPT、Copilot）"))
+                // 用量（Claude／Codex／agy）只放在輸入框下面那條（UsageGlanceStrip），左下角不再列
 
                 if colab.balance != nil || !colab.machines.isEmpty {
                     Button(action: { (NSApp.windows.compactMap { $0.windowController as? MainWindowController }.first)?.showRightPanel(tab: .windows) }) {

@@ -2,13 +2,65 @@
 
 [English](README.md) · 繁體中文
 
+<p align="center"><img src="docs/images/hero-zh.webp" alt="codenv：給 Claude Code 用的 macOS 原生工作台" width="100%"></p>
+
 一個 macOS App，把 Claude Code 放進一個像聊天軟體、又能像終端機一樣分格的視窗裡。側欄管理專案和對話，右邊可以把聊天室、終端機、網頁並排切成好幾格，讓好幾個 AI 一起工作。
 
 目前以 Claude Code 為主，也可以接 Codex、GitHub Copilot、Apple 內建模型和本機 MLX 模型。
 
 > codenv 是個人專案，跟 Anthropic、OpenAI、GitHub、Google 都沒有關係。
 
+## 亮點
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/card-commander.webp" alt="總指揮版面與紫色方塊">
+<br><b>總指揮</b>
+<br>一個專案一位總指揮，左欄點一下切換，右欄（視窗／檔案／Git／歷史／看板）列出它底下所有聊天室。總指揮自己的聊天室固定在分頁列最左的紫色方塊（⌘ 1）。
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/card-topic.webp" alt="聊天室說明資訊卡">
+<br><b>聊天室說明</b>
+<br>每個聊天室可以寫一段說明（右欄選取後按 <code>i</code>），告訴那個聊天室的 Claude 它負責什麼，總指揮的名單和 <code>codenv-todo team</code> 也看得到。滑鼠停 1.5 秒會浮出資訊卡。
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/card-search.webp" alt="歷史全文搜尋">
+<br><b>歷史搜尋</b>
+<br>在右欄一次搜尋這位總指揮底下所有聊天室的歷史對話，用本機全文索引，不用上網。命令列也能用 <code>codenv-todo search</code>。
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/card-usage.webp" alt="用量列">
+<br><b>用量一眼看</b>
+<br>Claude、Codex 的 5 小時與本週剩餘額度，顯示在每個輸入框下面，左下角每家一行；有裝 Colab CLI 的話，運算單元餘額也在這。
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/card-terminal.webp" alt="浮動終端機">
+<br><b>浮動終端機（F5）</b>
+<br>浮在聊天上面的終端機，工作資料夾跟著目前的聊天室；可以拖動、調大小、開多個分頁，收起來程式繼續跑。
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/card-memory.webp" alt="每個聊天室的記憶體">
+<br><b>省記憶體</b>
+<br>右欄列出每個聊天室的記憶體與上下文大小；聊天室右鍵可選 MCP 完整／精簡／不載入；不在畫面上待命超過 15 分鐘的聊天室會自動收掉背景程序。
+</td>
+</tr>
+</table>
+
+### 怎麼開總指揮
+
+預設是原本的樹狀左欄。到 設定（⌘ ,）→ 外觀 → 介面 → 左欄，選「總指揮」，再按左欄「總指揮」旁的 ＋（或空狀態的「新增總指揮」），填名稱、選要管的分組（或新建一個分組並指到資料夾）、選單一或多個子專案就行。`codenv-todo` 指令（`new`、`rename`、`model`、`mcp`、`topic`、`team`）已內建在 App 裡，總指揮可以直接幫你開聊天室、改名、換模型，不用另外安裝。
+
 ## 現在做了什麼
+
+**總指揮與右欄**
+- 總指揮側欄、固定在分頁列最左的總指揮分頁（⌘ 1）、右欄（視窗／檔案／Git／歷史／看板）、跨整位總指揮所有對話的全文搜尋。
+- 總指揮用 `codenv-todo`（`new`、`rename`、`model`、`mcp`、`topic`、`team`）派工；每個聊天室可以寫一段「負責什麼」的說明。
+- 輸入框下方與側欄左下的用量列、浮動終端機（F5）、省記憶體（每個聊天室可選 MCP 精簡／不載入、待命 15 分鐘自動收掉程序）。
 
 **聊天與對話**
 - 每個聊天室都是一段真正的 Claude Code 對話（`claude -p` 的 stream-json 模式），畫面是聊天介面：Markdown、程式碼上色、工具步驟、權限與選擇題卡片都直接畫出來。
@@ -105,7 +157,7 @@ CODENV_SIGN_IDENTITY="我的憑證" ./build.sh   # 用自己的憑證簽章（�
 
 ## 可選的輔助指令
 
-`scripts/codenv-todo`（多個 AI 共用的協作看板）和 `scripts/codenv-browser`（讀瀏覽器格子的網頁內容）這兩個小指令，要用的話複製到 `PATH` 裡的資料夾就好。
+`codenv-todo`（總指揮派工與多個 AI 共用的協作看板）、`codenv-browser`（讀瀏覽器格子的網頁內容）和 `memory-check` 都已內建在 App 裡，codenv 開的聊天室 `PATH` 已經帶好。要在自己的終端機用，到 設定 → 資料，按「安裝到 ~/.local/bin」。
 
 ## 授權
 

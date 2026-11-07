@@ -2,13 +2,65 @@
 
 English · [繁體中文](README.zh-TW.md)
 
+<p align="center"><img src="docs/images/hero-en.webp" alt="codenv: a macOS workbench for Claude Code" width="100%"></p>
+
 A macOS app that puts Claude Code in a window that feels like a chat app and can be split up like a terminal. The sidebar manages projects and conversations; on the right, you can split chats, terminals, and web pages into multiple panes so several AIs can work at once.
 
 Claude Code is the main focus, with optional support for Codex, GitHub Copilot, Apple’s built-in models, and local MLX models.
 
 > codenv is a personal project and is not affiliated with Anthropic, OpenAI, GitHub, or Google.
 
+## Highlights
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/card-commander.webp" alt="Commander layout with the purple tab">
+<br><b>Commanders</b>
+<br>One commander per project. Click one in the left sidebar; the right panel (Windows / Files / Git / History / Board) shows every chat underneath it. The commander’s own chat is pinned as the purple square at the far left of the tab bar (⌘ 1).
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/card-topic.webp" alt="Chat description card">
+<br><b>Chat descriptions</b>
+<br>Write a short description for each chat (select it in the right panel and press <code>i</code>). It tells that chat’s Claude what it is responsible for, and it shows up in the commander’s roster and in <code>codenv-todo team</code>. Hover for 1.5 seconds to see an info card.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/card-search.webp" alt="Full-text history search">
+<br><b>History search</b>
+<br>Search every conversation under a commander from the right panel, backed by a local full-text index. Also available as <code>codenv-todo search</code>.
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/card-usage.webp" alt="Usage rows">
+<br><b>Usage at a glance</b>
+<br>Remaining 5-hour and weekly quota for Claude and Codex appears under every input box and, one line per provider, at the bottom of the sidebar. Colab compute units show up too if the Colab CLI is installed.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/images/card-terminal.webp" alt="Floating terminal">
+<br><b>Floating terminal (F5)</b>
+<br>A terminal that floats over the chat and follows the current chat’s folder. Drag it, resize it, open several tabs; hide it and your programs keep running.
+</td>
+<td width="50%" valign="top">
+<img src="docs/images/card-memory.webp" alt="Memory per chat">
+<br><b>Lighter on memory</b>
+<br>Per-chat memory and context sizes are listed in the right panel. Right-click a chat to load full, lite, or no MCP servers; chats left off-screen for 15 minutes have their Claude process shut down.
+</td>
+</tr>
+</table>
+
+### Turning on commanders
+
+The sidebar starts as the classic tree. Go to Settings (⌘ ,) → Appearance (外觀) → Interface → Sidebar (左欄) and choose “Commanders (總指揮)”, then click ＋ next to “Commanders” (or the “New commander” button on the empty state). Fill in a name, pick the groups it covers (or create a new group tied to a folder), and choose a single-project or multi-project type. The `codenv-todo` commands (`new`, `rename`, `model`, `mcp`, `topic`, `team`) are built into the app, so commanders can open, rename, and re-model chats under them without any extra install.
+
 ## What’s here now
+
+**Commanders and the right panel**
+- Commander sidebar, a pinned commander tab (⌘ 1), a right panel with Windows / Files / Git / History / Board tabs, and full-text search across a commander’s conversations.
+- Commanders delegate work with `codenv-todo` (`new`, `rename`, `model`, `mcp`, `topic`, `team`); each chat can carry a short description of what it is responsible for.
+- Usage rows under each input box and in the sidebar footer, a floating terminal (F5), and lighter memory use (per-chat MCP lite/none, idle chats shut down after 15 minutes).
 
 **Chat and conversations**
 - Each chat is a real Claude Code conversation (the `claude -p` stream-json mode), displayed in a chat interface with Markdown, syntax-highlighted code, tool steps, and permission and multiple-choice cards.
@@ -105,7 +157,7 @@ CODENV_SIGN_IDENTITY="My Certificate" ./build.sh   # sign with your own certific
 
 ## Optional helper commands
 
-To use the two small commands, `scripts/codenv-todo` (shared collaboration board for multiple AIs) and `scripts/codenv-browser` (reads web content from browser panes), copy them into a directory in your `PATH`.
+`codenv-todo` (commander delegation and the shared collaboration board), `codenv-browser` (reads web content from browser panes), and `memory-check` are bundled inside the app, and chats started by codenv already have them on their `PATH`. To use them from your own terminal, open Settings → Data (資料) and click “Install to ~/.local/bin”.
 
 ## License
 
