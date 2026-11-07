@@ -93,24 +93,37 @@ struct ChatPrefsPage: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Section(L("瀏覽器格子")) {
-                Picker(L("核心"), selection: $p.browserEngine) {
-                    Text(L("WebKit（Safari 的核心，系統內建、最省記憶體）")).tag("webkit")
-                    Text(L("Chromium（Chrome 的核心，還在做）")).tag("chromium")
+            if PetSprites.available {
+                Section(L("桌寵")) {
+                    PetEmbedSettings()
                 }
-                Text(p.browserEngine == "chromium"
-                     ? L("Chromium 版還沒做好，現在照樣用 WebKit 開；做好之後新開的瀏覽器格子才會換。")
-                     : L("側欄「瀏覽器」或 ⌘ ⇧ B 開一格。登入資料只存在 codenv 自己的資料庫，不跟 Safari 共用。Claude 用 codenv-browser 指令讀得到網址、文字和截圖，不能點也不能打字。"))
+            }
+            Section(L("闔蓋")) {
+                Toggle(L("闔上螢幕時，讓正在做事的聊天室做完這一段"), isOn: $p.lidKeepWorking)
+                Text(L("有聊天室正在做事時 Mac 不會睡（要 Battery 的小幫手 v6，電量低於 30% 且沒插電時除外）；闔上螢幕後，聊天室做完目前這一段就停。全部停下、撐滿 1 小時、電量低於 30% 或溫度太高就恢復正常睡眠。紀錄在 ~/Library/Logs/codenv-lid.log。"))
                     .font(.caption).foregroundStyle(.secondary)
-                Toggle(L("Gemini 網頁換皮（codenv 聊天室的配色和字型）"), isOn: $p.geminiSkin)
-                Text(L("只改 gemini.google.com 的外觀（背景、字型、顏色、訊息、輸入框、模型選單），不動功能；NotebookLM 不受影響。關掉就是 Gemini 原樣，已經開著的頁立刻生效。Google 改版讓某一塊對不上時，那一塊會自己恢復原樣。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                Toggle(L("NotebookLM 網頁換皮（codenv 的配色和字型）"), isOn: $p.notebookSkin)
-                Text(L("只改 NotebookLM（notebook.google.com）首頁和筆記本內頁的外觀（背景、卡片、文字、按鈕、選單的顏色和字型），不動功能。關掉就是原樣，已經開著的頁立刻生效。Google 改版讓某個地方沒換到時，那裡會維持原樣。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                Toggle(L("Gemini／NotebookLM 網頁：⌘ Enter 送出、Enter 換行"), isOn: $p.geminiCmdEnter)
-                Text(L("只對 gemini.google.com 和 NotebookLM（notebooklm.google.com、notebook.google.com）的輸入框有效；找不到送出鈕時不攔 Enter；輸入法選字時的 Enter 不受影響，⇧ Enter 照原樣。已經開著的頁立刻生效。瀏覽器格子右上角的圓形下載鈕（只在 Gemini 對話頁出現）可以把整段對話匯成 Markdown 和圖片。"))
-                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section(L("瀏覽器格子")) {
+                Toggle(L("網頁外掛功能"), isOn: $p.webFeaturesEnabled)
+                if p.webFeaturesEnabled {
+                    Picker(L("核心"), selection: $p.browserEngine) {
+                        Text(L("WebKit（Safari 的核心，系統內建、最省記憶體）")).tag("webkit")
+                        Text(L("Chromium（Chrome 的核心，還在做）")).tag("chromium")
+                    }
+                    Text(p.browserEngine == "chromium"
+                         ? L("Chromium 版還沒做好，現在照樣用 WebKit 開；做好之後新開的瀏覽器格子才會換。")
+                         : L("側欄「瀏覽器」或 ⌘ ⇧ B 開一格。登入資料只存在 codenv 自己的資料庫，不跟 Safari 共用。Claude 用 codenv-browser 指令讀得到網址、文字和截圖，不能點也不能打字。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle(L("Gemini 網頁換皮（codenv 聊天室的配色和字型）"), isOn: $p.geminiSkin)
+                    Text(L("只改 gemini.google.com 的外觀（背景、字型、顏色、訊息、輸入框、模型選單），不動功能；NotebookLM 不受影響。關掉就是 Gemini 原樣，已經開著的頁立刻生效。Google 改版讓某一塊對不上時，那一塊會自己恢復原樣。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle(L("NotebookLM 網頁換皮（codenv 的配色和字型）"), isOn: $p.notebookSkin)
+                    Text(L("只改 NotebookLM（notebook.google.com）首頁和筆記本內頁的外觀（背景、卡片、文字、按鈕、選單的顏色和字型），不動功能。關掉就是原樣，已經開著的頁立刻生效。Google 改版讓某個地方沒換到時，那裡會維持原樣。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle(L("Gemini／NotebookLM 網頁：⌘ Enter 送出、Enter 換行"), isOn: $p.geminiCmdEnter)
+                    Text(L("只對 gemini.google.com 和 NotebookLM（notebooklm.google.com、notebook.google.com）的輸入框有效；找不到送出鈕時不攔 Enter；輸入法選字時的 Enter 不受影響，⇧ Enter 照原樣。已經開著的頁立刻生效。瀏覽器格子右上角的圓形下載鈕（只在 Gemini 對話頁出現）可以把整段對話匯成 Markdown 和圖片。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section(L("自動壓縮上下文")) {
                 Stepper(value: $p.cloudCompactTokens, in: 100_000...1_000_000, step: 20_000) {
@@ -135,6 +148,12 @@ struct ChatPrefsPage: View {
                 Stepper(value: $p.archiveDays, in: 1...60) { Text(L("幾天沒碰收進封存：\(p.archiveDays) 天")) }
                 Stepper(value: $p.historyLimit, in: 100...2000, step: 100) { Text(L("打開時先載入：\(p.historyLimit) 則（往上捲再載入更早的）")) }
                 Toggle(L("自動加入正在 tmux／iTerm 裡進行的對話（每 30 秒檢查）"), isOn: $p.autoImportLive)
+            }
+            Section(L("每日交接")) {
+                Toggle(L("每天自動交接有新對話的聊天室"), isOn: $p.dailyHandoffEnabled)
+                Stepper(value: $p.dailyHandoffHour, in: 0...23) { Text(L("分界時間：每天 \(p.dailyHandoffHour) 點")) }.disabled(!p.dailyHandoffEnabled)
+                Stepper(value: $p.dailyHandoffMax, in: 1...50) { Text(L("一天最多交接：\(p.dailyHandoffMax) 件")) }.disabled(!p.dailyHandoffEnabled)
+                Text(L("過了分界時間，App 開著時會一件一件在背景交接：未封存的 Claude 聊天室、上次交接後有新對話、上下文超過 20K token 才做；總指揮優先，每件間隔 20 秒，Claude 5 小時或每週額度剩不到 15% 就暫停。正在回答或有權限詢問的聊天室延到下一輪。不會切換你正在看的畫面。")).font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -213,7 +232,7 @@ struct KeysPage: View {
 
 extension LocalModel {
     /// 伺服器位址不合規定的原因（nil＝可以用）：http 只准本機（localhost、127.0.0.1、::1），其他位址一律要 https；
-    /// 不然金鑰和對話會明文送到別台機器、路上的人看得到（使用者 10/27 決定）
+    /// 不然金鑰和對話會明文送到別台機器、路上的人看得到
     var addressProblem: String? {
         guard let u = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)), let scheme = u.scheme?.lowercased(), let host = u.host?.lowercased() else {
             return L("伺服器位址看不懂：要寫成 https://… 或 http://127.0.0.1:8080")
@@ -280,6 +299,7 @@ struct LocalModelsPage: View {
 
 struct DataPage: View {
     @ObservedObject var store: Store
+    @State private var cliMessage: String?
     var body: some View {
         Form {
             Section(L("工作台的資料")) {
@@ -288,6 +308,19 @@ struct DataPage: View {
             }
             Section(L("跟 iTerm 共用")) {
                 row(L("claude 資料夾選單的清單"), path: ClaudeEnvs.file.path)
+            }
+            if CLITools.bundleDir != nil {
+                Section(L("命令列工具")) {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(L("codenv-todo、codenv-browser、memory-check"))
+                            Text(L("聊天室裡的 Claude 不用安裝就能用；想在自己的終端機也打得到，按右邊在 ~/.local/bin 建連結（已經有別的同名檔就不動）。")).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(L("安裝到 ~/.local/bin")) { cliMessage = CLITools.install() }
+                    }
+                    if let m = cliMessage { Text(m).font(.caption).foregroundStyle(.secondary) }
+                }
             }
             Section(L("匯入")) {
                 Button(L("從 Claude Code 匯入對話…（⌘ ⇧ I）")) { NSApp.sendAction(#selector(AppDelegate.showImporter), to: nil, from: nil) }
@@ -314,6 +347,12 @@ struct InterfacePrefs: View {
     @ObservedObject var p = Prefs.shared
     var body: some View {
         Section(L("介面")) {
+            Picker(L("左欄"), selection: $p.sidebarMode) {
+                Text(L("總指揮")).tag("commander")
+                Text(L("原本的樹")).tag("tree")
+            }
+            Text(L("左欄可以切到「總指揮」模式：每個總指揮管一批分組，右欄會跟著出現專案、檔案、Git 等分頁。切過去之後按左欄「總指揮」旁的「＋」新增；用不到再切回「原本的樹」，聊天室都還在。"))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Text(L("文字大小"))
                 Slider(value: $scale.factor, in: 0.8...2.0, step: 0.05)

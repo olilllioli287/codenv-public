@@ -16,9 +16,16 @@ final class BrowserServer {
     /// 名稱查得到的格子標題（側欄名稱）；MainWindow 設定
     var titleOf: ((UUID) -> String?)?
     /// codenv-todo wake：喚醒一段聊天室（只開程序、不送訊息；MainWindow 設定）。這是唯一不是「只能讀」的指令，同樣要 token
-    var wake: ((String, @escaping ([String: Any]) -> Void) -> Void)?
+    var wake: ((String, String?, @escaping ([String: Any]) -> Void) -> Void)?
     /// codenv-todo show <目標>：打開協作看板並捲到那個目標（第二個參數＝要不要把 codenv 叫到前面）
     var showGoal: ((String, Bool, @escaping ([String: Any]) -> Void) -> Void)?
+    /// codenv-todo team：這個總指揮底下有誰（參數：呼叫者的聊天室 id、或名稱）
+    var renameChat: ((String?, String, String, @escaping ([String: Any]) -> Void) -> Void)?
+    var setModelChat: ((String?, String, String, String?, @escaping ([String: Any]) -> Void) -> Void)?
+    var setMcpChat: ((String?, String, String, @escaping ([String: Any]) -> Void) -> Void)?
+    var newChat: ((String?, String, String?, String?, String?, String?, String?, String?, @escaping ([String: Any]) -> Void) -> Void)?
+    var setTopicChat: ((String?, String, String, @escaping ([String: Any]) -> Void) -> Void)?
+    var team: ((String?, String?, @escaping ([String: Any]) -> Void) -> Void)?
 
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
@@ -115,7 +122,7 @@ final class BrowserServer {
             if first { DispatchQueue.global().async { self.reply(c, r) } }
         }
         let cmd = req["cmd"] as? String
-        let isWake = cmd == "wake", isExport = cmd == "export"
+        let isWake = cmd == "wake" || cmd == "new", isExport = cmd == "export"
         DispatchQueue.global().asyncAfter(deadline: .now() + (isExport ? 280 : isWake ? 28 : 15)) {
             finish(["ok": false, "error": isExport ? "匯出 280 秒都沒結果（對話太長或網頁卡住了）" : isWake ? "喚醒 28 秒都沒結果（codenv 可能卡住了）" : "網頁 15 秒都沒回應（可能卡住了），再試一次"])
         }
@@ -135,6 +142,13 @@ final class BrowserServer {
 
     /// 在主執行緒上做（WebKit 只能在主執行緒碰）
     private func handle(_ req: [String: Any], done: @escaping ([String: Any]) -> Void) {
+        // socket 照常服務看板的 wake／show；只擋網頁指令，不能把整個 BrowserServer 關掉。
+        let cmd = req["cmd"] as? String
+        if !Prefs.shared.webFeaturesEnabled, cmd != "wake", cmd != "show", cmd != "team", cmd != "rename", cmd != "new", cmd != "model", cmd != "mcp", cmd != "topic" {
+            if cmd == "ls" { done(["ok": true, "panes": []]) }
+            else { done(["ok": false, "error": L("網頁外掛功能已關閉（設定可打開）")]) }
+            return
+        }
         let panes = BrowserPane.all
         func info(_ p: BrowserPane) -> [String: Any] {
             ["id": String(p.conversationID.uuidString.prefix(8)).lowercased(), "name": titleOf?(p.conversationID) ?? "", "title": p.currentTitle, "url": p.currentURL]
@@ -142,10 +156,28 @@ final class BrowserServer {
         switch req["cmd"] as? String {
         case "wake":
             guard let wake else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
-            wake((req["name"] as? String) ?? "", done)
+            wake((req["name"] as? String) ?? "", req["conv"] as? String, done)
         case "show":
             guard let showGoal else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
             showGoal((req["goal"] as? String) ?? "", (req["activate"] as? Bool) ?? true, done)
+        case "team":
+            guard let team else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            team(req["conv"] as? String, req["name"] as? String, done)
+        case "rename":
+            guard let renameChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            renameChat(req["conv"] as? String, (req["target"] as? String) ?? "", (req["name"] as? String) ?? "", done)
+        case "new":
+            guard let newChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            newChat(req["conv"] as? String, (req["name"] as? String) ?? "", req["dir"] as? String, req["project"] as? String, req["model"] as? String, req["effort"] as? String, req["mcp"] as? String, req["topic"] as? String, done)
+        case "model":
+            guard let setModelChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            setModelChat(req["conv"] as? String, (req["target"] as? String) ?? "", (req["model"] as? String) ?? "", req["effort"] as? String, done)
+        case "topic":
+            guard let setTopicChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            setTopicChat(req["conv"] as? String, (req["target"] as? String) ?? "", (req["topic"] as? String) ?? "", done)
+        case "mcp":
+            guard let setMcpChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            setMcpChat(req["conv"] as? String, (req["target"] as? String) ?? "", (req["mode"] as? String) ?? "", done)
         case "ls":
             done(["ok": true, "panes": panes.map(info)])
         case "text", "shot", "url", "export":

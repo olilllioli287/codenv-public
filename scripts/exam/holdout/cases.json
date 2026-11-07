@@ -51,5 +51,10 @@
     "id": "C19",
     "name": "大訊息寫入不卡主執行緒",
     "runner": "native.sh"
+  },
+  {
+    "id": "C20",
+    "name": "分支聊天室 MCP 精簡參數、不帶 --chrome",
+    "runner": "native.sh"
   }
 ]

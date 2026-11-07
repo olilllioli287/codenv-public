@@ -2,7 +2,7 @@ import AppKit
 import ImageIO
 import WebKit
 
-// 瀏覽器格子裡的 Gemini 網頁：匯出對話（使用者 10/27：他平常用 Chrome 擴充 Voyager 匯出，內嵌瀏覽器沒辦法）、
+// 瀏覽器格子裡的 Gemini 網頁：匯出對話（他平常用 Chrome 擴充 Voyager 匯出，內嵌瀏覽器沒辦法）
 // 還有 ⌘ Enter 送出／Enter 換行。
 // 匯出格式比照 Voyager：資料夾裡 chat.md（每輪「使用者」「助理」）＋assets/（圖片），md 用相對路徑引用。
 // 做法：在網頁裡讀 DOM（user-query／model-response 元素）轉成 Markdown，圖片在網頁裡 fetch 成 base64 傳回來存檔；
@@ -143,8 +143,8 @@ enum GeminiExport {
     })();
     """#
 
-    // MARK: 版面：隱藏左邊的歷史列表、加寬對話區（使用者 10/29：「對話區太窄，想隱藏左邊歷史列表」）
-    // NotebookLM（使用者 10/29：「你提的 notebooklm 的功能都可以先做再說」）：來源欄、筆記欄（Studio）各一顆開關
+    // MARK: 版面：隱藏左邊的歷史列表、加寬對話區
+    // NotebookLM：來源欄、筆記欄（Studio）各一顆開關
 
     static var hideHistory: Bool { appDefaults.object(forKey: "geminiHideHistory") as? Bool ?? true }
     /// NotebookLM 的來源欄、筆記欄是不是開著（預設都開）
@@ -654,6 +654,7 @@ enum GeminiExport {
 extension BrowserPane {
     /// 匯出這格 Gemini 的整段對話到 parent（預設 ~/Downloads）底下的新資料夾；只讀網頁
     func exportGemini(parent: URL? = nil, done: @escaping (Result<GeminiExport.Output, Error>) -> Void) {
+        guard Prefs.shared.webFeaturesEnabled else { return done(.failure(GeminiExport.Failure(L("網頁外掛功能已關閉（設定可打開）")))) }
         guard GeminiExport.isGemini(webView.url) else { return done(.failure(GeminiExport.Failure(L("這一格不是 Gemini 網頁（gemini.google.com）")))) }
         Task { @MainActor in
             do { done(.success(try await self.runGeminiExport(parent: parent))) } catch { done(.failure(error)) }
@@ -661,9 +662,14 @@ extension BrowserPane {
     }
 
     @MainActor private func runGeminiExport(parent: URL?) async throws -> GeminiExport.Output {
+        func checkEnabled() throws {
+            guard Prefs.shared.webFeaturesEnabled else { throw GeminiExport.Failure(L("網頁外掛功能已關閉（設定可打開）")) }
+        }
+        try checkEnabled()
         let raw: Any?
         do { raw = try await webView.callAsyncJavaScript(GeminiExport.collectJS, arguments: [:], in: nil, contentWorld: .page) }
         catch { throw GeminiExport.Failure(L("讀不到網頁內容：\(error.localizedDescription)")) }
+        try checkEnabled()
         guard let r = raw as? [String: Any] else { throw GeminiExport.Failure(L("網頁回了看不懂的東西")) }
         if let e = r["error"] as? String { throw GeminiExport.Failure(e) }
         let turns = r["turns"] as? [[String: Any]] ?? []
@@ -682,16 +688,23 @@ extension BrowserPane {
         var pageErrors: [Int: String] = [:]
         var cookieInfo: [String: Any] = [:]
         for (i, im) in imgs.enumerated() {
+            try checkEnabled()
             let (r, err) = await pageImage((im["src"] as? String) ?? "")
             if let r { blobs[i] = r } else { pending.append(i); pageErrors[i] = err }
         }
         if !pending.isEmpty {
             let cookies = GeminiExport.googleCookies(await webView.configuration.websiteDataStore.httpCookieStore.allCookies())
+            try checkEnabled()
             cookieInfo = GeminiExport.cookieSummary(cookies)
             let session = GeminiExport.downloadSession(cookies: cookies)
-            defer { session.finishTasksAndInvalidate() }
+            // 總開關關掉時連原生圖片下載也取消，不讓已經開始的匯出在背景繼續連網。
+            let observer = NotificationCenter.default.addObserver(forName: Prefs.webFeaturesChanged, object: nil, queue: .main) { _ in
+                if !Prefs.shared.webFeaturesEnabled { session.invalidateAndCancel() }
+            }
+            defer { NotificationCenter.default.removeObserver(observer); session.finishTasksAndInvalidate() }
             var at = 0
             while at < pending.count {
+                try checkEnabled()
                 let chunk = Array(pending[at..<min(at + 4, pending.count)]); at += 4
                 let got = await withTaskGroup(of: (Int, GeminiExport.DownloadInfo, String).self) { g -> [(Int, GeminiExport.DownloadInfo, String)] in
                     for i in chunk { let src = (imgs[i]["src"] as? String) ?? ""; g.addTask { let b = await GeminiExport.best(src, with: session); return (i, b.info, b.variant) } }
@@ -711,6 +724,7 @@ extension BrowserPane {
                 }
             }
         }
+        try checkEnabled()
         var savedImages: [[String: Any]] = []
         for (i, im) in imgs.enumerated() {
             guard let (data, type) = blobs[i], !data.isEmpty else { failed.append((im["src"] as? String) ?? ""); continue }

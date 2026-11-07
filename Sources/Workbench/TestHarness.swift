@@ -5,6 +5,19 @@ import WebKit
 
 extension AppDelegate {
     func installTestHooksEarly(_ args: [String]) {
+        // --pref "webFeaturesEnabled=0|1"：必須在 Store／Workspace 建立之前套用，只寫 <bundleID>.test。
+        if args.contains("--state-dir") {
+            for (i, flag) in args.enumerated() where flag == "--pref" && i + 1 < args.count {
+                let pair = args[i + 1].split(separator: "=", maxSplits: 1).map(String.init)
+                guard pair.count == 2 else { continue }
+                if pair[0] == "webFeaturesEnabled", ["0", "1"].contains(pair[1]) { Prefs.shared.webFeaturesEnabled = pair[1] == "1" }
+                if pair[0] == "petEmbedCharacter" { PetEmbedPrefs.character = pair[1] }
+                if pair[0] == "petEmbedPress", let n = Int(pair[1]) { PetEmbedPrefs.pressLevel = n }
+                if pair[0] == "petEmbedOn" { PetEmbedPrefs.enabled = pair[1] == "1" }
+                if pair[0] == "petSlotOn" { PetSlot.enabled = pair[1] == "1" }
+                if pair[0] == "sidebarMode", ["commander", "tree"].contains(pair[1]) { Prefs.shared.sidebarMode = pair[1] }
+            }
+        }
         if args.contains("--dump-theme") {
             let t = Theme.fromITerm()
             print("字型", t.font.fontName, t.font.pointSize, "粗體", t.boldFont.fontName, "行距", t.lineSpacing)
@@ -40,6 +53,10 @@ extension AppDelegate {
     func installChatTestHooks(_ args: [String]) {
         guard Self.isolatedTestRun(args, "聊天") else { return }
         if let i = args.firstIndex(of: "--claude"), i + 1 < args.count { workspace.claudeCommand = args[i + 1] }
+        // 背景 Session 閒置回收的門檻縮短（秒），測回收用
+        if let i = args.firstIndex(of: "--bg-idle-seconds"), i + 1 < args.count, let sec = Double(args[i + 1]), sec > 0 { workspace.idleReleaseSeconds = sec }
+        // 摘要測試完全不用真的 claude；讀不到假檔就回報失敗，不能退回花額度的路徑。第一則訊息另搭配 --chat-claude 假後端。
+        if let i = args.firstIndex(of: "--handoff-fake"), i + 1 < args.count { Handoff.fakeFile = URL(fileURLWithPath: args[i + 1]) }
         // --chat-args "參數 參數"：測試時多給 claude 的參數（例如 --permission-mode default，逼它來問權限）
         if let i = args.firstIndex(of: "--chat-args"), i + 1 < args.count {
             ChatSession.extraArgs = args[i + 1].split(separator: " ").map(String.init)
@@ -59,6 +76,105 @@ extension AppDelegate {
 
     func installTestHooks(_ args: [String]) {
         guard Self.isolatedTestRun(args, "一般") else { return }
+        // --float-term "秒:show|hide|newtab"／--dump-float "秒:檔案"：只操作隔離實例。
+        for (i, flag) in args.enumerated() where ["--float-term", "--dump-float"].contains(flag) && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let seconds = Double(parts[0]), seconds.isFinite, seconds >= 0 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                guard let terminal = self?.main.floatingTerminal else { return }
+                if flag == "--dump-float" { terminal.dumpState(to: parts[1]); return }
+                switch parts[1] {
+                case "show": terminal.show()
+                case "hide": terminal.hide()
+                case "newtab": terminal.newTab()
+                case "reset": terminal.resetGeometry()
+                default: break
+                }
+            }
+        }
+        // --lid-sim "秒:動作"（要同時有 --lid-sim 旗標本身當開關，不碰真的闔蓋與 pmset）：
+        //   動作 close／open／temp=N／batt=N／ac=0|1／helper=ok|unsupported|fail／work=N（覆蓋工作中的段數）／work=auto。
+        // --lid-limits "撐多久秒,幾度,連續幾秒,幾秒記一行"：縮短時限方便測。
+        for (i, a) in args.enumerated() where a == "--lid-limits" && i + 1 < args.count {
+            let v = args[i + 1].split(separator: ",").compactMap { Double($0) }
+            DispatchQueue.main.async { [weak self] in
+                guard let k = self?.main.lidKeeper, v.count >= 4 else { return }
+                k.limits.maxHold = v[0]; k.limits.hotCelsius = v[1]; k.limits.hotSeconds = v[2]; k.limits.logEvery = v[3]
+                if v.count > 4 { k.limits.preholdOffDelay = v[4] }
+                if v.count > 5 { k.limits.statusEvery = v[5] }
+            }
+        }
+        for (i, a) in args.enumerated() where a == "--lid-sim" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let seconds = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                guard let k = self?.main.lidKeeper, let sim = k.env as? SimLidEnv else { return }
+                let cmd = parts[1]
+                let kv = cmd.split(separator: "=", maxSplits: 1).map(String.init)
+                switch kv[0] {
+                case "close": sim.closed = true
+                case "open": sim.closed = false
+                case "temp": sim.temp = Double(kv.last ?? "") ?? sim.temp
+                case "batt": sim.percent = Int(kv.last ?? "") ?? sim.percent
+                case "ac": sim.onAC = kv.last == "1"
+                case "helper": sim.helper = kv.last ?? "ok"
+                case "work":
+                    if let n = Int(kv.last ?? "") { k.workingCount = { n } }
+                    else { k.workingCount = { [weak k] in k?.workingIDs().count ?? 0 } }
+                case "recover": k.recoverIfNeeded()
+                case "extdead": sim.connDead = true; sim.actualOn = false      // 小幫手重啟、連線斷了
+                case "extoff": sim.actualOn = false      // 別人把小幫手的 nosleep 解除了
+                default: break
+                }
+                k.log("（測試）\(cmd)")
+            }
+        }
+        // --pet-key "秒:鍵碼[,shift]"／--pet-say "秒:倒數秒數:文字"／--pet-dump "秒:檔案"：嵌入桌寵的測試（模擬按鍵、泡泡、輸出狀態）
+        for (i, a) in args.enumerated() where ["--pet-key", "--pet-say", "--pet-dump", "--pet-trace", "--pet-drag"].contains(a) && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 2).map(String.init)
+            guard parts.count >= 2, let seconds = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                guard let host = self?.main.host else { return }
+                let pet = host.petEmbed
+                switch a {
+                case "--pet-key":
+                    let f = parts[1].split(separator: ",").map(String.init)
+                    if let code = Int64(f[0]) { PetKeys.shared.onKey?(code, f.count > 1 && f[1] == "shift") }
+                case "--pet-trace":   // "秒:檔案"：從現在起每 20 ms 記一行 pose／下壓，共 1.5 秒
+                    var lines: [String] = []; let t0 = Date()
+                    Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { t in
+                        lines.append(String(format: "%.3f %@ %.2f", Date().timeIntervalSince(t0), pet.pose.rawValue, Double(pet.pressOffset)))
+                        if Date().timeIntervalSince(t0) > 1.5 { t.invalidate(); try? lines.joined(separator: "\n").write(toFile: parts[1], atomically: true, encoding: .utf8) }
+                    }
+                case "--pet-drag":   // "秒:dx"：在桌寵上按住往左拖 dx 點再放開（走 NSApp.postEvent 事件佇列），測拖曳不會改右欄寬度
+                    guard let w = pet.window, let host = self?.main.host else { return }
+                    let center = pet.convert(NSPoint(x: pet.bounds.maxX - 40, y: pet.bounds.midY), to: nil)
+                    let dx = Double(parts[1]) ?? 100
+                    for (t, x, pr) in [(NSEvent.EventType.leftMouseDown, 0.0, Float(1)), (.leftMouseDragged, dx / 2, 1), (.leftMouseDragged, dx, 1), (.leftMouseUp, dx, 0)] {
+                        if let e = NSEvent.mouseEvent(with: t, location: NSPoint(x: center.x - x, y: center.y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: pr) { NSApp.postEvent(e, atStart: false) }
+                    }
+                    _ = host
+                case "--pet-say":
+                    pet.say(parts.count > 2 ? parts[2] : "", seconds: Int(parts[1]) ?? 0)
+                default:
+                    let f = pet.spriteFrame, e = pet.frame
+                    let out: [String: Any] = ["enabled": PetEmbedPrefs.enabled, "character": PetEmbedPrefs.character, "press": PetEmbedPrefs.pressLevel,
+                        "pose": pet.pose.rawValue, "pressOffset": Double(pet.pressOffset), "hidden": pet.isHidden || pet.superview == nil,
+                        "embedFrame": [e.minX, e.minY, e.width, e.height], "columnWidth": Double(host.petColumnWidth), "cellPoints": Double(pet.cellPoints), "restY": Double(pet.restY), "panelWidth": Double(RightPanelModel.shared.width), "spriteFrame": [f.minX, f.minY, f.width, f.height],
+                        "globalActive": PetKeys.shared.globalActive, "bubbleVisible": !pet.bubble.isHidden, "bubbleText": pet.bubble.text]
+                    if let d = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: URL(fileURLWithPath: parts[1])) }
+                }
+            }
+        }
+        // --pulse-dump "秒:檔案"：有幾個閃爍綠點登記了時鐘、時鐘有沒有在跑（測呼吸動畫只在工作中才掛上）
+        for (i, a) in args.enumerated() where a == "--pulse-dump" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let seconds = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                let c = PulseClock.shared
+                try? "users=\(c.users) running=\(c.isRunning) appActive=\(NSApp.isActive)\n".write(toFile: parts[1], atomically: true, encoding: .utf8)
+            }
+        }
         // --return "秒數"：幾秒後模擬按一下鍵盤的 Return（走跟真的按鍵一樣的路）
         for (i, a) in args.enumerated() where a == "--return" && i + 1 < args.count {
             guard let sec = Double(args[i + 1]) else { continue }
@@ -88,6 +204,29 @@ extension AppDelegate {
                 guard let w = self?.main.window else { return }
                 w.orderFrontRegardless()
                 DispatchQueue.main.asyncAfter(deadline: .now() + parts[1]) { w.orderBack(nil) }
+            }
+        }
+        // --main-frame "秒數:x:y:寬:高:持續秒數"：把主視窗搬到這個位置（螢幕座標、左下原點）並放到最前面（不搶焦點、不 activate），時間到退回後面。給真滑鼠測試用（只 --state-dir 生效）
+        for (i, a) in args.enumerated() where a == "--main-frame" && i + 1 < args.count && args.contains("--state-dir") {
+            let n = args[i + 1].split(separator: ":").compactMap { Double($0) }
+            guard n.count == 6 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + n[0]) { [weak self] in
+                guard let w = self?.main.window else { return }
+                w.setFrame(NSRect(x: n[1], y: n[2], width: n[3], height: n[4]), display: true)
+                w.orderFrontRegardless()
+                DispatchQueue.main.asyncAfter(deadline: .now() + n[5]) { w.orderBack(nil) }
+            }
+        }
+        // --front-detached：（只 --state-dir 生效）--background 時獨立視窗被壓在最後面、點不到；加這個，每出現一個新的獨立視窗就把它放到最前面並設成鍵盤焦點（給真滑鼠測試用）
+        if args.contains("--front-detached"), args.contains("--state-dir") {
+            var seen = Set<UUID>()
+            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                for (id, c) in self.main.detachedWindows where !seen.contains(id) {
+                    seen.insert(id)
+                    c.window?.makeKeyAndOrderFront(nil)
+                }
+                seen = seen.filter { self.main.detachedWindows[$0] != nil }
             }
         }
         // --focus-settings "秒數"：打開設定視窗、把 App 叫到前面讓設定變成作用中的視窗（測 ⌘ W 關小視窗；會搶鍵盤焦點）
@@ -280,6 +419,17 @@ extension AppDelegate {
                 guard let self, let id = self.store.selected, let p = self.workspace.panes[id] as? ChatPane else { return }
                 p.inputBar.textView.string = text
                 p.inputBar.textView.onSend?()
+            }
+        }
+        // --chat-send-conv "秒數:第幾段:文字"：把文字送到第 n 段對話（從 0 數，不管有沒有被選取；它要有開著的格子）。每日交接的「正在回答」測試用
+        for (i, a) in args.enumerated() where a == "--chat-send-conv" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 2).map(String.init)
+            guard parts.count == 3, let sec = Double(parts[0]), let n = Int(parts[1]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self, self.store.conversations.indices.contains(n),
+                      let c = self.store.conversation(self.store.conversations[n].id),
+                      let p = self.workspace.pane(for: c) as? ChatPane else { return }
+                _ = p.sendText(parts[2])
             }
         }
         // --tab-test "秒數:檔案"：在幾種焦點下呼叫「輸入框外按 Tab」，結果寫進檔案（Tab 只在對話內容上採用建議，其他地方照常）
@@ -543,6 +693,64 @@ extension AppDelegate {
                 guard let self, let id = self.store.selected, let p = self.workspace.panes[id] as? ChatPane else { return }
                 p.inputBar.textView.string = String(parts[1]).replacingOccurrences(of: "\\n", with: "\n")
                 p.inputBar.textView.didChangeText()
+            }
+        }
+        // --input-click-last "秒數:檔案"：點輸入框最後一行（最後是空行時點那個空行）的中間，記下點到哪個元件、游標停在哪、文字區高度
+        for (i, a) in args.enumerated() where a == "--input-click-last" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self, let id = self.store.selected, let pane = self.workspace.panes[id] as? ChatPane,
+                      let tv = pane.inputBar.textView as NSTextView?, let lm = tv.layoutManager, let tc = tv.textContainer, let w = tv.window else { return }
+                // 檔名含 long：放 20 行（最後是空行），超過最多行數、要捲動
+                if parts[1].contains("long") { tv.string = (1...20).map { "第\($0)行" }.joined(separator: "\n") + "\n"; tv.didChangeText() }
+                else if tv.string.isEmpty { tv.string = "第一行\n第二行\n"; tv.didChangeText() }
+                lm.ensureLayout(for: tc)
+                let len = (tv.string as NSString).length
+                tv.setSelectedRange(NSRange(location: 0, length: 0))      // 游標先放最前面＝「上次的位置」
+                tv.scrollRangeToVisible(NSRange(location: 0, length: 0))
+                let viaQueue = parts[1].contains("queue")    // 檔名含 queue：先把焦點交給聊天網頁，點擊走 NSApp.postEvent（會經過 WindowHost 的滑鼠監聽）
+                var pre = "焦點前 textView高=\(Int(tv.frame.height)) 可視=\(Int(tv.visibleRect.minY))..\(Int(tv.visibleRect.maxY)) 框=\(Int(pane.inputBar.frame.height))\n"
+                if viaQueue, let web = Self.find(DropWebView.self, in: pane) { w.makeFirstResponder(web) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + (viaQueue ? 0.4 : 0)) {
+                lm.ensureLayout(for: tc)
+                pre += "焦點給網頁後 textView高=\(Int(tv.frame.height)) 可視=\(Int(tv.visibleRect.minY))..\(Int(tv.visibleRect.maxY)) 框=\(Int(pane.inputBar.frame.height)) 游標=\(tv.selectedRange().location)\n"
+                var r = lm.extraLineFragmentRect
+                let hasExtra = r.height > 0
+                if !hasExtra, lm.numberOfGlyphs > 0 { r = lm.lineFragmentRect(forGlyphAt: lm.numberOfGlyphs - 1, effectiveRange: nil) }
+                var pt = NSPoint(x: r.minX + 20 + tv.textContainerOrigin.x, y: r.midY + tv.textContainerOrigin.y)
+                // 檔名含 below：點文字框下緣再往下 4 點（圓角框的空白）；含 margin：點輸入列最左邊的外圍留白（同高度）
+                if parts[1].contains("below") { pt.y = tv.visibleRect.maxY + 4 }
+                var wp = tv.convert(pt, to: nil)
+                if parts[1].contains("margin") { wp.x = pane.inputBar.convert(NSPoint(x: 6, y: 0), to: nil).x }
+                // 檔名含 race：先假裝點了對話內容（排了 50ms 後把焦點交給網頁），馬上點回輸入框
+                if parts[1].contains("race"), let e = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 5, y: w.frame.height - 60), modifierFlags: [], timestamp: 0, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    w.makeFirstResponder(tv); pane.clickedInside(e)
+                }
+                let hit = w.contentView?.hitTest(w.contentView!.convert(wp, from: nil))
+                var log = pre + "len=\(len) 結尾空行=\(hasExtra) 行=\(Int(r.minY))..\(Int(r.maxY)) textView高=\(Int(tv.frame.height)) 可視=\(Int(tv.visibleRect.minY))..\(Int(tv.visibleRect.maxY)) 點到=\(hit.map { String(describing: type(of: $0)) } ?? "nil")\n"
+                log += "直接算 index=\(tv.characterIndexForInsertion(at: pt)) pt=\(Int(pt.x)),\(Int(pt.y)) wp=\(Int(wp.x)),\(Int(wp.y))\n"
+                if viaQueue {
+                    var mon: Any?
+                    mon = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { e in
+                        let q = tv.convert(e.locationInWindow, from: nil)
+                        log += "事件 \(e.type == .leftMouseDown ? "down" : "up") 視窗點=\(Int(e.locationInWindow.x)),\(Int(e.locationInWindow.y)) 換到文字框=\(Int(q.x)),\(Int(q.y)) 游標=\(tv.selectedRange().location)\n"
+                        DispatchQueue.main.async { log += "  處理後 游標=\(tv.selectedRange().location)\n" }
+                        if e.type == .leftMouseUp, let m = mon { NSEvent.removeMonitor(m); mon = nil }
+                        return e
+                    }
+                    for (t, pr) in [(NSEvent.EventType.leftMouseDown, Float(1)), (.leftMouseUp, 0)] {
+                        if let e = NSEvent.mouseEvent(with: t, location: wp, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: pr) { NSApp.postEvent(e, atStart: false) }
+                    }
+                } else if let hit {
+                    if let up = NSEvent.mouseEvent(with: .leftMouseUp, location: wp, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0) { NSApp.postEvent(up, atStart: true) }
+                    if let down = NSEvent.mouseEvent(with: .leftMouseDown, location: wp, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) { hit.mouseDown(with: down) }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    log += "游標=\(tv.selectedRange().location)（應該是 \(len)） 焦點=\(w.firstResponder.map { String(describing: type(of: $0)) } ?? "nil")\n"
+                    try? log.write(toFile: parts[1], atomically: true, encoding: .utf8)
+                }
+                }
             }
         }
         // --chat-send-now "秒數:文字"：像按 ⌃ Enter（Claude 還在做的話馬上插話）
@@ -842,6 +1050,43 @@ extension AppDelegate {
                 p.inputBar.textView.onImages?([url], [])
             }
         }
+        // --input-edited "秒數"：把輸入框所有圖片附件標成「已編輯」（橘框＋「#n 已編輯」）
+        for (i, a) in args.enumerated() where a == "--input-edited" && i + 1 < args.count {
+            guard let sec = Double(args[i + 1]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self, let id = self.store.selected, let p = self.workspace.panes[id] as? ChatPane else { return }
+                p.inputBar.markAllEditedForTest()
+            }
+        }
+        // --input-scroller "秒數:legacy|overlay"：模擬系統換捲軸樣式（接滑鼠＝legacy）
+        for (i, a) in args.enumerated() where a == "--input-scroller" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self, let id = self.store.selected, let p = self.workspace.panes[id] as? ChatPane else { return }
+                p.inputBar.forceScrollerStyleForTest(parts[1] == "legacy" ? .legacy : .overlay)
+            }
+        }
+        // --input-chip-dump "秒數:檔案"：把卡片列的位置寫進檔案
+        for (i, a) in args.enumerated() where a == "--input-chip-dump" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self, let id = self.store.selected, let p = self.workspace.panes[id] as? ChatPane else { return }
+                p.inputBar.layoutSubtreeIfNeeded()
+                try? (p.inputBar.chipMetricsForTest + "\n").write(toFile: parts[1], atomically: true, encoding: .utf8)
+            }
+        }
+        // --main-width "秒數:寬"：把主視窗寬度改成這個點數（測變窄時版面）
+        for (i, a) in args.enumerated() where a == "--main-width" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]), let wd = Double(parts[1]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let w = self?.main.window else { return }
+                var f = w.frame; f.size.width = wd
+                w.setFrame(f, display: true)
+            }
+        }
         // --chat-files "秒數:路徑,路徑…"：像在「上傳檔案」面板選了這些檔案（圖片變附件、其他插入路徑），用 --chat-js 或截圖看結果
         for (i, a) in args.enumerated() where a == "--chat-files" && i + 1 < args.count {
             let parts = args[i + 1].split(separator: ":", maxSplits: 1)
@@ -1035,7 +1280,13 @@ extension AppDelegate {
                     guard let c = pane as? ChatPane else { return nil }
                     return "chat=\(id.uuidString) title=\(self.store.conversation(id)?.title ?? "?") hasWeb=\(c.hasWeb) webPID=\(c.webPID)"
                 }.sorted()
-                let line = "t=\(parts[0]) panes=\(names)\n" + chats.map { $0 + "\n" }.joined()
+                let webPanes = self.workspace.panes.compactMap { id, pane -> String? in
+                    guard self.store.conversation(id)?.isBrowser == true else { return nil }
+                    return "web=\(id.uuidString) type=\(type(of: pane))"
+                }.sorted()
+                let line = "t=\(parts[0]) panes=\(names)\n"
+                    + "webFeaturesEnabled=\(Prefs.shared.webFeaturesEnabled) sidebarMode=\(Prefs.shared.sidebarMode) browserPanes=\(BrowserPane.all.count)\n"
+                    + (chats + webPanes).map { $0 + "\n" }.joined()
                 func append(_ text: String) {
                     if let h = FileHandle(forWritingAtPath: String(parts[1])) { h.seekToEndOfFile(); h.write(text.data(using: .utf8)!); h.closeFile() }
                     else { try? text.write(toFile: String(parts[1]), atomically: true, encoding: .utf8) }
@@ -1150,6 +1401,101 @@ extension AppDelegate {
                 else { try? line.write(toFile: String(parts[1]), atomically: true, encoding: .utf8) }
             }
         }
+        // --right-tab "秒數:視窗|檔案|Git|歷史|看板"：打開右欄並切到那個分頁（會把測試實例的右欄開起來）
+        for (i, a) in args.enumerated() where a == "--right-tab" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]), let tab = RightTab.named(parts[1]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in self?.main.showRightPanel(tab: tab) }
+        }
+        // --rp-op "秒數:操作:參數…"：聊天室資訊（選取／i／資訊卡）的測試掛鉤，只在測試實例（有 --state-dir）生效
+        //   select:<標題>（只改選取，不經過點擊）、click:x:y（用 NSApp.postEvent 在主視窗內容區的座標點一下，左上為原點）、key:i（把 i 鍵送到主視窗）、
+        //   info:<標題>（直接開表單）、topic:<標題>:<說明>（等於在表單按儲存說明）、card:<標題>（走滑過 2 秒的計時流程）、card-end:<標題>、
+        //   delay:<秒>（改資訊卡等待時間）、dump:<檔案>（選取、表單、資訊卡狀態 JSON）、form-snapshot:<檔案.png>（表單是 sheet，拍它的視窗）
+        for (i, a) in args.enumerated() where a == "--rp-op" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 2, let sec = Double(parts[0]), sec.isFinite, sec >= 0 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self, let win = self.main.window else { return }
+                let m = RightPanelModel.shared
+                let arg = parts.count > 2 ? parts[2] : ""
+                let cid = { (t: String) in self.store.conversations.first(where: { $0.title == t })?.id }
+                func send(_ type: NSEvent.EventType, _ pt: NSPoint) {
+                    let h = win.contentView?.bounds.height ?? 0
+                    let wp = win.contentView?.convert(NSPoint(x: pt.x, y: h - pt.y), to: nil) ?? pt
+                    if let e = NSEvent.mouseEvent(with: type, location: wp, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: win.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) { NSApp.postEvent(e, atStart: false) }
+                }
+                switch parts[1] {
+                case "select": m.selectedChat = cid(arg)
+                case "focus": self.main.focusRightPanelForTest()
+                case "click":
+                    let xy = arg.split(separator: ":").compactMap { Double($0) }
+                    guard xy.count == 2 else { return }
+                    let pt = NSPoint(x: xy[0], y: xy[1])
+                    if let cv = win.contentView { EventLog.log("測試", "rp click bounds=\(cv.bounds) flipped=\(cv.isFlipped) hit=\(String(describing: cv.hitTest(cv.convert(NSPoint(x: pt.x, y: cv.bounds.height - pt.y), from: nil)).map { type(of: $0) })) key=\(win.isKeyWindow)") }
+                    send(.mouseMoved, pt); send(.leftMouseDown, pt); DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { send(.leftMouseUp, pt) }
+                case "key":
+                    if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: win.windowNumber, context: nil, characters: arg, charactersIgnoringModifiers: arg, isARepeat: false, keyCode: 34) { NSApp.postEvent(e, atStart: false) }
+                case "info": if let id = cid(arg) { m.selectedChat = id; m.infoChat = id }
+                case "topic": // 標題:說明
+                    let kv = arg.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+                    if kv.count == 2, let id = cid(kv[0]) { self.store.setTopic(id, kv[1], byUser: true) }
+                case "card": if let id = cid(arg) { ChatInfoCard.shared.hoverBegan(id, store: self.store, workspace: self.workspace, window: win) }
+                case "card-end": if let id = cid(arg) { ChatInfoCard.shared.hoverEnded(id) }
+                case "delay": ChatInfoCard.delay = Double(arg) ?? 2
+                case "dump":
+                    let o: [String: Any] = ["selected": m.selectedChat.flatMap { self.store.conversation($0)?.title } ?? NSNull(),
+                                            "infoOpen": m.infoChat != nil, "cardFor": ChatInfoCard.shared.shownFor.flatMap { self.store.conversation($0)?.title } ?? NSNull(),
+                                            "firstResponder": String(describing: win.firstResponder.map { type(of: $0) }),
+                                            "topics": self.store.conversations.reduce(into: [String: Any]()) { $0[$1.title] = $1.topic ?? NSNull() },
+                                            "topicByCommander": self.store.conversations.reduce(into: [String: Any]()) { $0[$1.title] = $1.topicByCommander ?? NSNull() }]
+                    if let d = try? JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: URL(fileURLWithPath: arg), options: .atomic) }
+                case "form-snapshot":
+                    let sheet = win.attachedSheet ?? NSApp.windows.first(where: { $0.sheetParent === win })
+                    guard let v = sheet?.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                    v.cacheDisplay(in: v.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: arg))
+                default: break
+                }
+            }
+        }
+        // --store-op "秒數:summon:<聊天室標題>"：像在右欄按「叫出來」（對目前 Session）。也支援 "秒數:focus-window:<第幾個 Window，從 1 算>"
+        for (i, a) in args.enumerated() where a == "--store-op" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 2).map(String.init)
+            guard parts.count == 3, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self else { return }
+                switch parts[1] {
+                case "summon":
+                    guard let c = self.store.conversations.first(where: { $0.title == parts[2] }), let sid = self.store.currentSessionLayout?.id else { return }
+                    self.store.summonConversation(c.id, inSession: sid)
+                case "focus-window":
+                    guard let n = Int(parts[2]), let s = self.store.currentSessionLayout, n >= 1, n <= s.windows.count else { return }
+                    self.store.focusWindowFromPanel(s.windows[n - 1].id)
+                case "history":
+                    RightPanelModel.shared.history.search(parts[2], targets: RPData.historyTargets(self.store), convs: RPData.historyConvs(self.store))
+                case "fsearch":   // "name:<字>" 或 "content:<字>"
+                    let kv = parts[2].split(separator: ":", maxSplits: 1).map(String.init)
+                    if kv.count == 2 { RightPanelModel.shared.search.search(kv[1], content: kv[0] == "content", root: RightPanelModel.shared.projectPath) }
+                case "git-select":
+                    if let c = RightPanelModel.shared.git.changes.first(where: { $0.path == parts[2] }) { RightPanelModel.shared.git.select(c) }
+                case "select-session":
+                    if let s = self.store.sessions.first(where: { $0.name == parts[2] }) { self.store.selectSession(s.id) }
+                default: break
+                }
+            }
+        }
+        // --dump-right "秒數:檔案"：輸出右欄目前分頁與清單內容（JSON）
+        for (i, a) in args.enumerated() where a == "--dump-right" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self else { return }
+                let m = RightPanelModel.shared
+                m.syncProject(self.store.rightPanelProject()?.path)
+                let o = m.dump(store: self.store, workspace: self.workspace)
+                if let d = try? JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: URL(fileURLWithPath: parts[1]), options: .atomic) }
+            }
+        }
         // --collab-open "秒數"：打開協作看板（像按最左邊的協作圖示）
         for (i, a) in args.enumerated() where a == "--collab-open" && i + 1 < args.count {
             guard let sec = Double(args[i + 1]) else { continue }
@@ -1174,6 +1520,30 @@ extension AppDelegate {
                 else { try? line.write(toFile: String(parts[1]), atomically: true, encoding: .utf8) }
             }
         }
+        // --dump-commanders "秒數:檔案"：僅 --state-dir 的測試實例生效，輸出所有區域 Session 的總指揮關聯與遞迴涵蓋數
+        for (i, a) in args.enumerated() where a == "--dump-commanders" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]), sec.isFinite, sec >= 0 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let st = self?.store as Store? else { return }
+                func field<T>(_ value: T?) -> Any { value.map { $0 as Any } ?? NSNull() }
+                let sessions: [[String: Any]] = st.sessions.map { session in
+                    ["id": session.id.uuidString, "name": session.name, "area": session.area ?? "home",
+                     "groups": field(session.groups.map { $0.map { st.group($0)?.name ?? $0.uuidString } }),
+                     "groupIDs": field(session.groups.map { $0.map(\.uuidString) }),
+                     "chief": field(session.chief.flatMap { st.conversation($0)?.title }),
+                     "chiefID": field(session.chief?.uuidString), "windowCount": session.windows.count,
+                     "conversationCount": st.conversations(inCommander: session).count]
+                }
+                let object: [String: Any] = ["area": st.area, "sidebarMode": Prefs.shared.sidebarMode,
+                    "currentSession": field(st.currentSession?.uuidString),
+                    "currentSessionName": field(st.sessions.first { $0.id == st.currentSession }?.name), "sessions": sessions]
+                do {
+                    let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+                    try data.write(to: URL(fileURLWithPath: parts[1]), options: .atomic)
+                } catch { EventLog.log(L("測試"), L("總指揮狀態輸出失敗：\(error.localizedDescription)")) }
+            }
+        }
         // --move-folder "秒數:對話標題:新資料夾"：像在對話上按右鍵「換工作資料夾…」（不問，直接搬）
         for (i, a) in args.enumerated() where a == "--move-folder" && i + 1 < args.count {
             let parts = args[i + 1].split(separator: ":", maxSplits: 2)
@@ -1191,6 +1561,42 @@ extension AppDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
                 guard let self, let id = self.store.selected, let p = self.workspace.panes[id] as? ChatPane else { return }
                 p.evaluate(code) { r in ChatSession.log?.write(Data("JS \(code.prefix(60)) => \(r.prefix(300))\n".utf8)) }
+            }
+        }
+        // --web-drag "秒數:x0:y0:x1:y1:按住秒數"：在主視窗第一個聊天網頁區按下左鍵（比例座標，左上角 0,0、右下角 1,1），
+        // 慢慢拖到 (x1,y1)（可以超出 0～1＝拖到網頁外面，例如 1.05＝底下的輸入框），停著按住幾秒再放開（測拖曳選取碰到邊緣會不會自動捲）
+        for (i, a) in args.enumerated() where a == "--web-drag" && i + 1 < args.count {
+            let v = args[i + 1].split(separator: ":").compactMap { Double($0) }
+            guard v.count == 6 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + v[0]) { [weak self] in
+                guard let w = self?.main.window, let web = Self.find(DropWebView.self, in: w.contentView) else { return }
+                func at(_ fx: Double, _ fy: Double) -> NSPoint {
+                    let b = web.bounds
+                    return web.convert(NSPoint(x: b.width * fx, y: web.isFlipped ? b.height * fy : b.height * (1 - fy)), to: nil)
+                }
+                // 直接交給網頁（背景測試視窗不是 key，postEvent 進不到 WKWebView）
+                func post(_ t: NSEvent.EventType, _ pt: NSPoint) {
+                    guard let e = NSEvent.mouseEvent(with: t, location: pt, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+                    switch t { case .leftMouseDown: web.mouseDown(with: e); case .leftMouseUp: web.mouseUp(with: e); default: web.mouseDragged(with: e) }
+                }
+                DropWebView.testPressed = true      // 模擬事件讀不到系統按鍵狀態
+                post(.leftMouseDown, at(v[1], v[2]))
+                for j in 1...15 {   // 照真人速度：每 40 毫秒一步
+                    let t = Double(j) / 15
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.04 * Double(j)) { post(.leftMouseDragged, at(v[1] + (v[3] - v[1]) * t, v[2] + (v[4] - v[2]) * t)) }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6 + v[5]) { post(.leftMouseUp, at(v[3], v[4])); DropWebView.testPressed = nil }
+            }
+        }
+        // --web-move "秒數:x:y"：滑鼠移到主視窗第一個聊天網頁區的 (x,y)（比例座標，左上 0,0），沒按鍵（測自動捲之後命中位置有沒有偏）
+        for (i, a) in args.enumerated() where a == "--web-move" && i + 1 < args.count {
+            let v = args[i + 1].split(separator: ":").compactMap { Double($0) }
+            guard v.count == 3 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + v[0]) { [weak self] in
+                guard let w = self?.main.window, let web = Self.find(DropWebView.self, in: w.contentView) else { return }
+                let b = web.bounds
+                let pt = web.convert(NSPoint(x: b.width * v[1], y: web.isFlipped ? b.height * v[2] : b.height * (1 - v[2])), to: nil)
+                if let e = NSEvent.mouseEvent(with: .mouseMoved, location: pt, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0) { web.mouseMoved(with: e) }
             }
         }
         // --chat-respawn "秒數"：目前那段聊天室的 claude 程序 terminate 之後馬上重開（測舊程序晚到的輸出不會混進新程序）
@@ -1817,12 +2223,24 @@ extension AppDelegate {
             let dir = String(parts[1])
             DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in self?.main.newConversation(at: dir) }
         }
-        // --store-op "秒數:動作:第幾段:參數"：shift（參數＝上移負數／下移正數）、archive（1 封存／0 取消）、unread（1 標成做完沒看／0 取消）、before（排到第參數段前面）
+        // --store-op "秒數:動作:第幾段:參數"：shift（參數＝上移負數／下移正數）、archive（1 封存／0 取消）、unread（1 標成做完沒看／0 取消）、before（排到第參數段前面）、handoff（參數＝0，略過確認框，仍跑全部開始前檢查）。段數從 0 數。
+        // 名稱操作另用 "秒數:pickcommander:名稱"，不需要對話索引，與左欄點選一樣先清獨立視窗 scope 再 selectSession。
         for (i, a) in args.enumerated() where a == "--store-op" && i + 1 < args.count {
+            let named = args[i + 1].split(separator: ":", maxSplits: 2).map(String.init)
+            if named.count == 3, named[1] == "pickcommander" {
+                guard let sec = Double(named[0]), sec.isFinite, sec >= 0 else { continue }
+                DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                    guard let st = self?.store as Store?,
+                          let session = st.sessions.first(where: { $0.area == nil && $0.groups != nil && $0.name == named[2] }) else { return }
+                    st.scope = nil
+                    st.selectSession(session.id)
+                }
+                continue
+            }
             let parts = args[i + 1].split(separator: ":").map(String.init)
-            guard parts.count == 4, let sec = Double(parts[0]), let n = Int(parts[2]), let v = Int(parts[3]) else { continue }
+            guard parts.count == 4, let sec = Double(parts[0]), sec.isFinite, sec >= 0, let n = Int(parts[2]), let v = Int(parts[3]) else { continue }
             DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
-                guard let self, n < self.store.conversations.count else { return }
+                guard let self, self.store.conversations.indices.contains(n) else { return }
                 let id = self.store.conversations[n].id
                 switch parts[1] {
                 case "shift": self.store.shift(id, by: v)
@@ -1830,6 +2248,9 @@ extension AppDelegate {
                 case "before": if v < self.store.conversations.count { self.store.reorder(id, before: self.store.conversations[v].id) }
                 case "after": if v < self.store.conversations.count { self.store.reorder(id, after: self.store.conversations[v].id) }
                 case "compact": (self.workspace.panes[id] as? ChatPane)?.compact()
+                case "handoff":
+                    guard let c = self.store.conversation(id), let dir = self.store.project(c.projectID)?.path else { break }
+                    self.main.startHandoff(c, directory: dir)
                 case "unread": if v == 1 { self.store.unread.insert(id) } else { self.store.unread.remove(id) }   // 分頁／側欄的小藍點
                 // 掛件框（Bundles.swift）：gemini／notebook＝掛到第 n 段（參數不用）；leave＝離開框；dissolve＝解散第 n 段所在的框；
                 // movegroup＝把第 n 段所在的框整個搬到第 v 組；attach＝把第 n 段（瀏覽器）改成掛在第 v 段上；open＝打開第 n 段的第 v 個掛件
@@ -1885,6 +2306,60 @@ extension AppDelegate {
                 case "togglebundle": self.store.toggleBundle(from: id)
                 default: break
                 }
+            }
+        }
+        // --daily-handoff-now "秒數"：到時候立刻跑一輪每日交接（略過功能開關，其他條件照常；--fake-now 影響分界計算）。只在有 --state-dir 時有效，且一定要有 --handoff-fake。
+        // --daily-handoff-gap "秒數"：每件之間的間隔（預設 20 秒）；--daily-handoff-auto：測試實例也開自動定時檢查。
+        for (i, a) in args.enumerated() where a == "--daily-handoff-now" && i + 1 < args.count {
+            guard let sec = Double(args[i + 1]), sec.isFinite, sec >= 0 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in self?.main.dailyHandoff.check("測試", force: true) }
+        }
+        // --handoff-dump "秒數:檔案"：可重複指定，輸出 JSON；對話與排程的 conversation 都用相同的 UUID 前 8 碼。
+        for (i, a) in args.enumerated() where a == "--handoff-dump" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]), sec.isFinite, sec >= 0 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self, let st = self.store else { return }
+                func field<T>(_ value: T?) -> Any { value.map { $0 as Any } ?? NSNull() }
+                func short(_ id: UUID?) -> Any { field(id.map { String($0.uuidString.lowercased().prefix(8)) }) }
+                let frames = st.windowFrames
+                let conversations: [[String: Any]] = st.conversations.map { c in
+                    ["id": short(c.id), "uuid": c.id.uuidString.lowercased(), "title": c.title,
+                     "manualArchive": field(c.manualArchive), "bundle": short(c.bundle), "gadgetOf": short(c.gadgetOf),
+                     "permissionMode": field(c.permissionMode), "sandbox": field(c.sandbox), "order": field(c.order),
+                     "projectID": c.projectID.uuidString.lowercased(), "groupID": short(c.groupID),
+                     "windowFrame": short(frames[c.id]?.window), "windowName": field(frames[c.id]?.name),
+                     "browser": field(c.browser), "lastURLs": field(c.lastURLs),
+                     "lastHandoffAt": field(c.lastHandoffAt.map { ISO8601DateFormatter().string(from: $0) })]
+                }
+                let f = ISO8601DateFormatter()
+                let schedules: [[String: Any]] = ScheduleStore.shared.items.map { s in
+                    ["id": s.id.uuidString.lowercased(), "conversation": short(s.conversation),
+                     "conversationID": s.conversation.uuidString.lowercased(), "pendingRun": field(s.pendingRun.map(f.string)),
+                     "nextAt": field(s.nextAt.map(f.string)), "enabled": s.enabled,
+                     "runs": s.runs.map { ["at": f.string(from: $0.at), "due": f.string(from: $0.due), "result": $0.result] }]
+                }
+                let folder = st.directory.appendingPathComponent("handoffs", isDirectory: true)
+                var files: [String] = [], errors: [String] = []
+                if FileManager.default.fileExists(atPath: folder.path),
+                   let entries = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey], errorHandler: { url, error in
+                       errors.append("\(url.path)：\(error.localizedDescription)"); return true
+                   }) {
+                    for case let url as URL in entries {
+                        do { if try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true { files.append(url.path) } }
+                        catch { errors.append("\(url.path)：\(error.localizedDescription)") }
+                    }
+                }
+                let object: [String: Any] = ["conversations": conversations, "schedules": schedules, "handoffs": files.sorted(), "errors": errors,
+                                              "chiefs": st.sessions.map { field($0.chief.map { String($0.uuidString.lowercased().prefix(8)) }) },
+                                              "selected": short(st.selected), "currentSession": short(st.currentSession),
+                                              "windows": st.sessions.flatMap { s in s.windows.map { w -> [String: Any] in
+                                                  ["session": short(s.id), "window": short(w.id), "name": w.name, "leaves": (w.root?.leaves ?? []).map { short($0) },
+                                                   "focused": short(w.focused), "current": s.current == w.id] } }]
+                do {
+                    let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+                    try data.write(to: URL(fileURLWithPath: parts[1]), options: .atomic)
+                } catch { EventLog.log("測試", "交接狀態輸出失敗：\(error.localizedDescription)") }
             }
         }
         // --bundle-anim "秒數:動畫秒數"：把側欄所有掛件框停在描邊動畫的第幾秒（負數＝放開，回到正常）；可以給好幾次
@@ -2010,6 +2485,49 @@ extension AppDelegate {
                     out.append("\(name)：\(spot())")
                 }
                 try? out.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+            }
+        }
+        // --fake-timers：塞幾個假的計時器（不碰真桌寵；只在 --state-dir 測試時有效）
+        if args.contains("--fake-timers") {
+            PetTimers.shared.inject(id: "a", label: "模型評測 gpt-oss 全部題目", eta: 600, startedAgo: 200)
+            PetTimers.shared.inject(id: "b", label: "下載模型", eta: nil, done: 12, total: 40, startedAgo: 60)
+            PetTimers.shared.inject(id: "c", label: "超時的編譯", eta: 60, startedAgo: 300)
+            PetTimers.shared.inject(id: "d", label: "做完了", eta: 60, finished: true)
+        }
+        // --commander-op "秒數:new:名稱:新分組名:資料夾[:single|multi]" 或 "秒數:del:名稱"：不經表單直接呼叫新增／刪除總指揮（結果寫 EventLog）
+        for (i, a) in args.enumerated() where a == "--commander-op" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 3, let sec = Double(parts[0]), sec.isFinite, sec >= 0 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let st = self?.store else { return }
+                if parts[1] == "new", parts.count >= 5 {
+                    var err: String?
+                    let req = Store.NewCommander(name: parts[2], groups: [], newGroupName: parts[3].isEmpty ? nil : parts[3], newGroupFolder: parts[4], kind: parts.count > 5 && !parts[5].isEmpty ? parts[5] : nil)
+                    let id = st.createCommander(req, error: &err)
+                    EventLog.log("測試", "新增總指揮 \(parts[2])：\(id?.uuidString ?? "失敗 \(err ?? "")")")
+                } else if parts[1] == "del", let s = st.sessions.first(where: { $0.area == nil && $0.groups != nil && $0.name == parts[2] }) {
+                    st.deleteCommander(s.id)
+                    EventLog.log("測試", "刪除總指揮 \(parts[2])")
+                }
+            }
+        }
+        // --cli-path-dump 檔案：把 CLITools 找到的三支工具路徑與給聊天室的 PATH 寫成檔（搭 CODENV_LOCAL_BIN 測家目錄沒裝的情況）
+        for (i, a) in args.enumerated() where a == "--cli-path-dump" && i + 1 < args.count && args.contains("--state-dir") {
+            let out = CLITools.names.map { "\($0)=\(CLITools.path($0) ?? "nil")" }.joined(separator: "\n") + "\nPATH=\(CLITools.pathEntries(home: NSHomeDirectory()))\nsearchScript=\(SearchIndexClient.script.path)\n"
+            try? out.write(toFile: args[i + 1], atomically: true, encoding: .utf8)
+        }
+        // --commander-form-snapshot "秒數:檔案.png"：把「新增總指揮」表單畫成圖片（表單是 sheet，--snapshot 拍不到）
+        for (i, a) in args.enumerated() where a == "--commander-form-snapshot" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let st = self?.store else { return }
+                let host = NSHostingView(rootView: CommanderCreateForm(store: st).background(Color(nsColor: .windowBackgroundColor)))
+                host.frame = NSRect(origin: .zero, size: host.fittingSize)
+                host.layoutSubtreeIfNeeded()
+                guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: parts[1]))
             }
         }
         // --snapshot "秒數:檔案.png"：幾秒後把整個視窗內容畫成圖片（視窗被蓋住也拍得到最新畫面）
@@ -2355,7 +2873,7 @@ extension AppDelegate {
         defer { flushEvents(window) }
         let codes: [Character: UInt16] = ["a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12,
             "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25, "7": 26, "-": 27,
-            "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "\\": 42, ",": 43, "/": 44, "n": 45, "m": 46, "[": 33, "]": 30]
+            "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "\\": 42, ",": 43, "/": 44, "n": 45, "m": 46, "[": 33, "]": 30, "`": 50]
         let shifted: [Character: Character] = ["|": "\\", "&": "7", "$": "4", "(": "9", ")": "0", "?": "/"]
         var mods: NSEvent.ModifierFlags = []
         var ch = Character(token.last.map(String.init) ?? " ")

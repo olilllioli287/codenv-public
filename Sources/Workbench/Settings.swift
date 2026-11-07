@@ -129,6 +129,7 @@ struct MiniLayout: View {
 
 struct WindowsPage: View {
     @ObservedObject var store: Store
+    @ObservedObject private var prefs = Prefs.shared
     @StateObject private var drag = TreeDrag()
     @State private var selection: TreeItem?
     @State private var editing: TreeItem?
@@ -169,6 +170,9 @@ struct WindowsPage: View {
         } message: {
             Text(L("只刪版面，裡面的對話都會留在側欄和「沒擺的對話」。"))
         }
+        .onChange(of: prefs.webFeaturesEnabled) { _, enabled in
+            if !enabled { selection = nil; editing = nil; drag.dragging = nil; drag.hover = nil }
+        }
     }
 
     private var deleteSessionTitle: String {
@@ -206,7 +210,7 @@ struct WindowsPage: View {
             if w.root == nil { Text(L("空的")).font(.caption).foregroundStyle(.tertiary) }
         }
         if !collapsed.contains(w.id), let root = w.root {
-            ForEach(root.leaves, id: \.self) { c in paneRow(w, root, c) }
+            ForEach(root.leaves.filter { prefs.webFeaturesEnabled || store.conversation($0)?.isBrowser != true }, id: \.self) { c in paneRow(w, root, c) }
         }
     }
 
@@ -222,7 +226,7 @@ struct WindowsPage: View {
     }
 
     @ViewBuilder private var unplacedBlock: some View {
-        let list = store.unplacedConversations
+        let list = store.unplacedConversations.filter { prefs.webFeaturesEnabled || (!$0.isBrowser && !$0.isGadget) }
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
                 Image(systemName: "tray").foregroundStyle(.secondary)
@@ -530,7 +534,15 @@ struct WindowsPage: View {
                         let rects = root.rects()
                         ZStack(alignment: .topLeading) {
                             ForEach(root.leaves, id: \.self) { c in
-                                if let r = rects[c] { previewBox(w, c, CGRect(x: r.minX * size.width, y: r.minY * size.height, width: r.width * size.width, height: r.height * size.height)) }
+                                if let r = rects[c] {
+                                    let frame = CGRect(x: r.minX * size.width, y: r.minY * size.height, width: r.width * size.width, height: r.height * size.height)
+                                    if !prefs.webFeaturesEnabled, store.conversation(c)?.isBrowser == true {
+                                        Text(L("網頁外掛功能已關閉（設定可打開）"))
+                                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                            .frame(width: max(0, frame.width - 4), height: max(0, frame.height - 4))
+                                            .offset(x: frame.minX + 2, y: frame.minY + 2)
+                                    } else { previewBox(w, c, frame) }
+                                }
                             }
                         }
                     } else {

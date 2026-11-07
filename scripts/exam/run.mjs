@@ -8,6 +8,8 @@ const regressions = [
   ['R02', '既有繪圖測試', process.execPath, 'test-plot.mjs'],
   ['R03', '既有引用測試', process.execPath, 'quote-test.js'],
   ['R04', '既有離線續跑測試（僅暫存 fixture repo）', '/bin/bash', 'test-resume.sh'],
+  ['R05', '記憶容量檢查（唯讀、暫存假資料）', '/usr/bin/python3', 'test-memory-check.py'],
+  ['R06', '對話全文搜尋（暫存資料夾與假紀錄）', '/usr/bin/python3', 'test-search.py'],
 ].map(([id, name, bin, file]) => ({ id, name, args: [bin, path.join(root, 'scripts', file)] }));
 let selected, required;
 try {

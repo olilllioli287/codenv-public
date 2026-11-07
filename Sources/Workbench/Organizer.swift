@@ -41,12 +41,13 @@ final class OrganizerModel: ObservableObject {
 
 extension Store {
     /// 整理對話列的對話：掛件（掛件框底下藏起來的瀏覽器格子）不列，也不算進資料夾的對話數
-    var organizerConversations: [Conversation] { conversations.filter { !$0.isGadget } }
+    var organizerConversations: [Conversation] { conversations.filter { !$0.isGadget && (Prefs.shared.webFeaturesEnabled || !$0.isBrowser) } }
 }
 
 struct OrganizerView: View {
     @Environment(\.uiScale) private var s
     @ObservedObject var store: Store
+    @ObservedObject private var prefs = Prefs.shared
     @ObservedObject var model: OrganizerModel
     var open: (UUID) -> Void
     var delete: ([UUID]) -> Void
@@ -103,6 +104,12 @@ struct OrganizerView: View {
             if tab == 0 { conversationsTab } else { foldersTab }
         }
         .frame(minWidth: 760, minHeight: 460)
+        .onChange(of: prefs.webFeaturesEnabled) { _, enabled in
+            if !enabled {
+                selection = selection.filter { store.conversation($0)?.isBrowser != true }
+                if let id = renaming, store.conversation(id)?.isBrowser == true { renaming = nil }
+            }
+        }
         .onAppear { model.loadSizes(store) }
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in model.loadSizes(store) }   // 視窗開著時對話又聊了幾句，「空的」篩選才不會過期
         .alert(L("重新命名對話"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {

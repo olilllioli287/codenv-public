@@ -96,16 +96,20 @@ final class UsageMonitor: ObservableObject {
                     self.codexReadFinished(startedAt: startedAt, success: false)
                     return
                 }
-                self.buckets = [UsageBucket(label: "5 小時", used: 34, resets: "今天 22:00"), UsageBucket(label: "每週", used: 61, resets: "10/30 01:00"), UsageBucket(label: "Opus 每週", used: 12, resets: "10/30 01:00")]
-                self.agyBuckets = [UsageBucket(label: "Gemini 3.8 Flash", used: 20, resets: "今天 23:10"), UsageBucket(label: "Argon", used: 85, resets: "10/28 09:00"),
-                                   UsageBucket(label: "Claude Opus 5.5", used: 40, resets: "今天 23:10")]
+                // 假資料的重置時間一律相對現在（寫死日期會被當成明年，倒數變成「356d」）
+                func h(_ hours: Int, _ minutes: Int) -> String { Self.when(Date().addingTimeInterval(TimeInterval(hours * 3600 + minutes * 60))) }
+                self.buckets = [UsageBucket(label: "5 小時", used: 34, resets: h(2, 13)), UsageBucket(label: "每週", used: 61, resets: h(4*24+6, 0)), UsageBucket(label: "Opus 每週", used: 12, resets: h(4*24+6, 0))]
+                // 跟真的 parseAgy 結果同一種標籤（11/7 實際：Gemini 5 小時／每週、Claude 5 小時／每週、Argon 只有每週）
+                self.agyBuckets = [UsageBucket(label: "Gemini 5 小時", used: 6, resets: h(3, 41)), UsageBucket(label: "Gemini 每週", used: 2, resets: h(6*24+21, 5)),
+                                   UsageBucket(label: "Claude 5 小時", used: 0, resets: h(3, 41)), UsageBucket(label: "Claude 每週", used: 55, resets: h(4*24+18, 30)),
+                                   UsageBucket(label: "Argon 每週", used: ProcessInfo.processInfo.environment["CODENV_USAGE_FAKE_ARGON_LOW"] == "1" ? 85 : 0, resets: h(6*24+23, 12))]
                 // CODENV_USAGE_FAKE_CODEX_HIGH=1：用量比較高的版本（測「用量還不高」那句不出現）
                 let hi = ProcessInfo.processInfo.environment["CODENV_USAGE_FAKE_CODEX_HIGH"] == "1"
-                self.codexBuckets = [UsageBucket(label: "5 小時", used: hi ? 72 : 5, resets: "今天 21:30"), UsageBucket(label: "每週", used: hi ? 88 : 47, resets: "10/31 12:00")]
+                self.codexBuckets = [UsageBucket(label: "5 小時", used: hi ? 72 : 5, resets: h(1, 48)), UsageBucket(label: "每週", used: hi ? 88 : 47, resets: h(5*24+9, 20))]
                 self.codexResets = Self.fakeResetsLeft
                 self.codexResetExpiries = Array([Date().addingTimeInterval(2 * 86400), Date().addingTimeInterval(26 * 86400), Date().addingTimeInterval(27 * 86400)].prefix(Self.fakeResetsLeft))
                 self.reconcilePendingKey()
-                self.copilotBuckets = [UsageBucket(label: "每月", used: 3, resets: "11/01 00:00")]
+                self.copilotBuckets = [UsageBucket(label: "每月", used: 3, resets: h(23*24+4, 0))]
                 self.copilotNote = "剩 194／200 次"
                 self.updated = Date(); self.error = nil
                 self.loading = false
@@ -822,7 +826,8 @@ struct UsageRowView: View {
         }
     }
     /// 剩兩成以下紅，其他綠
-    static func color(_ remaining: Int) -> Color { remaining <= 20 ? .red : .green }
+    static func color(_ remaining: Int) -> Color { isLow(remaining) ? .red : .green }
+    static func isLow(_ remaining: Int) -> Bool { remaining <= 20 }
 }
 
 struct UsagePanel: View {
@@ -831,7 +836,7 @@ struct UsagePanel: View {
     @ObservedObject var store: Store
     var compact: (UUID) -> Void = { _ in }
 
-    /// 內容比欄位高時可以往下捲（捲軸自動隱藏），不會畫到桌寵格裡（使用者 10/29：「正在跑」項目多時蓋到桌寵格）
+    /// 內容比欄位高時可以往下捲（捲軸自動隱藏），不會畫到桌寵格裡（項目多時蓋到桌寵格）
     var body: some View {
         GeometryReader { geo in
             ScrollView(.vertical, showsIndicators: false) {
@@ -864,9 +869,9 @@ struct UsagePanel: View {
             // 只列目前這個分頁裡每一格用到的額度池（換模型、換分頁就跟著變）
             ForEach(store.usagePoolsInCurrentWindow, id: \.pool) { p in
                 ForEach(m.rows(p.pool, argon: p.argon)) { r in UsageRowView(row: r) }
-                // 使用者 10/24：這個池是哪些格、哪個模型在用
+                // 這個池是哪些格、哪個模型在用
                 ForEach(store.modelsInCurrentWindow(p.pool), id: \.model) { u in
-                    // 聊天室名字放下一行（使用者 10/25：括號被拆在兩行中間不好讀）
+                    // 聊天室名字放下一行（括號被拆在兩行中間不好讀）
                     Text(L("使用中：\(u.model)\n（\(u.titles.joined(separator: "、"))）"))
                         .font(.system(size: 11 * s)).foregroundStyle(.secondary).lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1018,4 +1023,70 @@ enum UsageSheet {
     }
     /// 測試用：現在開著的那個
     static var current: NSPanel? { panel }
+}
+
+/// 一眼看完的用量
+/// 每家一組，輸入框下面那條（UsageGlanceStrip）和左下角（SidebarFooter）共用。
+/// agy 實際只有 Gemini 5 小時／Gemini 每週／Argon 每週（Argon 沒有自己的 5 小時），所以 agy 是「5 小時 · 週 · 阿公 週」三個數字。
+struct UsageGlanceItem {
+    let tag: String?          // 數字前面的小字（只有「阿公」）
+    let what: String          // 滑過說明用的全名
+    let bucket: UsageBucket?  // nil＝查不到，顯示「—」
+}
+
+struct UsageGlanceGroup {
+    let key: String
+    let name: String
+    let symbol: String        // SF Symbols（不用各家商標圖檔）
+    let items: [UsageGlanceItem]
+
+    /// 「64% · 90%」「94% · 98% · 阿公 100%」，每一段標好要不要紅
+    /// compact＝左下角窄欄用：分隔不留空格、標籤貼著數字
+    func parts(compact: Bool = false, tight: Bool = false) -> [(text: String, low: Bool)] {
+        var out: [(String, Bool)] = []
+        for (i, it) in items.enumerated() {
+            if i > 0 { out.append((compact ? "·" : " · ", false)) }
+            if let t = it.tag { out.append((compact ? t : t + " ", false)) }
+            if let b = it.bucket { out.append(("\(b.remaining)" + (tight && i < items.count - 1 ? "" : "%"), UsageRowView.isLow(b.remaining))) } else { out.append(("—", false)) }
+        }
+        return out
+    }
+    var plain: String { parts().map(\.text).joined() }
+
+    /// 滑過的說明：每個數字是什麼、多久後重置
+    var tip: String {
+        items.map { it in
+            guard let b = it.bucket else { return it.what + L("：查不到") }
+            var t = it.what + L("：剩 \(b.remaining)%")
+            if let c = SidebarFooter.countdown(b.resets) { t += L("，\(c) 後重置（\(b.resets)）") }
+            else if !b.resets.isEmpty { t += L("，\(b.resets) 重置") }
+            return t
+        }.joined(separator: "\n")
+    }
+}
+
+extension UsageMonitor {
+    /// Claude 一定列；Codex、agy 有裝（或已經有資料）才列
+    var glance: [UsageGlanceGroup] {
+        let five = L("5 小時"), week = L("每週")
+        func find(_ list: [UsageBucket], _ ok: (String) -> Bool) -> UsageBucket? { list.first { ok($0.label) } }
+        var out = [UsageGlanceGroup(key: "cc", name: "Claude", symbol: "asterisk", items: [
+            UsageGlanceItem(tag: nil, what: L("Claude 5 小時"), bucket: find(buckets) { $0 == five }),
+            UsageGlanceItem(tag: nil, what: L("Claude 每週"), bucket: find(buckets) { $0 == week }),
+        ])]
+        if CodexBridge.installed || !codexBuckets.isEmpty {
+            out.append(UsageGlanceGroup(key: "codex", name: "Codex", symbol: "hexagon", items: [
+                UsageGlanceItem(tag: nil, what: L("Codex 5 小時"), bucket: find(codexBuckets) { $0 == five }),
+                UsageGlanceItem(tag: nil, what: L("Codex 每週"), bucket: find(codexBuckets) { $0 == week }),
+            ]))
+        }
+        if AgyBridge.enabled || !agyBuckets.isEmpty {
+            out.append(UsageGlanceGroup(key: "agy", name: "agy", symbol: "sparkle", items: [
+                UsageGlanceItem(tag: nil, what: L("agy Gemini 5 小時（3.8 Flash 等共用）"), bucket: find(agyBuckets) { $0.hasPrefix("Gemini") && $0.hasSuffix(five) }),
+                UsageGlanceItem(tag: nil, what: L("agy Gemini 每週"), bucket: find(agyBuckets) { $0.hasPrefix("Gemini") && $0.hasSuffix(week) }),
+                UsageGlanceItem(tag: L("阿公"), what: L("agy 阿公（Argon）每週"), bucket: find(agyBuckets) { $0.contains("Argon") && $0.hasSuffix(week) }),
+            ]))
+        }
+        return out
+    }
 }

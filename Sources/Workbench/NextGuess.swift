@@ -4,7 +4,7 @@ import FoundationModels
 // 輸入框的灰字建議（猜使用者下一句）：Claude Code 自己會猜（--prompt-suggestions），
 // 其他聊天室（Gemini、ChatGPT、Copilot、本機模型）沒有這個功能，所以每輪結束後另外找模型猜一句：
 // Gemini 3.8 Flash 的聊天室用 Flash 自己（low，經 agy，實測約 5 秒，花 Flash 額度）；其他的用 Apple 內建模型（0.3～1.3 秒，不花額度）。
-// 使用者 10/24 指定這樣分。猜的模型不能用就不猜，不互相退回。設定頁的「建議下一句」關掉也不猜。
+// 指定這樣分。猜的模型不能用就不猜，不互相退回。設定頁的「建議下一句」關掉也不猜。
 
 enum NextGuess {
     /// 每個聊天室一個：記下這輪使用者打的字和助手說的話，這輪結束就去猜

@@ -541,7 +541,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
         keyMonitor = nil
     }
 
-    /// ⌃ A 方向鍵在聊天和程式碼區之間移動（使用者 11/5）：聊天往右進編輯器；編輯器和執行結果之間照版面（上下分是上下、不用 AI 是左右）；
+    /// ⌃ A 方向鍵在聊天和程式碼區之間移動：聊天往右進編輯器；編輯器和執行結果之間照版面（上下分是上下、不用 AI 是左右）；
     /// 程式碼區往左回聊天輸入框。回傳 false＝這個方向出了這一格，交給外面切到隔壁格
     func moveFocus(dx: Int, dy: Int, chat: ChatPane) -> Bool {
         guard let w = window, let v = w.firstResponder as? NSView else { return false }

@@ -8,16 +8,33 @@ final class Workspace {
     /// 跑 Claude 的指令；測試時可以換成別的（main.swift 的 --claude）
     var claudeCommand = "claude"
     private var webUnloadTimer: Timer?
+    private var webFeaturesObserver: NSObjectProtocol?
 
     init(store: Store, theme: Theme, webUnloadSeconds: TimeInterval = 180) {
         self.store = store
         self.theme = theme
+        webFeaturesObserver = NotificationCenter.default.addObserver(forName: Prefs.webFeaturesChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.refreshWebFeatures()
+        }
         webUnloadTimer = Timer.scheduledTimer(withTimeInterval: max(0.5, min(30, webUnloadSeconds / 2)), repeats: true) { [weak self] _ in
             self?.unloadHiddenWebViews(idleSeconds: webUnloadSeconds)
         }
     }
 
-    deinit { webUnloadTimer?.invalidate() }
+    deinit {
+        webUnloadTimer?.invalidate()
+        if let webFeaturesObserver { NotificationCenter.default.removeObserver(webFeaturesObserver) }
+    }
+
+    /// 只放掉實體網頁／占位，不經過 close，也不改 Store。掛件即使藏在其他 Session 或背景，也必須停下來。
+    private func refreshWebFeatures() {
+        let enabled = Prefs.shared.webFeaturesEnabled
+        for (id, pane) in panes where enabled ? pane is DisabledWebPane : pane is BrowserPane {
+            panes[id] = nil
+            pane.removeFromSuperview()
+            pane.terminate()
+        }
+    }
 
     func unloadHiddenWebViews(idleSeconds: TimeInterval = 180) {
         let now = Date()
@@ -29,11 +46,24 @@ final class Workspace {
     }
 
     func pane(for c: Conversation) -> any ConversationPane {
+        // 先檢查總開關，不能取回快取中的舊網頁；舊 state.json 的瀏覽器葉節點只建立原生占位。
+        if c.isBrowser {
+            let enabled = Prefs.shared.webFeaturesEnabled
+            if let p = panes[c.id] {
+                if enabled ? p is BrowserPane : p is DisabledWebPane { return p }
+                panes[c.id] = nil
+                p.removeFromSuperview()
+                p.terminate()
+            }
+            if enabled { return browserPane(for: c) }
+            let p = DisabledWebPane(theme: theme)
+            panes[c.id] = p
+            return p
+        }
         if let p = panes[c.id] {
             (p as? ChatPane)?.restoreSavedDraftIfNeeded()
             return p
         }
-        if c.isBrowser { return browserPane(for: c) }
         if c.terminal != true { return chatPane(for: c) }
         let p = TerminalPane(theme: theme)
         let path = store.project(c.projectID)?.path ?? NSHomeDirectory()
@@ -77,6 +107,10 @@ final class Workspace {
         let cid = c.id
         p.conversationID = cid
         p.session.nameProvider = { [weak self] in self?.store.conversation(cid)?.title }
+        p.session.topicProvider = { [weak self] in self?.store.conversation(cid)?.topic }
+        p.session.roleProvider = { [weak self] in self?.store.commanderRoleNote(for: cid) }
+        p.session.mcpProvider = { [weak self] in McpMode.from(self?.store.conversation(cid)?.mcp) }
+        p.session.conversationTag = cid.uuidString.lowercased()
         if store.wantsCodeLab(c) { p.attachCodeLab(directory: path, key: cid.uuidString) }
         p.applyModel(c.model)
         p.applyEffort(c.effort)
@@ -170,8 +204,8 @@ final class Workspace {
 
     /// 不在版面上的聊天格能不能收：閒著、沒有沒送的字、沒有 ! 指令和程式在跑，也沒有背景工作（背景 shell、agy／codex、本機背景模型）。
     /// 前景回答完但背景指令還在跑的，收掉會連 Claude 一起結束、背景工作跟著死（agy Argon 11/6）
-    private func canRelease(_ id: UUID, _ c: ChatPane) -> Bool {
-        if woken.contains(id), c.session.isRunning { return false }
+    private func canRelease(_ id: UUID, _ c: ChatPane, ignoreWoken: Bool = false) -> Bool {
+        if !ignoreWoken, woken.contains(id), c.session.isRunning { return false }
         // 背景工作只看可信的：掃描到真的還活著的程序，以及 claude 還活著時它自己回報的背景清單。
         // 不看前景紀錄、也不看已結束程序留下的清單：主動結束（換模型）時不會走 onExit 清理，殘留紀錄會讓格子永遠收不掉（Codex 11/6）
         let act = SessionActivity.shared
@@ -181,7 +215,7 @@ final class Workspace {
             && !c.inputBar.hasPendingInput && !c.isBangRunning && c.codeLab?.isProgramRunning != true
     }
 
-    /// 按 × 或 ⌘ W 關掉的格子（哪個 Window 都沒擺著了）：閒著的就把 Claude 收掉、釋出記憶體（使用者 10/25）。
+    /// 按 × 或 ⌘ W 關掉的格子（哪個 Window 都沒擺著了）：閒著的就把 Claude 收掉、釋出記憶體。
     /// 正在做事的留著跑完（做完再呼叫一次就會收）；輸入框還有沒送的字或圖的留著；程式碼區的程式在跑的留著、有沒存的修改先存再收（存不了就留著）；
     /// 終端機模式不動（裡面可能在跑別的）。
     /// 紀錄都在，之後再打開會自動接回（--resume）
@@ -196,17 +230,54 @@ final class Workspace {
             // 喚醒的：claude 還在跑就留著；已經結束了就當一般不在版面上的處理（不要永遠留著）
             if woken.contains(id) { if (p as? ChatPane)?.session.isRunning == true { continue } else { woken.remove(id) } }
             // 瀏覽器格子關掉就停（不在背景播聲音、吃記憶體）；網址記在對話上，再打開會重新載入
-            // 掛件例外：⌘ ⇧ B 收起來只是不顯示，網頁留著，再叫出來不用重新載入、不會閃白（使用者 10/25）
+            // 掛件例外：⌘ ⇧ B 收起來只是不顯示，網頁留著，再叫出來不用重新載入、不會閃白
             if p is BrowserPane { if store.conversation(id)?.isGadget != true { close(id) }; continue }
             guard let c = p as? ChatPane, canRelease(id, c) else { continue }
             guard let lab = c.codeLab, lab.hasUnsaved else { close(id); continue }
-            // 程式碼區有沒存的修改：先存（使用者 10/25），存好而且還是關著、閒著才收；存不了就留著
+            // 程式碼區有沒存的修改：先存，存好而且還是關著、閒著才收；存不了就留著
             lab.saveForClose(interactive: false) { [weak self, weak c] ok in
                 // 存檔是非同步的：回來時重新整套檢查（存檔期間可能被喚醒、打了字、開始跑程式）
                 guard ok, let self, let c, (self.panes[id] as AnyObject?) === c, self.canRelease(id, c), c.codeLab?.hasUnsaved != true,
                       !self.store.sessions.contains(where: { $0.windows.contains { $0.root?.leaves.contains(id) == true } }) else { return }
                 self.close(id)
             }
+        }
+    }
+
+    /// 閒置回收（10 個聊天室的 Claude 程序共約 7 GB，其中一半是各自開的 MCP 程序）
+    /// 不在畫面上的聊天室，「待命」（沒在工作、沒在等回答）超過 idleReleaseSeconds（15 分鐘）就結束 claude，之後用 --resume 接回。
+    /// 兩種算「不在畫面上」：
+    ///   1. 總指揮模式下，不在目前 Session、也不在獨立視窗的已擺聊天格（版面節點保留，切回去時 WindowHost 會重建）；
+    ///   2. 用 codenv-todo wake／new 喚醒、沒擺進版面的聊天室（releaseUnplaced 為了不馬上關掉它而不收，這裡由閒置計時收）。
+    /// 安全檢查跟 releaseUnplaced 同一套 canRelease：工作中、等你回答（status）、背景工作、排隊中的訊息（寄件匣）、輸入框草稿、! 指令、程式碼區程式都不收。
+    /// 收掉後 wake／SendMessage／使用者點開時再起。
+    var idleReleaseSeconds: TimeInterval = 15 * 60
+    private var bgIdleSince: [UUID: Date] = [:]
+
+    func releaseBackgroundIdle(now: Date = Date()) {
+        let commander = Prefs.shared.sidebarMode == "commander"
+        let cur = store.currentSessionLayout?.id
+        var foreground = Set<UUID>(), background = Set<UUID>(), placed = Set<UUID>()
+        for s in store.sessions {
+            for w in s.windows {
+                let leaves = w.root?.leaves ?? []
+                placed.formUnion(leaves)
+                if w.detached || s.id == cur { foreground.formUnion(leaves) } else { background.formUnion(leaves) }
+            }
+        }
+        background.subtract(foreground)
+        var candidates = commander ? background : []
+        for id in woken where !placed.contains(id) { candidates.insert(id) }
+        bgIdleSince = bgIdleSince.filter { candidates.contains($0.key) && panes[$0.key] != nil }
+        for id in candidates {
+            guard let c = panes[id] as? ChatPane, canRelease(id, c, ignoreWoken: true), c.codeLab?.hasUnsaved != true else { bgIdleSince[id] = nil; continue }
+            let since = bgIdleSince[id] ?? now
+            bgIdleSince[id] = since
+            guard now.timeIntervalSince(since) >= idleReleaseSeconds else { continue }
+            bgIdleSince[id] = nil
+            woken.remove(id)
+            EventLog.log("記憶體", "不在畫面上的聊天室待命超過 \(Int(idleReleaseSeconds / 60)) 分鐘，收掉程序（之後 --resume 接回）")
+            close(id)
         }
     }
 
@@ -225,7 +296,7 @@ final class Workspace {
         // ~/.local/bin 放最前面（codenv-todo、codenv-browser、agy、pet-say 都裝在這）：跟使用者 ~/.zshrc 的順序一樣（它也是加在最前面）。
         // 登入 shell（zsh -l）的 path_helper 會把系統路徑排到前面，但這些還是留在 PATH 裡
         let home = src["HOME"] ?? NSHomeDirectory()
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        env["PATH"] = "\(CLITools.pathEntries(home: home)):/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         env["LANG"] = src["LANG"] ?? "zh_TW.UTF-8"
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
@@ -244,6 +315,35 @@ final class Workspace {
         if t.isEmpty || lower == "claude" || lower == "claude code" || lower.hasPrefix("zsh") || t.hasPrefix("/") || t.hasPrefix("~") { return nil }
         return String(t.prefix(60))
     }
+}
+
+/// 停用網頁時只用 AppKit 畫一行灰字；不持有 WebKit，也不接觸網址或版面資料。
+final class DisabledWebPane: NSView, ConversationPane {
+    var focusTarget: NSView { self }
+    var petReserve: NSSize = .zero
+    override var acceptsFirstResponder: Bool { true }
+
+    init(theme: Theme) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        let label = NSTextField(labelWithString: L("網頁外掛功能已關閉（設定可打開）"))
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        label.cell?.usesSingleLineMode = true
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+        ])
+        applyTheme(theme)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func terminate() {}
+    func applyTheme(_ t: Theme) { layer?.backgroundColor = t.palette(for: effectiveAppearance).bg.cgColor }
 }
 
 extension Workspace {

@@ -141,6 +141,34 @@ C19)
     check "排在第 6 秒的動作 12 秒內就跑（沒被大寫入卡住）" "$([ "$el" -le 12 ] && echo 是 || echo "否（$el 秒）")" "是"
     check "大訊息有登記在寄件匣" "$(python3 -c "import json,sys;print(len(json.load(open(sys.argv[1]))['outboxIDs']))" "$T/d1.json" 2>/dev/null)" "1"
     ;;
+C20)
+    # 每個聊天室的 MCP 模式（McpMode）：lite／none 用 --strict-mcp-config 關掉外掛、claude.ai、使用者設定的 MCP，也不帶 --chrome；full／沒設照舊
+    for M in "" lite none full; do
+        D="$T/state-$M"; H="$T/claude-$M"; mkdir -p "$D" "$H" "$T/proj"
+        printf '#!/bin/sh\necho "$@" >> %s\nsleep 20\n' "$T/argv-$M.log" > "$T/fake-claude-$M"; chmod +x "$T/fake-claude-$M"
+        launch "$D" --claude-home "$H" --chat-claude "$T/fake-claude-$M" --new-conv-at "1:$T/proj"; sleep 6; stop
+        if [ -n "$M" ]; then python3 -c "
+import json,sys
+p=sys.argv[1]; d=json.load(open(p))
+for c in d['conversations']: c['mcp']=sys.argv[2]
+json.dump(d,open(p,'w'),ensure_ascii=False)" "$D/state.json" "$M"; fi
+        launch "$D" --claude-home "$H" --chat-claude "$T/fake-claude-$M" --chat-send "3:hi"; sleep 8; stop
+        for p in $(pids "$T/fake-claude-$M"); do kill "$p"; done
+    done
+    has() { grep -q -- "$2" "$T/argv-$1.log" 2>/dev/null && echo 有 || echo 無; }
+    check "沒設：帶 --chrome" "$(has "" --chrome)" "有"
+    check "沒設：沒有 --strict-mcp-config" "$(has "" --strict-mcp-config)" "無"
+    check "lite：有 --strict-mcp-config" "$(has lite --strict-mcp-config)" "有"
+    check "lite：沒有 --chrome" "$(has lite --chrome)" "無"
+    # 設定（可能含 env 金鑰）寫在 state 資料夾裡權限 0600 的檔案，命令列只傳路徑，不能出現在 ps（00.06.00）
+    LF="$T/state-lite/mcp/mcp-lite.json"
+    check "lite：只留 deja（不含 rea、chrome）" "$([ -f "$LF" ] && grep -q '"deja"' "$LF" && ! grep -q '"rea"\|chrome-devtools' "$LF" && echo 是 || echo 否)" "是"
+    check "lite：設定檔權限 0600" "$([ -f "$LF" ] && stat -f %Lp "$LF" || echo 無檔)" "600"
+    check "lite：命令列只有路徑、沒有設定內容" "$(grep -q -- "--mcp-config $LF" "$T/argv-lite.log" && ! grep -q '"deja"' "$T/argv-lite.log" && echo 是 || echo 否)" "是"
+    check "none：空的 mcpServers" "$(has none '{"mcpServers":{}}')" "有"
+    check "none：沒有 --chrome" "$(has none --chrome)" "無"
+    check "full：跟沒設一樣（有 --chrome、無 strict）" "$(has full --chrome)$(has full --strict-mcp-config)" "有無"
+    ;;
 *) echo "沒有這個原生案例：$ID"; exit 1 ;;
 esac
 exit $fail

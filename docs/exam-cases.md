@@ -331,6 +331,7 @@ docs/exam-old-output-all.txt
 | 17 | 卸載中串流切回不重複 | — | C | 網頁卸載後代送；紀錄先含完整回答，再串流 10 段；唯一字串只出現 1 次 | 可驗；`native.sh C17`（EXAM_APP=） |
 | 18 | 程序被主動關掉時沒確認的訊息放回 | — | C | 假 claude 不回送；送出後 terminate＋重開：unacked 清掉、寄件匣留 1 筆、原文回輸入框 | 可驗；`native.sh C18`（EXAM_APP=） |
 | 19 | 大訊息寫入不卡主執行緒 | — | C | 不讀 stdin 的假 claude＋120 KB 訊息：排在第 6 秒的動作 12 秒內跑；改前版本拖到假 claude 結束 | 可驗；`native.sh C19`（EXAM_APP=） |
+| 20 | 分支聊天室 MCP 精簡參數、不帶 --chrome | — | C | 假 claude 記下啟動參數：沒設＝帶 --chrome 無 MCP 參數；lite＝--strict-mcp-config＋只含 deja 的 --mcp-config、無 --chrome；none＝空 mcpServers；full 同沒設 | 可驗；`native.sh C20`（EXAM_APP=） |
 
 第 13～15 題雖比 A／B 貴，但能防住丟資料與核心操作回歸，適合留在規則減肥的最後一道驗證。
 

@@ -77,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appearance.onChange = { [weak self] in
             guard let self else { return }
             self.workspace.applyTheme(self.appearance.theme)
+            self.main?.floatingTerminal.applyTheme(self.appearance.theme)
         }
         // 側欄的專案跟 iTerm 的 claude 選單清單（~/.claude/envs）同步；切回 App 時再對一次（可能在 iTerm 改過）
         store.syncEnvs()
@@ -93,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         main = MainWindowController(store: store, workspace: workspace)
         main.setupActivationFocus()
+        main.dailyHandoff.start()
         DispatchQueue.main.async { [weak self] in self?.main.restoreDetachedWindows() }   // 上次獨立出去的 Window 照原位置開回來
         main.openSettings = { [weak self] in self?.showSettings() }
         buildMenu()
@@ -135,7 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 
     /// ⌘ Q 結束前檢查所有格子有沒有在跑的東西
-    func runningSummary() -> [String] { workspace.runningSummary() }
+    func runningSummary() -> [String] {
+        workspace.runningSummary() + (main.floatingTerminal.hasRunningProcess ? [L("浮動終端機：有程式在跑")] : [])
+    }
 
     /// ⌘ Q 前存程式碼區時用：存的期間再按 ⌘ Q 不重複存；使用者選了「不存，直接結束」就跳過檢查
     private var quitSaving = false
@@ -221,6 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for pane in workspace.panes.values { (pane as? ChatPane)?.flushDraft() }
         main.saveFrame()   // ⌘ Q 時的位置，下次照這個開
         for p in workspace.panes.values { p.terminate() }
+        main.lidKeeper?.shutdown()
+        main.floatingTerminal.terminate()
         EventLog.log(L("結束"), L("codenv 結束"))
         EventLog.flush()
     }
@@ -231,8 +237,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if w === main.window { store.closePaneOrWindow() } else { w.performClose(nil) }
     }
 
-    /// ⌃ ⌘ W：關掉目前整個 Window（對話留在側欄）；使用者 10/26 要的，原本是 ⌃ W
+    /// ⌃ ⌘ W：關掉目前整個 Window（對話留在側欄）；原本是 ⌃ W
     @objc func closeWholeWindow() { store.closeWindow() }
+    @objc func toggleFloatingTerminal() { main.floatingTerminal.toggle() }
+    @objc func resetFloatingTerminalFrame() { main.floatingTerminal.resetGeometry() }
 
     /// ⌘ ⇧ T：找回剛關掉的格子或 Window（主視窗裡由 PrefixKeys 先攔；這裡給選單點、或焦點在小視窗時用）
     @objc func newTabWindow() { main.newWindow() }
@@ -293,7 +301,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileItem = NSMenuItem(); menu.addItem(fileItem)
         let fileMenu = NSMenu(title: L("檔案"))
         fileMenu.addItem(withTitle: L("新對話"), action: #selector(newConversation), keyEquivalent: "n")
-        fileMenu.addItem(withTitle: L("新瀏覽器"), action: #selector(newBrowser), keyEquivalent: "B")   // 大寫＝⌘ ⇧ B
+        let browser = fileMenu.addItem(withTitle: L("新瀏覽器"), action: #selector(newBrowser), keyEquivalent: "")
+        func updateBrowserEntry() {
+            let enabled = Prefs.shared.webFeaturesEnabled
+            browser.isHidden = !enabled
+            browser.keyEquivalent = enabled ? "B" : ""   // 關閉時連 ⌘ ⇧ B 都不註冊。
+        }
+        updateBrowserEntry()
+        NotificationCenter.default.addObserver(forName: Prefs.webFeaturesChanged, object: nil, queue: .main) { _ in updateBrowserEntry() }
         let add = fileMenu.addItem(withTitle: L("新增專案…"), action: #selector(addProject), keyEquivalent: "o")
         add.keyEquivalentModifierMask = [.command, .shift]
         let imp = fileMenu.addItem(withTitle: L("從 Claude Code 匯入對話…"), action: #selector(showImporter), keyEquivalent: "i")
@@ -321,6 +336,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let viewItem = NSMenuItem(); menu.addItem(viewItem)
         let viewMenu = NSMenu(title: L("顯示方式"))
+        let floating = viewMenu.addItem(withTitle: L("浮動終端機"), action: #selector(toggleFloatingTerminal), keyEquivalent: "`")
+        floating.keyEquivalentModifierMask = [.control]
+        viewMenu.addItem(withTitle: L("浮動終端機：回到預設位置"), action: #selector(resetFloatingTerminalFrame), keyEquivalent: "")
         let side = viewMenu.addItem(withTitle: L("收起／打開側欄"), action: #selector(toggleSidebar), keyEquivalent: "s")
         side.keyEquivalentModifierMask = [.command, .control]
         // F3／F4：實際是 PrefixKeys 先攔下來處理（終端機格裡也有效）；列在選單裡讓人看得到

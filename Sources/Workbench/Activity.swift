@@ -369,7 +369,7 @@ struct ActivityBlock: View {
                         Text(L("\(g.changed) 個檔案改過還沒 commit")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
                     }
                 }
-                // 使用者 10/24：列這個分頁每一格在跑的，像終端機那樣用樹狀：main（主對話）、shell、agent
+                // 列這個分頁每一格在跑的，像終端機那樣用樹狀：main（主對話）、shell、agent
                 let ids = (store.currentWindow?.root?.leaves ?? []).filter { store.conversation($0) != nil }
                 let live = ids.filter { (store.status[$0] ?? .idle) != .idle || !activity.running($0).isEmpty }
                 if !live.isEmpty {
@@ -378,7 +378,7 @@ struct ActivityBlock: View {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(live, id: \.self) { tree($0, now: ctx.date) }
                         }
-                        .font(.system(size: 10.5 * s, design: .monospaced))   // 使用者 10/30「字可以做小一點嗎 版面不夠」：整塊縮 1 點
+                        .font(.system(size: 10.5 * s, design: .monospaced))   // 整塊縮 1 點
                     }
                 }
             }
@@ -399,7 +399,7 @@ struct ActivityBlock: View {
     }
 
     /// 一格：標題（聊天室名字、用的模型、分支），底下 ├─ └─ 列 main、shell、agent。
-    /// 每個項目最多三行（使用者 10/27：類型不要截成 sh…）：第一行類型或名字（main、shell、子代理的描述），
+    /// 每個項目最多三行（類型不要截成 sh…）：第一行類型或名字（main、shell、子代理的描述）
     /// 第二行小字：狀態 · 時間，右邊是用的模型（欄位太窄時先保留模型，狀態和時間可以被截）；第三行指令內容（滑鼠停上去看全文）
     @ViewBuilder private func tree(_ id: UUID, now: Date) -> some View {
         let c = store.conversation(id)
@@ -439,7 +439,7 @@ struct ActivityBlock: View {
                     }
                 }
                 HStack(spacing: 0) {       // 間距 0：沒有圖示的列，「背景」才跟下一行的指令對齊
-                    // 使用者 10/30「圖案放左邊，然後要有顏色」：模型圖示接在樹狀線後面，欄位窄時只留圖示
+                    // 模型圖示接在樹狀線後面，欄位窄時只留圖示
                     Text(pad).fixedSize()
                     if let t = l.tag { ModelBadgeView(tag: t, scale: s, colored: true).padding(.trailing, 4 * s).layoutPriority(1) }
                     Text([l.status, l.since.map { Self.elapsed(now.timeIntervalSince($0)) }].compactMap { $0 }.joined(separator: " · "))

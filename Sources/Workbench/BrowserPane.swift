@@ -1,7 +1,7 @@
 import AppKit
 import WebKit
 
-// 瀏覽器格子（使用者 10/25：在 codenv 裡開網頁、Gemini 網頁版，跟 CLI 並排丟檔；AI 讀得到網頁內容）。
+// 瀏覽器格子（在 codenv 裡開網頁、Gemini 網頁版，跟 CLI 並排丟檔；AI 讀得到網頁內容）。
 // 第一階段用系統的 WebKit（Safari 的核心，最省記憶體）；Chromium 是第二階段，⌘ , 對話頁可以選（還沒做好前選了也是 WebKit）。
 // 在側欄是一段「對話」（Conversation.browser＝目前的網址），可以拖、切格子、封存，跟聊天室一樣。
 // 登入資料（cookie）放 codenv 專用的 WebKit 資料庫，不碰 Safari、不碰聊天畫面那份；測試 App 用不存檔的。
@@ -77,7 +77,7 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     let conversationID: UUID
     let webView: WKWebView
     var petReserve: NSSize = .zero { didSet { if petReserve != oldValue { needsLayout = true } } }
-    /// 空白頁：游標放網址列，直接打字（使用者 10/25）；其他：網頁本身
+    /// 空白頁：游標放網址列，直接打字；其他：網頁本身
     var focusTarget: NSView { if isBlank { showAddress(); return address }; return webView }
     private var isBlank: Bool { (webView.url?.absoluteString ?? startURL) == Self.home }
     var onTitle: ((String) -> Void)?
@@ -88,7 +88,7 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     private var zoomHost: String?
     private(set) var lastActive = Date()
 
-    /// 整條網址列拿掉了（使用者 10/29：「這個都拿掉」）：⌘ L 才在格子頂端浮出一個網址輸入框；空白頁自動浮出
+    /// 整條網址列拿掉了：⌘ L 才在格子頂端浮出一個網址輸入框；空白頁自動浮出
     private let addressBox = NSView()
     private let address = NSTextField()
     /// 匯出進行中（浮動匯出鈕的忙碌狀態）
@@ -97,9 +97,10 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     private let floatExport = FloatButton(), floatHistory = FloatButton(), floatGemini = FloatButton(), floatSources = FloatButton(), floatStudio = FloatButton()
     private let progress = NSView()
     private var observers: [NSKeyValueObservation] = []
+    private let downloads = NSHashTable<WKDownload>.weakObjects()
     private var theme: Theme
 
-    /// 一般瀏覽器格子的首頁：空白頁，游標停在網址列（使用者 10/25：瀏覽器不該預設開 Gemini）
+    /// 一般瀏覽器格子的首頁：空白頁，游標停在網址列（瀏覽器不該預設開 Gemini）
     static let home = "about:blank"
     /// 網址列旁邊那顆 ✦ 和 Gemini 掛件開的
     static let gemini = "https://gemini.google.com/app"
@@ -156,7 +157,7 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
         ]
         applyTheme(theme)
         startURL = url.isEmpty ? Self.home : url
-        // 第一頁載完之前網頁不畫白底（透出底下的主題底色）：還沒載入的 WKWebView 是一整片白，從右邊滑進來時會閃白（使用者 10/25）。
+        // 第一頁載完之前網頁不畫白底（透出底下的主題底色）：還沒載入的 WKWebView 是一整片白，從右邊滑進來時會閃白。
         // 載完再畫回白底：沒自己設背景色的網頁照常是白的
         if startURL != Self.home { webView.setValue(false, forKey: "drawsBackground") }
         load(startURL)
@@ -189,7 +190,7 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     }
 
     func load(_ text: String) {
-        guard let u = Self.resolve(text) else { return }
+        guard Prefs.shared.webFeaturesEnabled, let u = Self.resolve(text) else { return }
         if u.isFileURL { webView.loadFileURL(u, allowingReadAccessTo: u.deletingLastPathComponent()) }
         else { webView.load(URLRequest(url: u)) }
     }
@@ -204,6 +205,11 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     private var floatButtons: [FloatButton] { [floatGemini, floatExport, floatHistory, floatSources, floatStudio] }
     /// 右上角的圓鈕群：✦ 開 Gemini 每個網頁都有；匯出和歷史列表只在 Gemini；來源欄和筆記欄只在 NotebookLM。由上往下排，隱藏的不佔位置
     func updateFloatButtons() {
+        guard Prefs.shared.webFeaturesEnabled else {
+            floatButtons.forEach { $0.isHidden = true }
+            addressBox.isHidden = true
+            return
+        }
         let u = webView.url
         let g = GeminiExport.isGemini(u), nb = GeminiExport.isNotebook(u)
         floatGemini.isHidden = false
@@ -246,7 +252,10 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     }
 
     /// ⌘ L：跳到網址列
-    func focusAddress() { showAddress(); window?.makeFirstResponder(address); address.currentEditor()?.selectAll(nil) }
+    func focusAddress() {
+        guard Prefs.shared.webFeaturesEnabled else { return }
+        showAddress(); window?.makeFirstResponder(address); address.currentEditor()?.selectAll(nil)
+    }
     private func showAddress() { if addressBox.isHidden { addressBox.isHidden = false; needsLayout = true } }
     /// Enter／Esc／點到別處之後收起來；空白頁沒有網頁可看，網址框一直留著
     private func hideAddress() {
@@ -258,12 +267,15 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
     func controlTextDidEndEditing(_ obj: Notification) { if !isBlank { addressBox.isHidden = true; needsLayout = true } }   // 這時 currentEditor 還沒收掉，不能拿它判斷
 
     /// F5：重新載入（載入中就停止）
-    func reloadPage() { if webView.isLoading { webView.stopLoading() } else { webView.reload() } }
+    func reloadPage() {
+        guard Prefs.shared.webFeaturesEnabled else { return }
+        if webView.isLoading { webView.stopLoading() } else { webView.reload() }
+    }
     @objc private func openGemini() { load(Self.gemini) }
 
     /// 網址列旁的「匯出對話」：存到 ~/Downloads/<標題>-<時間>/，完成後在 Finder 顯示；有圖抓不到時說一聲
     @objc func exportChat() {
-        guard !exporting, GeminiExport.isConversation(webView.url) else { return }
+        guard Prefs.shared.webFeaturesEnabled, !exporting, GeminiExport.isConversation(webView.url) else { return }
         exporting = true
         floatExport.isEnabled = false
         floatExport.toolTip = L("匯出中…（舊的訊息要先捲上去載入，可能要幾十秒）")
@@ -390,9 +402,17 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
 
     func terminate() {
         observers = []
+        onURL = nil
+        onTitle = nil
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
+        for download in downloads.allObjects { download.cancel { _ in } }
+        downloads.removeAllObjects()
+        // 換成本機空文件，讓舊頁面的計時器、連線也停止；先拆回呼，不能把記住的網址改成空白。
+        webView.loadHTMLString("", baseURL: nil)
+        floatButtons.forEach { $0.isHidden = true }
+        addressBox.isHidden = true
         Self.registry.remove(self)
     }
 
@@ -421,6 +441,7 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
 
     /// target=_blank 的連結、window.open：在同一格打開（沒有分頁）
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard Prefs.shared.webFeaturesEnabled else { return nil }
         if action.targetFrame == nil, let u = action.request.url { webView.load(URLRequest(url: u)) }
         return nil
     }
@@ -455,16 +476,24 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
 
     /// 顯示不了的檔案（壓縮檔、pdf 以外的附件）就下載
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        guard Prefs.shared.webFeaturesEnabled else { decisionHandler(.cancel); return }
         decisionHandler(response.canShowMIMEType ? .allow : .download)
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard Prefs.shared.webFeaturesEnabled else { decisionHandler(.cancel); return }
         decisionHandler(action.shouldPerformDownload ? .download : .allow)
     }
-    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
-    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { track(download) }
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { track(download) }
+    private func track(_ download: WKDownload) {
+        guard Prefs.shared.webFeaturesEnabled else { download.cancel { _ in }; return }
+        downloads.add(download)
+        download.delegate = self
+    }
 
     /// 下載放「下載項目」，同名就加 (2)、(3)
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        guard Prefs.shared.webFeaturesEnabled else { completionHandler(nil); return }
         let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         let name = suggestedFilename.isEmpty ? L("下載") : suggestedFilename.replacingOccurrences(of: "/", with: "_")
         var url = dir.appendingPathComponent(name)
@@ -475,7 +504,7 @@ final class BrowserPane: NSView, ConversationPane, WKNavigationDelegate, WKUIDel
         }
         completionHandler(url)
     }
-    func downloadDidFinish(_ download: WKDownload) {}
+    func downloadDidFinish(_ download: WKDownload) { downloads.remove(download) }
 }
 
 

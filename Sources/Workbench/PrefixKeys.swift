@@ -30,6 +30,21 @@ final class PrefixKeys {
         self.controller = controller
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self, let c = self.controller else { return e }
+            // F5：全 App 開關浮動終端機，終端機裡按也收得起來（不送進 shell）。瀏覽器格有焦點時 F5 仍是重新載入
+            if e.keyCode == 96, e.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+               e.window === c.window || c.floatingTerminal.owns(e.window),
+               !(e.window === c.window && Self.browserPane(containing: e.window?.firstResponder) != nil) {
+                self.disarm()
+                if !e.isARepeat { c.floatingTerminal.toggle() }
+                return nil
+            }
+            // 只攔主視窗與它的浮動面板；用實體鍵碼讓中文輸入法也能按 ⌃ `。
+            if e.keyCode == 50, e.modifierFlags.intersection([.command, .control, .option, .shift]) == .control,
+               e.window === c.window || c.floatingTerminal.owns(e.window) {
+                self.disarm()
+                if !e.isARepeat { c.floatingTerminal.toggle() }
+                return nil
+            }
             guard e.window === c.window else {
                 // 獨立視窗：沒有側欄，F3／F4 不用管；F5 在它裡面的瀏覽器格要能重新載入
                 if e.keyCode == 96, e.modifierFlags.intersection([.command, .control, .option]).isEmpty,
@@ -82,7 +97,7 @@ final class PrefixKeys {
         if !armed, controller?.store.windowSelected == true, e.keyCode != 120, !(mods == .command && Self.digit(e.keyCode) != nil) {
             controller?.store.windowSelected = false
         }
-        // F3：開關左側欄（同 ⌘ ⌃ S）；F4：開關右側欄（用量欄＋桌寵格）（使用者 10/29：F5、F6 改成 F3、F4）。聊天格、終端機格、瀏覽器格都有效，所以不排除終端機（監視器先於終端機看到按鍵）
+        // F3：開關左側欄（同 ⌘ ⌃ S）；F4：開關右側欄（用量欄＋桌寵格）（F5、F6 改成 F3、F4）。聊天格、終端機格、瀏覽器格都有效，所以不排除終端機（監視器先於終端機看到按鍵）
         // F5：只在嵌入的瀏覽器格（焦點在它的網頁或它裡面）重新載入；聊天格、終端機格不處理、不吃掉（照一般按鍵交出去）。F6 沒有功能
         // CodeLab 的 F9／F10 不受影響：這裡只吃 F3、F4、F5，沒有修飾鍵才算
         if !armed, mods.isEmpty, e.keyCode == 99 { controller?.toggleSidebar(); return true }
@@ -104,7 +119,7 @@ final class PrefixKeys {
         // ⌃ Enter（馬上插話）／⌃ C（停止並放回剛送的字）：焦點在對話內容上、或不在任何輸入欄位時也能用
         if !armed, mods == .control, e.keyCode == 36 || e.keyCode == 76, controller?.chatCtrlKey(sendNow: true) == true { return true }
         if !armed, mods == .control, e.keyCode == 8, controller?.chatCtrlKey(sendNow: false) == true { return true }
-        // ⌃ ⌘ W 關掉整個 Window（對話留在側欄；使用者 10/26 從 ⌃ W 改過來，終端機格裡也能用）
+        // ⌃ ⌘ W 關掉整個 Window（對話留在側欄；從 ⌃ W 改過來，終端機格裡也能用）
         if !armed, mods == [.command, .control], e.keyCode == 13 {
             controller?.store.closeWindow()
             return true
@@ -116,11 +131,11 @@ final class PrefixKeys {
         }
         // ⌘ W 在主視窗：關掉紫框那一格（對話留在側欄），只剩一格才關整個 Window（終端機不用 ⌘ W，照樣攔）；
         // 設定這類小視窗由選單「關閉這格」那項關（main.swift 的 closeSideWindow）
-        if !armed, mods == .command, !e.modifierFlags.contains(.shift), e.keyCode == 13, e.window === controller?.window {      // ⌘ ⇧ W 不算（使用者 10/31：加了 ⇧ 就不關格）
+        if !armed, mods == .command, !e.modifierFlags.contains(.shift), e.keyCode == 13, e.window === controller?.window {      // ⌘ ⇧ W 不算（加了 ⇧ 就不關格）
             controller?.store.closePaneOrWindow()
             return true
         }
-        // ⌘ T：開新 Window（跟瀏覽器一樣；使用者 10/24 要的）
+        // ⌘ T：開新 Window（跟瀏覽器一樣）
         if !armed, mods == .command, !e.modifierFlags.contains(.shift), e.keyCode == 17 {
             controller?.newWindow()
             return true
@@ -130,7 +145,7 @@ final class PrefixKeys {
             if controller?.store.reopenClosedWindow() != true { NSSound.beep() }
             return true
         }
-        // 學 Ghostty 的分割快捷鍵（使用者 11/5），功能跟 ⌃ A 那組一樣：
+        // 學 Ghostty 的分割快捷鍵，功能跟 ⌃ A 那組一樣
         // ⌘ D＝左右分（⌃ A |）、⌘ ⇧ D＝上下分（⌃ A -）、⌘ [ ／ ⌘ ]＝上一格／下一格、⌘ ⇧ Enter＝放大／還原這格（⌃ A z）
         // 焦點在程式碼編輯器或網頁裡時 ⌘ D、⌘ [ ]、⌘ ⇧ Enter 讓給它們（編輯器的「選下一個相同字」、縮排，網頁的上一頁／下一頁）
         if !armed, mods == .command, e.window === controller?.window, let c = controller, !inEditorOrWeb(e),
@@ -147,7 +162,7 @@ final class PrefixKeys {
             }
         }
         // ⌘ 1～9：跳到第幾個 Window（看實體位置，輸入法開著也行）
-        if !armed, mods == .command, !e.modifierFlags.contains(.shift), let d = Self.digit(e.keyCode) { controller?.store.toggleWindowSelection(at: d - 1); return true }   // ＝選取整個 Window，再按同一個＝回原本那格   // ⌘ ⇧ 數字不算（網頁裡的 ⌘ ⇧ 7／8 要留給網頁）
+        if !armed, mods == .command, !e.modifierFlags.contains(.shift), let d = Self.digit(e.keyCode) { controller?.store.toggleWindowSelection(slot: d - 1); return true }   // ＝選取整個 Window，再按同一個＝回原本那格   // ⌘ ⇧ 數字不算（網頁裡的 ⌘ ⇧ 7／8 要留給網頁）
         if !armed {
             guard isCtrlA else { return false }
             armed = true
@@ -197,8 +212,8 @@ final class PrefixKeys {
             case ")": c.store.selectSession(offset: 1)
             case "?": c.showCommandMenu()
             default:
-                if let n = Int(ch), (1...9).contains(n) { c.store.selectWindow(at: n - 1) }
-                else if let d = Self.digit(e.keyCode) { c.store.selectWindow(at: d - 1) }
+                if let n = Int(ch), (1...9).contains(n) { c.store.selectWindow(slot: n - 1) }
+                else if let d = Self.digit(e.keyCode) { c.store.selectWindow(slot: d - 1) }
             }
         }
         return true

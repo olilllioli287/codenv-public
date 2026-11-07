@@ -1,6 +1,6 @@
 import AppKit
 
-// 輸入框底排橘色收納鈕的選單（使用者 10/29）：作用在「同一個 Window 裡的瀏覽器格」。
+// 輸入框底排橘色收納鈕的選單：作用在「同一個 Window 裡的瀏覽器格」。
 //   請 Claude 比對瀏覽器那格：把一句話放進這個輸入框（只放、不送出）
 //   截圖回報給 codenv_1（私人版）／回報問題…（公版）：私人版把那一格的截圖加主機名稱和時間當成一則附圖訊息送到「codenv_1」聊天室
 //     （找不到就放進目前輸入框）；公版產生回報檔（Feedback.swift）
@@ -10,7 +10,7 @@ import AppKit
 extension Workspace {
     /// 這段聊天室所在的 Window 裡的瀏覽器格（沒有畫面的不算）
     func browserPanes(inWindowOf cid: UUID) -> [(id: UUID, pane: BrowserPane)] {
-        guard let (si, wi) = store.locate(cid) else { return [] }
+        guard Prefs.shared.webFeaturesEnabled, let (si, wi) = store.locate(cid) else { return [] }
         let leaves = store.sessions[si].windows[wi].root?.leaves ?? []
         return leaves.compactMap { id in
             guard let c = store.conversation(id), c.isBrowser, let p = panes[id] as? BrowserPane else { return nil }
@@ -29,6 +29,7 @@ extension Workspace {
     func toolsMenu(for cid: UUID, chat: ChatPane) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        guard Prefs.shared.webFeaturesEnabled else { return menu }
         let targets = browserPanes(inWindowOf: cid)
         if targets.isEmpty {
             let h = NSMenuItem(title: L("這個 Window 沒有瀏覽器格"), action: nil, keyEquivalent: "")
@@ -51,7 +52,7 @@ extension Workspace {
                 let sub = NSMenu(); sub.autoenablesItems = false
                 for t in targets {
                     let si = NSMenuItem(title: label(t.id, t.pane), action: #selector(ToolsMenuTarget.fire(_:)), keyEquivalent: "")
-                    let tgt = ToolsMenuTarget { e.run(t.id, t.pane) }
+                    let tgt = ToolsMenuTarget { if Prefs.shared.webFeaturesEnabled { e.run(t.id, t.pane) } }
                     si.target = tgt; si.representedObject = tgt
                     si.isEnabled = e.enabled(t.pane)
                     sub.addItem(si)
@@ -59,7 +60,7 @@ extension Workspace {
                 item.submenu = sub
             } else if let t = targets.first {
                 item.action = #selector(ToolsMenuTarget.fire(_:))
-                let tgt = ToolsMenuTarget { e.run(t.id, t.pane) }
+                let tgt = ToolsMenuTarget { if Prefs.shared.webFeaturesEnabled { e.run(t.id, t.pane) } }
                 item.target = tgt; item.representedObject = tgt
             }
             menu.addItem(item)
@@ -68,6 +69,7 @@ extension Workspace {
     }
 
     func popUpToolsMenu(for cid: UUID, chat: ChatPane, from view: NSView) {
+        guard Prefs.shared.webFeaturesEnabled else { return }
         let menu = toolsMenu(for: cid, chat: chat)
         // 在鈕的上方展開（鈕在視窗最下面）
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
@@ -77,6 +79,7 @@ extension Workspace {
 
     /// 只把這句話放進這個輸入框、不送出
     func askCompare(id: UUID, pane: BrowserPane, chat: ChatPane) {
+        guard Prefs.shared.webFeaturesEnabled else { return }
         let name = store.conversation(id)?.title ?? ""
         let host = pane.webView.url?.host ?? ""
         let title = pane.currentTitle
@@ -87,6 +90,7 @@ extension Workspace {
     // MARK: 回報
 
     func report(id: UUID, pane: BrowserPane, chat: ChatPane) {
+        guard Prefs.shared.webFeaturesEnabled else { return }
         if Edition.isPublic {
             Feedback.present(browser: pane, browserName: store.conversation(id)?.title, over: chat.window)
             return

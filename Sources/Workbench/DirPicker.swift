@@ -53,7 +53,7 @@ final class DirPickerModel: ObservableObject {
     var onChanged: (() -> Void)?
     var onListChanged: (() -> Void)?      // 清單改了（新增／移除）：側欄跟著同步
 
-    /// 照側欄最上層的組分段（使用者 10/24：新對話照最大的分類選比較清楚）；沒給就不分段
+    /// 照側欄最上層的組分段（新對話照最大的分類選比較清楚）；沒給就不分段
     var topGroups: [(id: UUID, name: String)] = []
     var groupOfPath: ((String) -> UUID?)?
     var setGroup: ((String, UUID) -> Void)?
@@ -224,7 +224,7 @@ final class DirPicker {
     private func key(_ e: NSEvent) -> Bool {
         // ⌘ Q、⌘ N 這類帶修飾鍵的照常交給 App
         guard e.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
-        // 編號從 0 開始（使用者 10/24：0＝家目錄，1～9 照清單）
+        // 編號從 0 開始（0＝家目錄，1～9 照清單）
         let digits: [UInt16: Int] = [29: 0, 18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9]
         if let n = digits[e.keyCode] { model.choose(n); resize(); return true }
         switch e.keyCode {

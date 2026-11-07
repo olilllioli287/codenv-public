@@ -19,6 +19,77 @@ final class DropWebView: WKWebView {
         if wanted(s.draggingPasteboard) { return onDrop?(s.draggingPasteboard) ?? false }
         return super.performDragOperation(s)
     }
+
+    // MARK: 拖曳選取碰到上下邊緣自動捲（畫面外的字選不到）
+    // WKWebView 在這裡不會自己捲。00.05.19 在 chat.js 自己捲＋selection.extend：跟原生的拖曳選取搶，選取終點停在滑鼠上方。
+    // 改成原生：拖曳中碰到邊緣就讓網頁捲一下（捲完才送下一次），再在滑鼠目前位置補一個拖曳事件，選取完全由 WebKit 延伸。
+    // 按著滑鼠時 WebKit 不更新 hover（原本指著的那列會跟著內容往上跑），放開後動一下滑鼠就會恢復——Safari 也一樣
+    private var autoTimer: Timer?
+    private var dragging = false
+    private var lastDragLocation: NSPoint?      // 視窗座標
+    /// 測試用：模擬的拖曳讀不到系統按鍵狀態，測試掛鉤設成 true 代表「左鍵按著」
+    static var testPressed: Bool?
+    private static let edge: CGFloat = 30
+
+    override func mouseDown(with e: NSEvent) {
+        stopAutoScroll()
+        let p = convert(e.locationInWindow, from: nil)
+        dragging = e.clickCount == 1 && p.x < bounds.width - 16      // 右邊是捲軸
+        lastDragLocation = e.locationInWindow
+        super.mouseDown(with: e)
+    }
+    override func mouseDragged(with e: NSEvent) {
+        super.mouseDragged(with: e)
+        guard dragging else { return }
+        lastDragLocation = e.locationInWindow
+        if autoTimer == nil, autoSpeed() != 0 {
+            let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.autoTick() }
+            RunLoop.main.add(t, forMode: .common)
+            autoTimer = t
+        }
+    }
+    override func mouseUp(with e: NSEvent) {
+        stopAutoScroll()
+        dragging = false
+        super.mouseUp(with: e)
+    }
+    override func viewWillMove(toWindow w: NSWindow?) {
+        if w == nil { stopAutoScroll(); dragging = false }
+        super.viewWillMove(toWindow: w)
+    }
+    private func stopAutoScroll() { autoTimer?.invalidate(); autoTimer = nil }
+
+    /// 每一下要捲幾點（正＝往下）：剛碰到邊緣很慢（2 點），越往外越快，最快 30 點
+    private func autoSpeed() -> CGFloat {
+        guard let loc = lastDragLocation else { return 0 }
+        let p = convert(loc, from: nil)
+        let fromTop = isFlipped ? p.y : bounds.height - p.y
+        let fromBottom = bounds.height - fromTop
+        if fromTop < Self.edge { return -min(30, 2 + (Self.edge - fromTop) / 4) }
+        if fromBottom < Self.edge { return min(30, 2 + (Self.edge - fromBottom) / 4) }
+        return 0
+    }
+
+    private var scrollInFlight = false
+    private func autoTick() {
+        let pressed = Self.testPressed ?? (NSEvent.pressedMouseButtons & 1 != 0)
+        let v = autoSpeed()
+        guard pressed, dragging, v != 0, window != nil else { stopAutoScroll(); return }
+        // 上一次還沒捲完就不送下一次：合成的滾輪事件會在網頁那邊排隊，放開後還一直捲（測試時遇到）
+        guard !scrollInFlight else { return }
+        scrollInFlight = true
+        evaluateJavaScript("window.scrollBy(0, \(Int(v.rounded())));0") { [weak self] _, _ in
+            guard let self else { return }
+            self.scrollInFlight = false
+            // 選取交給 WebKit 自己延伸：在滑鼠目前的位置補一個拖曳事件（滑鼠停著不動時不會有新事件）。
+            // 00.05.19 用 JS 的 selection.extend 跟原生的拖曳選取搶，選取終點會停在滑鼠上方
+            guard self.dragging, let w = self.window, let loc = self.lastDragLocation,
+                  let ev = NSEvent.mouseEvent(with: .leftMouseDragged, location: loc, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+            self.forwardDragged(ev)
+        }
+    }
+    private func forwardDragged(_ e: NSEvent) { super.mouseDragged(with: e) }
 }
 
 /// 右邊一格對話要有的東西：聊天或終端機都一樣
@@ -88,6 +159,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     var conversationID: UUID? {
         didSet {
             guard conversationID != oldValue else { return }
+            DispatchQueue.main.async { [weak self] in self?.refreshContext() }
             if let old = oldValue { SessionActivity.shared.unregister(old) }
             // 只有 Claude 自己的程序才掃它底下；其他家（agy、codex…）的聊天室不是 claude 程序
             if let id = conversationID { SessionActivity.shared.register(id, pid: { [weak self] in
@@ -131,6 +203,25 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     func restoreSavedDraftIfNeeded() {
         restoreSavedDraft()
         restoreOutboxIfNeeded()
+    }
+
+    /// 交接時沿用草稿的還原與存檔 API；新的一份確定落盤後才清掉舊輸入，字、圖、引用與檔案卡片一起搬。
+    @discardableResult
+    func moveDraft(to target: ChatPane) -> Bool {
+        guard target !== self, inputBar.hasPendingInput else { return true }
+        guard !target.inputBar.hasPendingInput, flushDraft() else { return false }
+        target.inputBar.textView.string = inputBar.textView.string
+        target.inputBar.textView.undoManager?.removeAllActions()
+        target.inputBar.restoreImages(inputBar.draftImages)
+        target.inputBar.restoreFilePaths(inputBar.draftFilePaths)
+        target.inputBar.textView.didChangeText()
+        target.setQuotes(quotes, syncWeb: true)
+        guard target.flushDraft() else { return false } // 存不進去時，舊的一份仍在。
+        inputBar.textView.string = ""
+        inputBar.textView.didChangeText()
+        inputBar.textView.undoManager?.removeAllActions()
+        setQuotes([], syncWeb: true)
+        return flushDraft()
     }
 
     private var toldOutboxWaiting = false
@@ -447,13 +538,34 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         // 整體文字大小：對話內容用網頁縮放、輸入框換字級
         applyScale()
         scaleSink = UIScale.shared.$factor.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.applyScale() }
+        // 輸入框下面那行的上下文大小：數字一變（回覆的 usage、壓縮完）就跟著更新
+        ctxSink = ContextMonitor.shared.$tokens.receive(on: RunLoop.main).sink { [weak self] _ in self?.refreshContext() }
         // 設定頁換了程式碼顏色：馬上套用
         prefsSink = Prefs.shared.objectWillChange.receive(on: RunLoop.main).sink { [weak self] _ in
-            DispatchQueue.main.async { guard let self else { return }; self.applyTheme(self.theme) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.applyTheme(self.theme)
+                self.inputBar.needsLayout = true
+            }
         }
     }
 
     private var scaleSink: AnyCancellable?
+    private var ctxSink: AnyCancellable?
+    private var ctxLoadRequested: UUID?
+    /// 輸入框下面那行：這段聊天的上下文大小（紀錄檔還沒讀過就讀一次）。上限：本機模型讀 config.json、Claude 用設定的自動壓縮門檻、其他家不知道就只顯示數字
+    func refreshContext() {
+        guard let id = conversationID else { inputBar.setContext(tokens: nil, limit: nil); return }
+        let n = ContextMonitor.shared.tokens[id]
+        if n == nil, ctxLoadRequested != id, let u = session.transcriptURL { ctxLoadRequested = id; ContextMonitor.shared.load(id: id, url: u) }
+        inputBar.setContext(tokens: n, limit: contextLimit)
+    }
+    private var contextLimit: Int? {
+        if let m = session.mlxModel { return LocalCompact.contextWindow(m) }
+        if session.agyModel != nil || session.codexModel != nil || session.copilotModel != nil || session.appleModel != nil || session.localEndpoint != nil { return nil }
+        // Claude：用設定裡的自動壓縮門檻當上限（使用者設 64 萬；細條＝離自動壓縮還多遠），不寫死模型上限
+        return Prefs.shared.cloudCompactTokens
+    }
     private var prefsSink: AnyCancellable?
     private func applyScale() {
         web?.pageZoom = UIScale.shared.f
@@ -672,6 +784,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
 
     private func refreshModelName() {
         setModelName()
+        refreshContext()
         // 右邊「正在跑」那區在聊天室名字後面標模型（Activity.swift）：用按鈕上同一個名字
         if let id = conversationID { SessionActivity.shared.setModel(id, inputBar.modelTitle) }
     }
@@ -689,7 +802,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             return
         }
         // 沒選模型（預設）：Claude 實際回報的 → 上次預設實際跑出來的（還沒跑起來時）→ 清單上說預設是哪個
-        // （清單說預設是 Sonnet，實際卻可能是 Opus，使用者 10/25）
+        // （清單說預設是 Sonnet，實際卻可能是 Opus）
         let d = known.first { $0.value == "default" }
         let live = [resolvedModel, appDefaults.string(forKey: "lastDefaultModel") ?? "", d?.resolved ?? ""].first { !$0.isEmpty } ?? ""
         inputBar.modelTitle = known.first { $0.resolved == live && $0.value != "default" }?.name ?? (live.isEmpty ? (d?.name ?? L("預設模型")) : live)
@@ -994,7 +1107,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     /// 回傳有沒有真的送出（被「別處進行中」「agy 沒網」擋下就是 false）。restore＝使用者從輸入框送出；失敗時輸入框保持原樣（程式代送為 false）
     private var lastBlockedNotice = Date.distantPast
     @discardableResult
-    private func send(text: String, images: [(data: Data, mediaType: String)], now: Bool = false, restore: Bool = true) -> Bool {
+    private func send(text: String, images: [(data: Data, mediaType: String)], now: Bool = false, restore: Bool = true, onDelivery: ((Bool) -> Void)? = nil) -> Bool {
         // 不在這裡清 lastNotices：網頁卸載時程式代送會把使用者還沒看到的錯誤提示清掉；放上畫面後才清
         // 送出前再確認一次：這段對話如果正在別處進行，不要兩邊同時寫同一份紀錄
         if !session.isRunning, session.forkFrom == nil, liveElsewhere() != nil {
@@ -1033,7 +1146,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         if let id = conversationID, let n = CollabBoardModel.takeNotices(for: id) { full = n + "\n\n" + full }
         if let b = bang { full = b.text + full }      // 前面用 ! 跑的指令結果（只附這一次；畫面上泡泡不顯示，旁邊有小標）
         // 剛換到另一家的模型：附上交接（最近的對話＋精簡全文檔，ModelCarry.swift）。又換回原本那個就不用附。
-        // 換到 Apple 模型不附（使用者 10/25：它做不了事，不用交接）
+        // 換到 Apple 模型不附（它做不了事，不用交接）
         let carried = carryFrom
         if let from = carryFrom {
             carryFrom = nil
@@ -1043,7 +1156,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             }
         }
         if !session.send(text: full, images: images, uuid: uuid, now: now, displayText: text, quotes: selectedQuotes,
-                         filePaths: restore ? inputBar.draftFilePaths : [], imageDrafts: restore ? inputBar.draftImages : []) {
+                         filePaths: restore ? inputBar.draftFilePaths : [], imageDrafts: restore ? inputBar.draftImages : [], onDelivery: onDelivery) {
             // 沒送出去（啟動失敗、claude 剛好結束）：! 指令結果和模型交接還沒用掉，放回去，重送時才不會漏
             if let b = bang { for i in b.indices where i < bangRecords.count { bangRecords[i].attached = false }; saveBang(); inputBar.bangCount = bangRecords.filter { !$0.attached && !$0.running }.count }
             carryFrom = carried
@@ -1243,7 +1356,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     }
     /// 程式幫忙送一則訊息（交接的第一則）
     @discardableResult
-    func sendText(_ text: String) -> Bool { send(text: text, images: [], restore: false) }      // 程式代送的：被擋下不要把字塞進使用者的輸入框
+    func sendText(_ text: String, onDelivery: ((Bool) -> Void)? = nil) -> Bool { send(text: text, images: [], restore: false, onDelivery: onDelivery) }      // 程式代送的：被擋下不要把字塞進使用者的輸入框
     /// 程式幫忙送一則附圖的訊息（瀏覽器格的截圖回報）
     func sendReport(text: String, images: [(data: Data, mediaType: String)]) -> Bool { send(text: text, images: images, restore: false) }
     /// 橘色收納鈕按下去：由 Workspace 給選單（BrowserTools.swift）
@@ -1548,12 +1661,16 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     private(set) var webEditing = false
 
     /// 在這格裡點了輸入框以外（對話內容）：輸入框失效。點在輸入框、縮圖、按鈕、/ 選單上不算
+    /// 每次點擊加一：點了對話內容又馬上點回輸入框時，前一次排好的「把焦點交給網頁」要作廢
+    private var clickGeneration = 0
     func clickedInside(_ e: NSEvent) {
+        clickGeneration += 1
+        let gen = clickGeneration
         let inBar = inputBar.bounds.contains(inputBar.convert(e.locationInWindow, from: nil))
         let inMenu = !inputBar.slash.isHidden && inputBar.slash.bounds.contains(inputBar.slash.convert(e.locationInWindow, from: nil))
         guard !inBar, !inMenu else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            guard let self, let web = self.web, let w = self.window, w.firstResponder === self.inputBar.textView else { return }
+            guard let self, self.clickGeneration == gen, let web = self.web, let w = self.window, w.firstResponder === self.inputBar.textView else { return }
             w.makeFirstResponder(web)
         }
     }
@@ -1577,7 +1694,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         followTimer = nil
         inputBar.setLocked(nil)
         // 解鎖是計時器／自動接回觸發的，不是使用者點的：只有焦點本來就在這格（或沒人拿著）才放回輸入框，
-        // 不然使用者正在別格打字，游標會被搶過來（使用者 10/30「打字的地方跳到別的格子」）
+        // 不然使用者正在別格打字，游標會被搶過來
         guard let w = window else { return }
         let r = w.firstResponder
         if r == nil || r === w || (r as? NSView)?.isDescendant(of: self) == true { w.makeFirstResponder(inputBar.textView) }
@@ -1591,7 +1708,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         notice(L("已經準備好在這裡接手：送出下一則訊息時會複製一份新的對話，原本那段在那邊照常進行。"))
     }
 
-    /// 對話裡點檔案路徑：一律在 Finder 裡把那個檔案選起來，不用預設 App 打開（使用者 10/25：「不要用 vscode 打開，請直接用 finder 的那個檔案位置」）。
+    /// 對話裡點檔案路徑：一律在 Finder 裡把那個檔案選起來，不用預設 App 打開。
     /// 資料夾直接在 Finder 打開（看裡面有什麼）；檔案不存在就打開最近一層存在的資料夾
     static func revealInFinder(_ url: URL) {
         let t = finderTarget(url)

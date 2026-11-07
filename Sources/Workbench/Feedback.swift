@@ -85,7 +85,7 @@ enum Feedback {
         }
     }
 
-    // MARK: 回報檔（使用者 10/29：公版的「回報問題」改成產生一份回報 zip）
+    // MARK: 回報檔（公版的改成產生一份回報 zip）
 
     /// 測試用（要有 --state-dir）：回報 zip 放 <state-dir>/reports，不放使用者的「下載項目」
     private static var stateDirArg: String? {

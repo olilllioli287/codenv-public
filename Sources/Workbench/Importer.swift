@@ -16,7 +16,7 @@ struct ExternalSession: Identifiable, Hashable {
 
 struct LiveSession: Hashable {
     let pid: Int32
-    let tmux: String          // 例如「小生:@11.%22」；不在 tmux 就是空的
+    let tmux: String          // 例如「session:@11.%22」；不在 tmux 就是空的
     let kind: String          // interactive、bg…
 }
 

@@ -1,7 +1,7 @@
 import AppKit
 
 // 空的格子：分頁列的 ＋、Ctrl+A c 開的 Window，Ctrl+A | - 切出來的那格，先不開聊天室。
-// 中間一顆「新增聊天室」：按下去照側欄的組（學業、RTS…）列出來，在那組的資料夾開新聊天室，或打開那組現有的。
+// 中間一顆「新增聊天室」：按下去照側欄的組（A 組、B 組…）列出來，在那組的資料夾開新聊天室，或打開那組現有的。
 // 空格子在版面裡就是一個沒有對應對話的 leaf，id 記在 Store.emptySlots（跟著版面存檔，重開 App 還在）。
 
 extension Store {
@@ -96,7 +96,7 @@ extension MainWindowController {
                 let g = t.group
                 let item = NSMenuItem(title: String(repeating: "　", count: t.depth) + g.name, action: nil, keyEquivalent: "")
                 let sub = NSMenu()
-                let convs = store.conversations(inGroup: g.id).filter { !store.isArchived($0) && $0.terminal != true && $0.draft != true }   // 草稿跟側欄一樣不列
+                let convs = store.conversations(inGroup: g.id).filter { !store.isArchived($0) && $0.terminal != true && $0.draft != true && (Prefs.shared.webFeaturesEnabled || !$0.isBrowser) }   // 草稿跟側欄一樣不列
                 // 這組有哪些資料夾：資料夾預設放這組的＋這組聊天室用到的
                 var pids: [UUID] = store.projects.filter { $0.groupID == g.id }.map(\.id)
                 for c in convs where !pids.contains(c.projectID) { pids.append(c.projectID) }
@@ -124,18 +124,20 @@ extension MainWindowController {
             }
         }
         m.addItem(.separator())
-        let browserItem = NSMenuItem(title: L("瀏覽器"), action: nil, keyEquivalent: "")
-        let browserSub = NSMenu()
-        browserSub.addItem(ActionItem(title: "Gemini") { [weak self] in
-            guard let self, let pid = self.store.selectedProject ?? self.store.projects.first?.id else { return }
-            self.fillEmpty(slot, with: self.store.createBrowser(in: pid, url: GadgetKind.gemini.home).id)
-        })
-        browserSub.addItem(ActionItem(title: "NotebookLM") { [weak self] in
-            guard let self, let pid = self.store.selectedProject ?? self.store.projects.first?.id else { return }
-            self.fillEmpty(slot, with: self.store.createBrowser(in: pid, url: GadgetKind.notebooklm.home).id)
-        })
-        browserItem.submenu = browserSub
-        m.addItem(browserItem)
+        if Prefs.shared.webFeaturesEnabled {
+            let browserItem = NSMenuItem(title: L("瀏覽器"), action: nil, keyEquivalent: "")
+            let browserSub = NSMenu()
+            browserSub.addItem(ActionItem(title: "Gemini") { [weak self] in
+                guard let self, Prefs.shared.webFeaturesEnabled, let pid = self.store.selectedProject ?? self.store.projects.first?.id else { return }
+                self.fillEmpty(slot, with: self.store.createBrowser(in: pid, url: GadgetKind.gemini.home).id)
+            })
+            browserSub.addItem(ActionItem(title: "NotebookLM") { [weak self] in
+                guard let self, Prefs.shared.webFeaturesEnabled, let pid = self.store.selectedProject ?? self.store.projects.first?.id else { return }
+                self.fillEmpty(slot, with: self.store.createBrowser(in: pid, url: GadgetKind.notebooklm.home).id)
+            })
+            browserItem.submenu = browserSub
+            m.addItem(browserItem)
+        }
         m.addItem(ActionItem(title: L("其他資料夾…")) { [weak self] in self?.pickFolderForEmpty(slot, group: nil) })
         m.popUp(positioning: nil, at: NSPoint(x: 0, y: v.bounds.height + 4), in: v)
     }
@@ -163,6 +165,7 @@ extension MainWindowController {
 
     /// 把某段聊天放進空格子（原本擺在別處會搬過來）
     func fillEmpty(_ slot: UUID?, with conv: UUID) {
+        guard Prefs.shared.webFeaturesEnabled || store.conversation(conv)?.isBrowser != true else { return }
         if let slot, store.locate(slot) != nil {
             store.unplace(conv)
             _ = store.replacePane(slot, with: conv)

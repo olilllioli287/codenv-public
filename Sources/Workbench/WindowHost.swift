@@ -273,7 +273,7 @@ private final class Divider: NSView {
     }
 }
 
-/// 掛件格子從右邊彈進來／滑出去（使用者 10/25「叫出pane的動畫…從右邊蹦出來」）。
+/// 掛件格子從右邊彈進來／滑出去。
 /// 動的是「這格露出多少」s（0＝全在右邊外面、1＝在版面上的位置）：外層切口的比例跟著 s 走，原本的格子同時讓出／長回空間；
 /// 掛件格子本身維持最後的寬度、只往左右移（網頁不會跟著一直改寬度）。狀態放這裡，不放在 SplitBox：版面重建也接得上。
 final class PaneSlide {
@@ -460,6 +460,11 @@ final class TabBar: NSView {
     /// 拖著分頁在視窗外面／回到裡面：(位置, 螢幕座標, 現在在外面嗎)；放開時也會再叫一次（外面＝false 表示取消）
     var onOutside: ((Int, NSPoint, Bool) -> Void)?
     var onNew: (() -> Void)?
+    /// 點總指揮方塊（總指揮沒在分頁列上時；在的話走 onSelect(0)）
+    var onChief: (() -> Void)?
+    /// 0＝一般；1＝第 0 個分頁是總指揮 Window（畫成最左邊的紫色方塊、不能關、不能換順序，只能拉出去）；2＝總指揮沒在分頁列上，方塊獨立放最左邊
+    private(set) var chiefMode = 0
+    private var chiefVirtual: TabButton?
     var onToggleSidebar: (() -> Void)?
     var sessionMenu: (() -> NSMenu)?
     /// 按了 Session：開浮動面板（給 Session 按鈕當定位用）
@@ -477,7 +482,7 @@ final class TabBar: NSView {
     private let dragHandle = DragHandle()
     private var splitObserver: Any?
     override var mouseDownCanMoveWindow: Bool { false }
-    // 沒有按鈕、分頁的空白處：按住拖整個視窗、點兩下放大（使用者 10/24：＋ 右邊那一大塊也要能拖）
+    // 沒有按鈕、分頁的空白處：按住拖整個視窗、點兩下放大（＋ 右邊那一大塊也要能拖）
     override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
     override func mouseDown(with e: NSEvent) { DragHandle.moveWindow(e, window) }
 
@@ -492,7 +497,7 @@ final class TabBar: NSView {
         sideButton.target = self
         sideButton.action = #selector(toggleSidebar)
         sideButton.toolTip = L("收起／打開側欄（⌃ ⌘ S）")
-        // 分頁列最左邊的收起側欄按鈕拿掉了（使用者 10/29）：收起／打開側欄只靠 F3（或選單的 ⌃ ⌘ S）；sideButton 只留著排版的位置，不加進畫面
+        // 分頁列最左邊的收起側欄按鈕拿掉了：收起／打開側欄只靠 F3（或選單的 ⌃ ⌘ S）；sideButton 只留著排版的位置，不加進畫面
         dragHandle.toolTip = L("按住拖動視窗，點兩下放大")
         addSubview(dragHandle)
         sessionButton.bezelStyle = .inline
@@ -514,7 +519,7 @@ final class TabBar: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    // MARK: 拖檔案停在分頁上：停 0.8 秒、閃兩下（每下 0.15 秒、中間隔 0.15 秒），第二下閃完切到那個 Window（使用者 10/29），再自己決定放進哪一格
+    // MARK: 拖檔案停在分頁上：停 0.8 秒、閃兩下（每下 0.15 秒、中間隔 0.15 秒），第二下閃完切到那個 Window，再自己決定放進哪一格
 
     private var currentTab = 0
     private var springTab: Int?
@@ -578,7 +583,7 @@ final class TabBar: NSView {
     /// 測試用：每個分頁在螢幕上的位置
     func tabScreenRects() -> [NSRect] { buttons.compactMap { b in b.window.map { $0.convertToScreen(b.convert(b.bounds, to: nil)) } } }
 
-    /// 分頁上不放「做完沒看」的小藍點：只看側欄（點側欄那段對話會跳到它在的分頁；分頁也亮的話，跳過去之後舊分頁亮著會以為標錯，使用者 10/24 要拿掉）
+    /// 分頁上不放「做完沒看」的小藍點：只看側欄（點側欄那段對話會跳到它在的分頁；分頁也亮的話，跳過去之後舊分頁亮著會以為標錯，要拿掉）
     /// 滑鼠按在分頁上（點、拖、拉進畫面）的期間：分頁按鈕不要重建。聊天串流時 store 一直變、render 一直叫 update，
     /// 重建會把手上正在拖的那顆換掉（放開時找不到它：換順序失效、拉進畫面的藍色遮罩收不掉），新按鈕拖曳中也不排版（整排看起來消失）
     fileprivate var held = false
@@ -589,9 +594,9 @@ final class TabBar: NSView {
         f()
     }
 
-    func update(session: String, tabs: [String], current: Int, accent: NSColor) {
+    func update(session: String, tabs: [String], current: Int, accent: NSColor, chiefMode: Int = 0) {
         if held || dragging != nil {
-            deferredUpdate = { [weak self] in self?.update(session: session, tabs: tabs, current: current, accent: accent) }
+            deferredUpdate = { [weak self] in self?.update(session: session, tabs: tabs, current: current, accent: accent, chiefMode: chiefMode) }
             return
         }
         deferredUpdate = nil     // 這次是最新的：之前壓著的舊參數不要再套（不然換完順序又被舊的蓋回去）
@@ -603,10 +608,14 @@ final class TabBar: NSView {
         sessionButton.attributedTitle = NSAttributedString(string: " Session \(session) ", attributes: [
             .font: NSFont.systemFont(ofSize: 12 * UIScale.shared.f, weight: .semibold), .foregroundColor: NSColor.white,
             .backgroundColor: accent.withAlphaComponent(0.85)])
+        self.chiefMode = chiefMode
         buttons.forEach { $0.removeFromSuperview() }
+        chiefVirtual?.removeFromSuperview(); chiefVirtual = nil
+        let num = chiefMode == 2 ? 2 : 1       // 總指揮方塊獨立在外面時，第一個分頁是 ⌘ 2
         buttons = tabs.enumerated().map { i, t in
-            let b = TabButton(index: i, title: t.isEmpty ? "[\(i + 1)]" : "[\(i + 1)] \(t)", selected: i == current, accent: accent)
-            b.toolTip = L("點兩下改名（Ctrl+A ,）")
+            let isChief = chiefMode == 1 && i == 0
+            let b = TabButton(index: i, title: t.isEmpty ? "[\(i + num)]" : "[\(i + num)] \(t)", selected: i == current, accent: accent, chief: isChief)
+            b.toolTip = isChief ? L("總指揮（⌘ 1）") : L("點兩下改名（Ctrl+A ,）")
             b.onClick = { [weak self] in self?.onSelect?(i) }
             b.onDoubleClick = { [weak self] in self?.onRename?(i) }
             b.onClose = { [weak self] in self?.onClose?(i) }
@@ -614,6 +623,13 @@ final class TabBar: NSView {
             b.flashing = i == springTab && springFlash
             addSubview(b)
             return b
+        }
+        if chiefMode == 2 {
+            let v = TabButton(index: -1, title: "", selected: false, accent: accent, chief: true)
+            v.toolTip = L("總指揮（⌘ 1）")
+            v.onClick = { [weak self] in self?.onChief?() }
+            addSubview(v)
+            chiefVirtual = v
         }
         needsLayout = true
     }
@@ -626,19 +642,28 @@ final class TabBar: NSView {
         // 收起側欄的按鈕拿掉了：這裡留一小塊空白，按住可以拖動整個視窗
         dragHandle.frame = NSRect(x: x, y: 0, width: 44, height: bounds.height)
         x += 44
-        let s = sessionButton.intrinsicContentSize
-        sessionButton.frame = NSRect(x: x, y: (bounds.height - s.height) / 2, width: s.width, height: s.height)
-        x += s.width + 10
+        // 總指揮模式：左欄已經標出目前在哪個總指揮（＝Session），頂端不再放「Session ○○」
+        sessionButton.isHidden = Prefs.shared.sidebarMode == "commander"
+        if !sessionButton.isHidden {
+            let s = sessionButton.intrinsicContentSize
+            sessionButton.frame = NSRect(x: x, y: (bounds.height - s.height) / 2, width: s.width, height: s.height)
+            x += s.width + 10
+        }
         // 先留 + 的位置（22 寬＋前後空隙），分頁再平分剩下的；太擠就一起變窄（最窄 56），不要壓到 +
-        let room = bounds.width - x - 36
-        let n = CGFloat(buttons.count)
-        let each = buttons.isEmpty ? 0 : min(220, max(56, (room - 4 * (n - 1)) / n))
+        // 總指揮方塊：整條分頁列最左邊、約分頁高度的正方形（mode 1 它就是第 0 個分頁、mode 2 是獨立的一塊）
+        let sq = bounds.height - 8
+        if let v = chiefVirtual { v.frame = NSRect(x: x, y: 4, width: sq, height: sq); x += sq + 4 }
+        let lead = chiefMode == 1 ? 1 : 0
+        let room = bounds.width - x - 36 - (chiefMode == 1 ? sq + 4 : 0)
+        let n = CGFloat(max(1, buttons.count - lead))
+        let each = buttons.count <= lead ? 0 : min(220, max(56, (room - 4 * (n - 1)) / n))
         slotW = each
         slotX = []
-        for b in buttons {
+        for (i, b) in buttons.enumerated() {
             slotX.append(x)
-            if dragging == nil { b.frame = NSRect(x: x, y: 4, width: each, height: bounds.height - 8) }
-            x += each + 4
+            let w = i < lead ? sq : each
+            if dragging == nil { b.frame = NSRect(x: x, y: 4, width: w, height: bounds.height - 8) }
+            x += w + 4
         }
         if !tearGhost.isHidden {
             let gw = min(220, max(120, each > 0 ? each : 160))
@@ -730,10 +755,12 @@ final class TabBar: NSView {
             b.layer?.shadowOffset = CGSize(width: 0, height: -2)
             b.alphaValue = 0.92
         }
-        let x = max(slotX[0], min(slotX[slotX.count - 1], slotX[from] + dx))
+        let lo = chiefMode == 1 ? 1 : 0       // 總指揮方塊固定在最前面：別的分頁不能排到它前面
+        guard buttons.count > lo else { return }
+        let x = max(slotX[lo], min(slotX[slotX.count - 1], slotX[from] + dx))
         b.frame.origin.x = x
         let step = slotW + 4
-        let to = max(0, min(buttons.count - 1, from + Int(((x - slotX[from]) / step).rounded())))
+        let to = max(lo, min(buttons.count - 1, from + Int(((x - slotX[from]) / step).rounded())))
         guard to != dragTarget else { return }
         dragTarget = to
         NSAnimationContext.runAnimationGroup { ctx in
@@ -795,9 +822,10 @@ final class TabBar: NSView {
     }
 
     @objc private func showSessions() {
-        if let f = onSessions { return f(sessionButton) }
+        if let f = onSessions { return f(sessionButton.isHidden ? self : sessionButton) }
         guard let m = sessionMenu?() else { return }
-        m.popUp(positioning: nil, at: NSPoint(x: 0, y: sessionButton.bounds.height + 2), in: sessionButton)
+        let anchor: NSView = sessionButton.isHidden ? self : sessionButton    // 藏起來時（總指揮模式）從分頁列左邊彈出
+        m.popUp(positioning: nil, at: NSPoint(x: sessionButton.isHidden ? 52 : 0, y: anchor.bounds.height + 2), in: anchor)
     }
     @objc private func newTab() { onNew?() }
     @objc private func toggleSidebar() { onToggleSidebar?() }
@@ -870,14 +898,16 @@ private final class TabButton: NSView {
     private let label: NSTextField = { let l = NoDragLabel(); l.isEditable = false; l.isSelectable = false; l.isBordered = false; l.drawsBackground = false; return l }()
     private let x = NSButton()
     private let selected: Bool
-    private var hover = false { didSet { x.isHidden = !(hover || selected); needsDisplay = true } }
+    private var hover = false { didSet { x.isHidden = chief || !(hover || selected); needsDisplay = true } }
+    /// 總指揮方塊：整塊填滿主題色、沒有名字、沒有 ×
+    let chief: Bool
     /// 拖著檔案停在這個分頁上、等著切過來：整個分頁亮主題色
     var springing = false { didSet { needsDisplay = true } }
     /// 閃亮的那一下（主題色重一點）
     var flashing = false { didSet { needsDisplay = true } }
     private let accent: NSColor
-    init(index: Int, title: String, selected: Bool, accent: NSColor) {
-        self.selected = selected; self.accent = accent
+    init(index: Int, title: String, selected: Bool, accent: NSColor, chief: Bool = false) {
+        self.selected = selected; self.accent = accent; self.chief = chief
         super.init(frame: .zero)
         label.stringValue = title
         label.font = .systemFont(ofSize: 12 * UIScale.shared.f, weight: selected ? .semibold : .regular)
@@ -890,8 +920,9 @@ private final class TabButton: NSView {
         x.target = self
         x.action = #selector(closeTab)
         x.toolTip = L("關掉這個 Window（Ctrl+A &）")
-        x.isHidden = !selected
+        x.isHidden = chief || !selected
         addSubview(x)
+        label.isHidden = chief
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -902,6 +933,13 @@ private final class TabButton: NSView {
         x.frame = NSRect(x: bounds.width - 20, y: (bounds.height - 14) / 2, width: 14, height: 14)
     }
     override func draw(_ dirtyRect: NSRect) {
+        if chief {
+            let p = NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6)
+            accent.withAlphaComponent(springing ? (flashing ? 0.75 : 0.5) : (selected || hover ? 1 : 0.8)).setFill()
+            p.fill()
+            if selected { p.lineWidth = 2; NSColor.white.withAlphaComponent(0.85).setStroke(); NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5).stroke() }
+            return
+        }
         if springing {
             accent.withAlphaComponent(flashing ? 0.75 : 0.18).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
@@ -926,8 +964,8 @@ private final class TabButton: NSView {
         return v === x ? v : (v == nil ? nil : self)
     }
     override func mouseDown(with e: NSEvent) {
-        if e.clickCount == 2 { onDoubleClick?(); return }
-        guard let bar = superview as? TabBar, let w = window else { onClick?(); return }
+        if e.clickCount == 2 && !chief { onDoubleClick?(); return }
+        guard let bar = superview as? TabBar, let w = window, !(chief && bar.index(of: self) == nil) else { onClick?(); return }
         // 放開前沒拖超過 4 點：就是點一下（切到這個 Window）
         // 左右拖＝換順序；往下拖出分頁列＝把這個 Window（只有一格的）拉進目前畫面的左／右／上／下半
         bar.held = true
@@ -946,7 +984,7 @@ private final class TabButton: NSView {
             pullDebug("move \(last) barY=\(bar.convert(last, from: nil).y) below=\(below) pulling=\(pulling)")
             // 一旦拉出去就一直是「拉進畫面」，直到放開（放回分頁列上＝取消）
             if (pulling || below), bar.pull(self, at: last) { pulling = true; continue }
-            bar.drag(self, dx: dx)
+            if !chief { bar.drag(self, dx: dx) }       // 總指揮方塊不能換順序，只能拉出去變獨立視窗
         }
         pullDebug("up \(last) pulling=\(pulling) dragging=\(dragging)")
         // 拖到視窗外面放開：這個 Window 變成獨立視窗（只有聊天格，沒有側欄和用量欄）
@@ -957,7 +995,7 @@ private final class TabButton: NSView {
             return
         }
         if dragging, let i = bar.index(of: self) { bar.onOutside?(i, w.convertPoint(toScreen: last), false) }
-        if pulling { bar.pullEnd(self, at: last) } else if dragging { bar.drop(self) } else { onClick?() }
+        if pulling { bar.pullEnd(self, at: last) } else if dragging { if !chief { bar.drop(self) } } else { onClick?() }
     }
     override func mouseEntered(with e: NSEvent) { hover = true }
     override func mouseExited(with e: NSEvent) { hover = false }
@@ -987,6 +1025,11 @@ final class WindowHost: NSViewController {
     var sessionMenu: (() -> NSMenu)?
     static let barHeight: CGFloat = 36
     private let petView = PetSlotView()
+    var petEmbed: PetEmbedView { petView.embed }
+    var petColumnWidth: CGFloat { petColumn.superview == nil ? 0 : petColumn.frame.width }
+    /// 中間聊天欄在螢幕上的範圍
+    var chatScreenRect: NSRect? { body.window.map { $0.convertToScreen(body.convert(body.bounds, to: nil)) } }
+    private lazy var timersHost = PetTimersHost(rootView: PetTimersView())
     /// 右側欄位：上面放用量（token），最下面是桌寵格子；所有 Pane 都在它左邊
     private let petColumn = PetColumnView()
     private var petColumnProgress: CGFloat?
@@ -1006,6 +1049,31 @@ final class WindowHost: NSViewController {
         return v
     }()
     var onCompact: ((UUID) -> Void)?
+    /// 總指揮模式的右欄（RightPanelView.swift）：取代上面的用量欄；協作看板的暫停動作由 MainWindowController 接
+    var onCollabPause: ((CollabPair) -> Void)?
+    private lazy var rightPanelView: NSHostingView<Scaled<RightPanelView>> = {
+        let v = NSHostingView(rootView: Scaled { RightPanelView(store: self.store, workspace: self.workspace, pause: { [weak self] p in self?.onCollabPause?(p) }) })
+        v.clipsToBounds = true
+        return v
+    }()
+    private var commanderRight: Bool { Prefs.shared.sidebarMode == "commander" }
+    /// 右欄上半：總指揮模式用 RightPanelView，原本的樹模式用用量欄
+    private var topColumnView: NSView { commanderRight ? rightPanelView : usageView }
+    private func attachTopColumn() {
+        let on = topColumnView      // 沒用到的那個不去碰（lazy 不會白建一份）
+        for v in petColumn.subviews where v !== on && v !== petView { v.removeFromSuperview() }
+        if on.superview !== petColumn { petColumn.addSubview(on) }
+    }
+    /// 桌寵空位的高度：總指揮模式可以關掉（右欄分頁列右邊的小腳印）
+    private func petSlotHeight(_ size: NSSize, _ h: CGFloat) -> CGFloat {
+        commanderRight && !RightPanelModel.shared.petSlotOn ? 0 : min(size.height, h)
+    }
+    /// 右欄寬度：樹模式＝桌寵格的寬；總指揮模式至少是右欄自己記的寬度（可拖左緣調整）
+    private func columnRoom(_ size: NSSize) -> CGFloat {
+        // 總指揮的右欄寬度只由左緣分隔線決定；桌寵框的大小設定（把手）不能把右欄撐寬
+        let want = commanderRight ? RightPanelModel.shared.width : size.width
+        return min(want, max(0, view.bounds.width - 300))
+    }
 
     /// 獨立視窗用：只畫這一個 Window 的格子（沒有分頁列、用量欄、桌寵格）；nil＝主視窗那個
     let boundWindow: UUID?
@@ -1034,6 +1102,7 @@ final class WindowHost: NSViewController {
         v.addSubview(tabBar)
         view = v
         tabBar.onSelect = { [weak self] i in self?.store.toggleWindowSelection(at: i) }   // 點分頁＝選取整個 Window，再點同一個＝回原本那格
+        tabBar.onChief = { [weak self] in self?.store.summonChief() }
         tabBar.onClose = { [weak self] i in self?.onCloseWindowRequest?(i) }
         tabBar.onRename = { [weak self] i in self?.onRenameWindowRequest?(i) }
         tabBar.onMove = { [weak self] from, to in
@@ -1044,6 +1113,7 @@ final class WindowHost: NSViewController {
         tabBar.canPull = { [weak self] i in
             guard let self, let si = self.store.sessionIndex, self.store.sessions[si].windows.indices.contains(i) else { return false }
             let w = self.store.sessions[si].windows[i]
+            if self.store.isChiefProtected(si, i) { return false }      // 總指揮 Window 不能拉進別的畫面（只能拉出成獨立視窗）
             return w.id != self.store.currentWindow?.id && w.root?.leaves.count == 1 && w.root.flatMap { $0.leaves.first }.flatMap { self.store.conversation($0) } != nil
         }
         tabBar.onPull = { [weak self] _, p in self?.pullHover(p) }
@@ -1056,8 +1126,25 @@ final class WindowHost: NSViewController {
         store.objectWillChange.receive(on: RunLoop.main).sink { [weak self] _ in
             DispatchQueue.main.async { self?.render() }
         }.store(in: &bag)
+        // 所有視窗（包含獨立視窗）都丟掉瀏覽器的外框快取，再依原樹、原比例換成網頁或占位。
+        observers.append(NotificationCenter.default.addObserver(forName: Prefs.webFeaturesChanged, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            for id in self.frames.keys.filter({ self.store.conversation($0)?.isBrowser == true }) {
+                self.frames.removeValue(forKey: id)?.removeFromSuperview()
+            }
+            self.shownKey = ""
+            self.render()
+        })
         // 桌寵空位：開關、調大小、換螢幕都重排
         petView.onResize = { [weak self] size in PetSlot.setSize(size, on: self?.view.window?.screen) }
+        // 總指揮模式的右欄：左緣可以拖寬度；左欄模式切換時換掉右欄上半
+        petColumn.onResizeWidth = { [weak self] w in
+            guard let self, self.commanderRight else { return }
+            RightPanelModel.shared.width = w
+            self.layoutPetSlot()
+        }
+        petColumn.resizable = { [weak self] in self?.commanderRight == true }
+        Prefs.shared.$sidebarMode.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.layoutPetSlot() }.store(in: &bag)
         observers.append(NotificationCenter.default.addObserver(forName: PetSlot.changed, object: nil, queue: .main) { [weak self] _ in self?.layoutPetSlot() })
         observers.append(NotificationCenter.default.addObserver(forName: .rightPanelToggleWillBegin, object: nil, queue: .main) { [weak self] _ in self?.petColumnTogglePending = true })
         observers.append(NotificationCenter.default.addObserver(forName: .rightPanelToggled, object: nil, queue: .main) { [weak self] _ in self?.animatePetSlotToggle() })
@@ -1124,7 +1211,7 @@ final class WindowHost: NSViewController {
         guard out else { detachPreview.hide(); return }
         guard let si = store.sessionIndex else { return }
         let visible = store.sessions[si].windows.filter { !$0.detached }
-        guard visible.indices.contains(index), visible.count > 1 else { return }    // 主視窗至少留一個：不給預覽（也拉不出去）
+        guard visible.indices.contains(index), visible[index].root != nil else { return }    // 只有一個也能拉出去（主視窗補空 Window）；空的不給預覽
         let w = visible[index]
         let panes = (w.root?.rects() ?? [:]).map { (store.conversation($0.key)?.title ?? "", $0.value) }
         let base = view.window?.frame.size ?? NSSize(width: 1000, height: 700)
@@ -1167,7 +1254,7 @@ final class WindowHost: NSViewController {
         if petColumnTogglePending { return }
         if let animation = petColumnAnimation, let progress = petColumnProgress {
             // F4 動畫進行中視窗內容區變大小（例如剛按 F3 收左欄，系統動畫一路在改寬度）：
-            // 不取消、照新寬度接著滑，不然右欄會瞬間跳到終點（使用者 11/5：「f3再f4會很像跳的」）
+            // 不取消、照新寬度接著滑，不然右欄會瞬間跳到終點
             let w = petColumnRoom()
             petColumnAnimation = PetColumnAnimation(from: animation.from, to: animation.to, start: animation.start, width: w, boundsSize: view.bounds.size)
             layoutPetColumn(progress: progress, width: w)
@@ -1179,8 +1266,8 @@ final class WindowHost: NSViewController {
         let size = PetSlot.size(on: view.window?.screen)
         let b = view.bounds
         let h = b.height - barH
-        // 右邊用量欄至少要這麼寬才放得下字；視窗窄到擠不出來就整欄先不畫（設定不動，寬了會自己回來），不要讓字被切掉（使用者 10/29 用 Rectangle 把視窗縮窄）
-        let room = min(size.width, max(0, b.width - 300))
+        // 右邊用量欄至少要這麼寬才放得下字；視窗窄到擠不出來就整欄先不畫（設定不動，寬了會自己回來），不要讓字被切掉（用 Rectangle 把視窗縮窄）
+        let room = columnRoom(size)
         let show = on && room >= 190
         let colW = show ? room : 0
         for f in frames.values { (f.content as? any ConversationPane)?.petReserve = .zero }
@@ -1189,11 +1276,16 @@ final class WindowHost: NSViewController {
         if show {
             if petColumn.superview !== view { view.addSubview(petColumn) }
             if petView.superview !== petColumn { petColumn.addSubview(petView) }
-            if usageView.superview !== petColumn { petColumn.addSubview(usageView) }
+            attachTopColumn()
             petColumn.frame = NSRect(x: b.width - colW, y: 0, width: colW, height: h)
-            let slotH = min(size.height, h)
+            let slotH = petSlotHeight(size, h)
+            petView.isHidden = slotH == 0
             petView.frame = NSRect(x: 0, y: 0, width: colW, height: slotH)
-            usageView.frame = NSRect(x: 0, y: slotH, width: colW, height: max(0, h - slotH))
+            // 計時器：桌寵空位左半（桌寵在右邊，不去蓋它）
+            if timersHost.superview !== petView { petView.addSubview(timersHost) }
+            PetTimers.shared.start()
+            timersHost.frame = NSRect(x: 0, y: 0, width: floor(colW / 2), height: max(0, slotH - 6 - (slotH >= PetSlotView.termSize + 14 ? PetSlotView.termSize + 6 : 0)))
+            topColumnView.frame = NSRect(x: 0, y: slotH, width: colW, height: max(0, h - slotH))
             petView.needsDisplay = true
             petColumn.needsDisplay = true
         } else {
@@ -1256,8 +1348,7 @@ final class WindowHost: NSViewController {
 
     /// 右欄現在能有多寬（跟 layoutPetSlot 同一條算式）
     private func petColumnRoom() -> CGFloat {
-        let size = PetSlot.size(on: view.window?.screen)
-        return min(size.width, max(0, view.bounds.width - 300))
+        return columnRoom(PetSlot.size(on: view.window?.screen))
     }
 
     private func cancelPetColumnAnimation() {
@@ -1272,7 +1363,7 @@ final class WindowHost: NSViewController {
         let size = PetSlot.size(on: view.window?.screen)
         let b = view.bounds
         let h = b.height - barH
-        let room = min(size.width, max(0, b.width - 300))
+        let room = columnRoom(size)
         let width = animationWidth ?? petColumnAnimation?.width ?? (PetSlot.enabled && room >= 190 ? room : 0)
         let p = min(1, max(0, progress))
         for f in frames.values { (f.content as? any ConversationPane)?.petReserve = .zero }
@@ -1281,11 +1372,12 @@ final class WindowHost: NSViewController {
         guard width > 0 else { return }
         if petColumn.superview !== view { view.addSubview(petColumn) }
         if petView.superview !== petColumn { petColumn.addSubview(petView) }
-        if usageView.superview !== petColumn { petColumn.addSubview(usageView) }
+        attachTopColumn()
         petColumn.frame = NSRect(x: b.width - width * p, y: 0, width: width, height: h)
-        let slotH = min(size.height, h)
+        let slotH = petSlotHeight(size, h)
+        petView.isHidden = slotH == 0
         petView.frame = NSRect(x: 0, y: 0, width: width, height: slotH)
-        usageView.frame = NSRect(x: 0, y: slotH, width: width, height: max(0, h - slotH))
+        topColumnView.frame = NSRect(x: 0, y: slotH, width: width, height: max(0, h - slotH))
         petView.needsDisplay = true
         petColumn.needsDisplay = true
     }
@@ -1321,7 +1413,8 @@ final class WindowHost: NSViewController {
         let windows = (s?.windows ?? []).filter { !$0.detached }      // 拉出去的獨立視窗不在分頁列上
         let wi = store.windowIndex ?? 0
         // 分頁上：取過名字的顯示「[1] 名字」，沒取過只顯示「[1]」
-        tabBar.update(session: s?.name ?? "", tabs: windows.map { $0.renamed ? $0.name : "" }, current: wi, accent: accent)
+        let cm = store.sessionIndex.map { store.chiefTabMode($0) } ?? 0
+        tabBar.update(session: s?.name ?? "", tabs: windows.map { $0.renamed ? $0.name : "" }, current: wi, accent: accent, chiefMode: cm)
 
         guard let w = store.currentWindow else { return }
         // 這次重繪是不是換了 Window 或換了目前那格（上一次畫的記在 lastRendered*）：只有這時、或焦點本來就在某個聊天格裡，才把鍵盤焦點交給目前那格；
@@ -1362,11 +1455,11 @@ final class WindowHost: NSViewController {
         layoutPetSlot()
         let many = (root?.leaves.count ?? 0) > 1
         for (id, f) in frames {
-            f.showsHeader = many
+            f.showsHeader = many && !(f.content is DisabledWebPane)
             f.isFocused = id == w.focused || store.windowSelected     // 選取整個 Window：每一格都加紫框
             f.setAccent(accent)
             f.setTitle(store.conversation(id)?.title ?? "")
-            // 路徑列（PathBar）固定隱藏（使用者 10/29）：位置改看側欄右鍵「關於…」（AboutChat.swift）；path 一直是 nil，版面不留那一條
+            // 路徑列（PathBar）固定隱藏：位置改看側欄右鍵「關於…」（AboutChat.swift）；path 一直是 nil，版面不留那一條
         }
         if let f = w.focused, let frame = frames[f], let pane = frame.content as? any ConversationPane,
            let win = view.window,
@@ -1484,7 +1577,7 @@ final class WindowHost: NSViewController {
         let title = store.conversation(id)?.title ?? ""
         let over = tabBar.containsWindowPoint(p)
         let target = over ? nil : swapTarget(id, at: p)
-        // 使用者 10/29：只按左鍵拖＝放到那格的左、右、上、下；按住 ⌘ 拖＝兩格互換
+        // 只按左鍵拖＝放到那格的左、右、上、下；按住 ⌘ 拖＝兩格互換
         let cmd = Self.isSwapDrag
         let swapWith = cmd ? target : nil
         let placeNear = cmd ? nil : target
@@ -1689,10 +1782,30 @@ extension Store {
 
 /// 右側欄位的底：左邊一條細線跟 Pane 隔開
 final class PetColumnView: NSView {
+    /// 總指揮模式：左緣 5 點可以拖來調右欄寬度
+    var onResizeWidth: ((CGFloat) -> Void)?
+    var resizable: () -> Bool = { false }
+    private let grab: CGFloat = 5
     override func draw(_ dirtyRect: NSRect) {
         NSColor.separatorColor.setFill()
         NSRect(x: 0, y: 0, width: 1, height: bounds.height).fill()
     }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if resizable(), convert(point, from: superview).x < grab, bounds.contains(convert(point, from: superview)) { return self }
+        return super.hitTest(point)
+    }
+    override func resetCursorRects() {
+        if resizable() { addCursorRect(NSRect(x: 0, y: 0, width: grab, height: bounds.height), cursor: .resizeLeftRight) }
+    }
+    /// 只有「左緣 5 點」按下去才算調寬度。以前沒記這件事：桌寵等沒人接手的地方按下去也落到這裡，
+    /// 一拖右欄寬度就跟著滑鼠走（三指拖移桌寵，右欄被擠窄又變得很寬）
+    private var resizing = false
+    override func mouseDragged(with e: NSEvent) {
+        guard resizing, resizable(), let host = superview else { return }
+        onResizeWidth?(host.bounds.width - host.convert(e.locationInWindow, from: nil).x)
+    }
+    override func mouseDown(with e: NSEvent) { resizing = resizable() && convert(e.locationInWindow, from: nil).x < grab }
+    override func mouseUp(with e: NSEvent) { resizing = false }
 }
 
 

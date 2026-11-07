@@ -48,6 +48,67 @@ extension Store {
         conversations.filter { groupOf($0) == g && !$0.isGadget }.sorted(by: orderedBefore)
     }
 
+    /// 聊天室是否在這個首頁總指揮涵蓋的組裡；有效分類沿用 groupOf，子組沿祖先遞迴判斷
+    func belongsToCommander(_ c: Conversation, session: SessionLayout) -> Bool {
+        guard session.area == nil, session.groups != nil, !c.isGadget, let g = groupOf(c) else { return false }
+        return commanderSessionID(forGroup: g) == session.id
+    }
+
+    /// 組屬於哪個總指揮：涵蓋它的組裡「最深」的那個勝出（A 組在 B 組底下，但另一個總指揮涵蓋 A → 歸那一個）。
+    /// 都沒有涵蓋、又不是程式碼學習專區：歸「其他」總指揮兜底，不然左右欄都找不到（阿公 11/7）
+    func commanderSessionID(forGroup g: UUID) -> UUID? {
+        var best: (id: UUID, depth: Int)?
+        for s in sessions where s.area == nil {
+            for r in s.groups ?? [] where isGroup(g, within: r) {
+                let d = groupDepth(r)
+                if best == nil || d > best!.depth { best = (s.id, d) }
+            }
+        }
+        if let best { return best.id }
+        if let lab = groups.first(where: { $0.name == Store.codeLabGroupName && $0.parentID == nil }), isGroup(g, within: lab.id) { return nil }
+        let other = groups.first { $0.name == Store.otherGroupName && $0.parentID == nil }?.id
+        return sessions.first { s in s.area == nil && other != nil && (s.groups ?? []).contains(other!) }?.id
+    }
+
+    private func groupDepth(_ id: UUID) -> Int {
+        var d = 0, cur: UUID? = id, seen = Set<UUID>()
+        while let c = cur, let g = groups.first(where: { $0.id == c }), seen.insert(c).inserted { cur = g.parentID; d += 1 }
+        return d
+    }
+
+    /// 查聊天室所屬的首頁總指揮；若手動設定的範圍重疊，以 Session 清單中第一個為準
+    func commander(of conversation: UUID) -> SessionLayout? {
+        guard let c = self.conversation(conversation), !c.isGadget, let g = groupOf(c), let id = commanderSessionID(forGroup: g) else { return nil }
+        return sessions.first { $0.id == id }
+    }
+
+    /// 涵蓋的聊天室總數包含封存項目，掛件不重複算一間聊天室
+    func conversations(inCommander session: SessionLayout) -> [Conversation] {
+        conversations.filter { belongsToCommander($0, session: session) }.sorted(by: orderedBefore)
+    }
+
+    /// 換總指揮聊天室只改關聯，不打開聊天室、不改 Window
+    func setCommanderChief(_ session: UUID, to chief: UUID) {
+        guard let i = sessions.firstIndex(where: { $0.id == session }),
+              let c = conversation(chief), Store.isChat(c), belongsToCommander(c, session: sessions[i]) else { return }
+        sessions[i].chief = chief
+    }
+
+    /// 右鍵逐一勾選頂層組；空陣列保留「已設定」的意義，不會再觸發遷移
+    func setCommanderGroup(_ session: UUID, group g: UUID, included: Bool) {
+        guard let i = sessions.firstIndex(where: { $0.id == session && $0.area == nil && $0.groups != nil }),
+              groups.contains(where: { $0.id == g && $0.name != Store.codeLabGroupName }) else { return }
+        var roots = sessions[i].groups ?? []
+        roots.removeAll { $0 == g }
+        if included { roots.append(g) }
+        sessions[i].groups = roots
+        // 原本的總指揮聊天室移出涵蓋範圍後，讓使用者重新指定；既有 Window 照舊
+        if let chief = sessions[i].chief,
+           conversation(chief).map({ belongsToCommander($0, session: sessions[i]) }) != true {
+            sessions[i].chief = nil
+        }
+    }
+
     func move(_ conv: UUID, toGroup g: UUID) {
         guard let i = conversations.firstIndex(where: { $0.id == conv }) else { return }
         // 跟資料夾預設的一樣就不用特別記
@@ -56,8 +117,8 @@ extension Store {
         if let b = conversations[i].bundle, bundleMembers(b).contains(where: { $0.id != conv && groupOf($0) != g }) { setBundle(conv, nil) }
     }
 
-    /// 組對應的資料夾：預設放這組、又在 claude 選單清單（~/.claude/envs）裡的資料夾 → 跟組同名的資料夾（「文庫」組＝專案根資料夾底下的「文庫」）
-    /// → 其他預設放這組的資料夾 → 上一層組的資料夾裡跟組同名的子資料夾（文庫 › 小生＝文庫資料夾底下的「小生」）→ 上一層組的資料夾
+    /// 組對應的資料夾：預設放這組、又在 claude 選單清單（~/.claude/envs）裡的資料夾 → 跟組同名的資料夾（「甲」組＝專案根資料夾底下的「甲」）
+    /// → 其他預設放這組的資料夾 → 上一層組的資料夾裡跟組同名的子資料夾（甲 › 乙＝甲資料夾底下的「乙」）→ 上一層組的資料夾
     func folder(ofGroup g: UUID, seen: Set<UUID> = []) -> String? {
         guard let x = group(g), !seen.contains(g) else { return nil }
         let defaults = projects.filter { $0.groupID == g }
@@ -124,7 +185,7 @@ extension Store {
         return false
     }
 
-    /// 「學業 › 計概」：選單裡顯示完整路徑
+    /// 「甲 › 乙」：選單裡顯示完整路徑
     func groupPath(_ g: UUID) -> String {
         var names: [String] = []
         var cur: UUID? = g

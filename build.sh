@@ -34,6 +34,11 @@ rsync -a Resources/codelab "$APP/Contents/Resources/"
 # 程式碼學習專區的 compat（Windows 寫的程式在 Mac 上也能跑；CodeRunner.swift 用）
 rm -rf "$APP/Contents/Resources/compat"
 rsync -a Resources/compat "$APP/Contents/Resources/"
+rm -rf "$APP/Contents/Resources/pet"
+[ -d Resources/pet ] && rsync -a Resources/pet "$APP/Contents/Resources/"   # 公版沒有角色圖（桌寵框右半就不畫）
+# 命令列工具（聊天室的 Claude 靠 PATH 找到這份；~/.local/bin 有就用那邊的，見 CLITools.swift）
+rm -rf "$APP/Contents/Resources/bin"; mkdir -p "$APP/Contents/Resources/bin"
+for t in codenv-todo codenv-browser memory-check; do cp scripts/$t "$APP/Contents/Resources/bin/$t"; chmod +x "$APP/Contents/Resources/bin/$t"; done
 rm -rf "$APP/Contents/Resources/i18n"
 rsync -a Resources/i18n "$APP/Contents/Resources/"   # 英文介面的對照表（I18n.swift 用）
 rm -rf "$APP/Contents/Resources/icons"

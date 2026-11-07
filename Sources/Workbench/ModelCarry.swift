@@ -28,7 +28,7 @@ enum ModelCarry {
             guard let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                   let type = o["type"] as? String, type == "user" || type == "assistant",
                   o["isMeta"] as? Bool != true, o["isReplay"] as? Bool != true,
-                  o["isCompactSummary"] as? Bool != true,   // 自動壓縮的摘要不是使用者說的話（前面的原文都還在紀錄裡）
+                  o["isCompactSummary"] as? Bool != true,   // 自動壓縮的摘要不是的話（前面的原文都還在紀錄裡）
                   let msg = o["message"] as? [String: Any] else { continue }
             var parts: [String] = []
             if let s = msg["content"] as? String { parts = [s] }

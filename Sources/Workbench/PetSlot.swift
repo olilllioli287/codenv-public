@@ -2,7 +2,7 @@ import AppKit
 
 // 桌寵的位置：在畫面右下角留一塊空位（裡面沒有任何字），使用者自己把打字桌寵擺進去。
 // 跟 tmux 的 pet-slot（Ctrl+A b）同一個意思，但這裡是真的讓出空間：那一格的輸入框變窄、對話內容整塊往上讓，字不會被桌寵蓋住。
-// 不會去動桌寵本身（使用者：「不要動我的桌寵，我會調」）。大小分筆電螢幕／外接螢幕各記一組。
+// 不會去動桌寵本身。大小分筆電螢幕／外接螢幕各記一組。
 
 enum PetSlot {
     static let changed = Notification.Name("AIWorkbenchPetSlotChanged")
@@ -51,9 +51,34 @@ enum PetSlot {
 /// 畫在空位上的淡淡虛線框；左上角那個小把手可以拖來調大小
 final class PetSlotView: NSView {
     var onResize: ((NSSize) -> Void)?
+    /// 嵌在右半的桌寵本體（左半是計時器）
+    let embed = PetEmbedView()
+    /// 浮動終端機按鈕：左上角（計時器、進度往下排）
+    let termButton = FloatTermButton()
+    static let termSize: CGFloat = 34
+    private var observer: NSObjectProtocol?
     private var dragStart: (NSPoint, NSSize)?
     private let grip: CGFloat = 16
     override var isFlipped: Bool { false }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        addSubview(embed)
+        addSubview(termButton)
+        observer = NotificationCenter.default.addObserver(forName: PetEmbedPrefs.changed, object: nil, queue: .main) { [weak self] _ in self?.needsLayout = true }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    override func layout() {
+        super.layout()
+        embed.isHidden = !PetEmbedPrefs.enabled || !PetSprites.available
+        let half = floor(bounds.width / 2)
+        let fits = bounds.height >= Self.termSize + 14
+        termButton.isHidden = !fits
+        termButton.frame = NSRect(x: 26, y: bounds.height - 6 - Self.termSize, width: Self.termSize, height: Self.termSize)
+        embed.frame = NSRect(x: half, y: 0, width: bounds.width - half, height: max(0, bounds.height - 6))
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         // 欄位左邊已經有一條線；這裡只畫格子上緣那條，從左到右
@@ -64,23 +89,17 @@ final class PetSlotView: NSView {
         p.lineWidth = 1
         NSColor.separatorColor.setStroke()
         p.stroke()
-        // 左上角的把手：兩條小斜線（拖來調大小）
-        NSColor.secondaryLabelColor.withAlphaComponent(0.5).setStroke()
-        for i in 0..<2 {
-            let o = CGFloat(i) * 4 + 8
-            let l = NSBezierPath()
-            l.move(to: NSPoint(x: 3 + o, y: top - 3))
-            l.line(to: NSPoint(x: 3, y: top - 3 - o))
-            l.lineWidth = 1
-            l.stroke()
-        }
+        // 左上角調整大小的把手不再畫斜線：那一角照樣可以拖、游標會變
     }
 
     private var gripRect: NSRect { NSRect(x: 0, y: bounds.height - grip - 6, width: grip + 6, height: grip + 6) }
 
     // 只有把手吃滑鼠；其他地方讓給底下（其實底下沒東西，桌寵本身在自己的視窗）
     override func hitTest(_ point: NSPoint) -> NSView? {
-        gripRect.contains(convert(point, from: superview)) ? self : nil
+        let p = convert(point, from: superview)
+        if gripRect.contains(p) { return self }
+        for v in subviews { if let h = v.hitTest(point) { return h } }   // 計時器列（滑過去顯示完整名稱）
+        return nil
     }
     override func resetCursorRects() { addCursorRect(gripRect, cursor: .crosshair) }
     override func mouseDown(with e: NSEvent) { dragStart = (NSEvent.mouseLocation, bounds.size) }

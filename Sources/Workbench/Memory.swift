@@ -19,6 +19,10 @@ final class MemoryMonitor: ObservableObject {
     @Published private(set) var total: UInt64 = 0
     @Published private(set) var rows: [Row] = []
     @Published private(set) var claudeCount = 0
+    @Published private(set) var claudeBytes: UInt64 = 0      // 所有 Claude 程序（含底下子程序）加起來，左下角一行用
+    /// 聊天室 id → 它的程序樹用的記憶體（右欄清單用）。只算 Claude／終端機的子程序樹，網頁程序不分攤
+    @Published private(set) var perConversation: [UUID: UInt64] = [:]
+    var idLabeler: () -> [pid_t: UUID] = { [:] }
 
     /// 程序 id → 名字（聊天室標題）。MainWindowController 設定
     var labeler: () -> [pid_t: String] = { [:] }
@@ -32,17 +36,21 @@ final class MemoryMonitor: ObservableObject {
     func refresh() {
         let me = getpid()
         let labels = labeler()
+        let ids = idLabeler()
+        var per: [UUID: UInt64] = [:]
         var out: [Row] = []
         let mine = Self.footprint(me)
         out.append(Row(id: "self", label: L("codenv 本身"), bytes: mine, count: 1))
         var claude = 0
+        var claudeSum: UInt64 = 0
         var childSet = Set<pid_t>([me])
         for c in Self.children(of: me) {
             let tree = [c] + Self.descendants(of: c)
             tree.forEach { childSet.insert($0) }
             let bytes = tree.reduce(UInt64(0)) { $0 + Self.footprint($1) }
             let name = Self.name(c)
-            if name.lowercased().contains("claude") { claude += 1 }
+            if name.lowercased().contains("claude") { claude += 1; claudeSum += bytes }
+            if let cid = ids[c] { per[cid, default: 0] += bytes }
             out.append(Row(id: "p\(c)", label: labels[c] ?? name, bytes: bytes, count: tree.count))
         }
         // 聊天畫面、程式碼區的網頁程序：系統代開的（不是子程序），但「負責的程序」是 codenv
@@ -56,6 +64,12 @@ final class MemoryMonitor: ObservableObject {
         rows = [head] + rest
         total = out.reduce(0) { $0 + $1.bytes }
         claudeCount = claude
+        claudeBytes = claudeSum
+        // 測試用（只在 --state-dir 的測試實例）：CODENV_MEM_FAKE_CLAUDE=個數，左下角第二行才看得到
+        if CommandLine.arguments.contains("--state-dir"), let n = Int(ProcessInfo.processInfo.environment["CODENV_MEM_FAKE_CLAUDE"] ?? ""), n > 0 {
+            claudeCount = n; claudeBytes = 2_800_000_000
+        }
+        if per != perConversation { perConversation = per }
     }
 
     // MARK: 查程序
@@ -148,5 +162,32 @@ struct MemoryBlock: View {
         if others > m.claudeCount { parts.append(L("\(others - m.claudeCount) 個其他程序")) }
         if m.rows.contains(where: { $0.id == "web" }) { parts.append(L("畫面")) }
         return parts.joined(separator: "＋")
+    }
+}
+
+/// 左下角「記憶體」點開的明細（popover）：總數＋每個程序一列
+struct MemoryDetailList: View {
+    @Environment(\.uiScale) private var s
+    @ObservedObject var m = MemoryMonitor.shared
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(L("記憶體")).font(.system(size: 12 * s, weight: .semibold))
+                Spacer()
+                Text(MemoryMonitor.format(m.total)).font(.system(size: 12 * s, weight: .semibold)).monospacedDigit()
+            }
+            Divider()
+            ForEach(m.rows) { r in
+                HStack(alignment: .firstTextBaseline) {
+                    Text(r.label).font(.system(size: 11.5 * s)).lineLimit(1).truncationMode(.tail)
+                    if r.count > 1 { Text("×\(r.count)").font(.system(size: 10 * s)).foregroundStyle(.tertiary) }
+                    Spacer(minLength: 12)
+                    Text(MemoryMonitor.format(r.bytes)).font(.system(size: 11.5 * s)).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 260 * s)
+        .onAppear { m.refresh() }
     }
 }

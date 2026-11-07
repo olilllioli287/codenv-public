@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""memory-check：記憶容量的唯讀檢查（Hermes 研究報告 #1）。
+
+只讀 ~/.claude/projects/*/memory/ 下的 MEMORY.md（索引）與各記憶檔，超過上限就列出「哪些該整併／歸檔」的建議。
+絕不修改、搬移、刪除任何記憶檔；只印報告。
+
+上限（可用參數改）：
+  索引 MEMORY.md   12 KB、150 行。Claude Code 每次開工把整份索引塞進 context，並在 200 行 / 25 KB 截斷；
+                   12 KB 約 4000 個中文字，留一點餘裕給還會長的部分。
+  單一記憶檔       8 KB。一個檔案該只放一件事；中文一字 3 位元組，8 KB 約 2700 字。
+                   超過的檔案幾乎都已經變成「流水帳」（往後加的逐版紀錄），該把舊的移到 archive/。
+                   （原建議 6 KB：實測 14 個檔超過、8 KB 是 11 個，差的都是 6～8 KB 的正常長度檔，改 8 KB 減少誤報。）
+
+用法：
+  memory-check                 印出報告（沒超過也印一行摘要）
+  memory-check --quiet-ok      沒超過就什麼都不印（給 codenv 每日呼叫用）
+  memory-check --json          輸出 JSON（codenv 讀這個）
+  memory-check --root <資料夾>  換掉預設的 ~/.claude/projects（測試用，請指向複製出來的資料夾）
+  memory-check --index-kb N --index-lines N --file-kb N   換上限
+結束碼：0＝沒超過、1＝有超過、2＝參數或讀取錯誤。
+"""
+import argparse, json, os, re, sys, time
+
+def kb(n):
+    return "%.1f KB" % (n / 1024)
+
+def read_text(p):
+    try:
+        with open(p, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+def frontmatter(text):
+    """很簡單的 frontmatter 讀法：只取 review_by／name，不求完整 YAML。"""
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+    out = {}
+    if m:
+        for line in m.group(1).splitlines():
+            mm = re.match(r"^\s*(name|review_by|description):\s*(.+?)\s*$", line)
+            if mm:
+                out[mm.group(1)] = mm.group(2)
+    return out
+
+def check_folder(folder, args, today):
+    """檢查一個 memory/ 資料夾；回傳 dict（沒有 MEMORY.md 也沒有 .md 檔就回 None）。"""
+    index_path = os.path.join(folder, "MEMORY.md")
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.endswith(".md") and os.path.isfile(os.path.join(folder, n)))
+    except OSError:
+        return None
+    if not names:
+        return None
+    res = {"folder": folder, "index": None, "oversized": [], "overdue": [], "broken": [], "orphans": []}
+    index_text = read_text(index_path) if "MEMORY.md" in names else None
+    linked = set()
+    if index_text is not None:
+        size = len(index_text.encode("utf-8"))
+        lines = index_text.count("\n") + (0 if index_text.endswith("\n") or not index_text else 1)
+        entries = []
+        for i, line in enumerate(index_text.splitlines(), 1):
+            m = re.search(r"\]\(([^)]+\.md)\)", line)
+            if m:
+                linked.add(m.group(1))
+                entries.append({"line": i, "file": m.group(1), "bytes": len(line.encode("utf-8"))})
+        over = size > args.index_kb * 1024 or lines > args.index_lines
+        res["index"] = {"bytes": size, "lines": lines, "over": over,
+                        "limitBytes": args.index_kb * 1024, "limitLines": args.index_lines,
+                        "longest": sorted(entries, key=lambda e: -e["bytes"])[:5]}
+    for n in names:
+        if n == "MEMORY.md":
+            continue
+        p = os.path.join(folder, n)
+        text = read_text(p)
+        if text is None:
+            continue
+        size = len(text.encode("utf-8"))
+        if size > args.file_kb * 1024:
+            body_lines = [l for l in text.splitlines() if l.strip()]
+            bullets = sum(1 for l in body_lines if l.lstrip().startswith(("- ", "* ")))
+            res["oversized"].append({"file": n, "bytes": size, "lines": len(body_lines), "bullets": bullets,
+                                     "limitBytes": args.file_kb * 1024,
+                                     "inIndex": n in linked})
+        fm = frontmatter(text)
+        rb = fm.get("review_by", "")
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", rb) and rb < today:
+            res["overdue"].append({"file": n, "reviewBy": rb})
+    if index_text is not None:
+        existing = set(names)
+        res["broken"] = sorted(f for f in linked if "/" not in f and f not in existing)
+        res["orphans"] = sorted(n for n in names if n != "MEMORY.md" and n not in linked)
+    res["oversized"].sort(key=lambda x: -x["bytes"])
+    res["over"] = bool(res["oversized"]) or bool(res["index"] and res["index"]["over"])
+    return res
+
+def advice_for_file(o):
+    if o["bullets"] >= 8:
+        keep = max(5, o["bullets"] // 3)
+        return "約 %d 個條列項，建議只留最近／仍有效的 %d 項在這裡，較舊的移到 archive/%s" % (
+            o["bullets"], keep, os.path.splitext(o["file"])[0] + "-歸檔.md")
+    return "沒有明顯的條列結構；看是否能拆成兩個主題檔，或把已完成的細節歸檔到 archive/"
+
+def render(results, args):
+    out = []
+    for r in results:
+        if not r["over"] and not args.verbose:
+            continue
+        out.append("【%s】" % r["folder"])
+        idx = r["index"]
+        if idx:
+            flag = "超過" if idx["over"] else "正常"
+            out.append("  索引 MEMORY.md：%s、%d 行（上限 %s、%d 行）→ %s" % (
+                kb(idx["bytes"]), idx["lines"], kb(idx["limitBytes"]), idx["limitLines"], flag))
+            if idx["over"]:
+                out.append("    建議：索引一行只留「連結＋一句鉤子」；最長的幾行可先縮短或合併：")
+                for e in idx["longest"]:
+                    out.append("      第 %d 行（%d 位元組）→ %s" % (e["line"], e["bytes"], e["file"]))
+        for o in r["oversized"]:
+            out.append("  記憶檔 %s：%s（上限 %s，%d 行）" % (o["file"], kb(o["bytes"]), kb(o["limitBytes"]), o["lines"]))
+            out.append("    建議：" + advice_for_file(o))
+        if r["overdue"]:
+            out.append("  review_by 已過期，可考慮歸檔或更新：" + "、".join("%s（%s）" % (x["file"], x["reviewBy"]) for x in r["overdue"][:10])
+                       + ("…共 %d 個" % len(r["overdue"]) if len(r["overdue"]) > 10 else ""))
+        if r["broken"]:
+            out.append("  索引指向不存在的檔：" + "、".join(r["broken"]))
+        if r["orphans"] and r["over"]:
+            out.append("  不在索引裡的記憶檔（可能是舊的、或漏登）：" + "、".join(r["orphans"][:10])
+                       + ("…共 %d 個" % len(r["orphans"]) if len(r["orphans"]) > 10 else ""))
+    return "\n".join(out)
+
+def main():
+    ap = argparse.ArgumentParser(description="記憶容量唯讀檢查（只提示，不改任何檔）")
+    ap.add_argument("--root", default=os.path.expanduser("~/.claude/projects"))
+    ap.add_argument("--index-kb", type=float, default=12)
+    ap.add_argument("--index-lines", type=int, default=150)
+    ap.add_argument("--file-kb", type=float, default=8)
+    ap.add_argument("--quiet-ok", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--verbose", action="store_true", help="沒超過的資料夾也列出")
+    args = ap.parse_args()
+    if not os.path.isdir(args.root):
+        print("找不到資料夾：%s" % args.root, file=sys.stderr)
+        return 2
+    today = time.strftime("%Y-%m-%d")
+    results = []
+    for proj in sorted(os.listdir(args.root)):
+        folder = os.path.join(args.root, proj, "memory")
+        if os.path.isdir(folder):
+            r = check_folder(folder, args, today)
+            if r:
+                results.append(r)
+    over = [r for r in results if r["over"]]
+    if args.json:
+        print(json.dumps({"over": bool(over), "checked": len(results), "results": results if args.verbose else over},
+                         ensure_ascii=False, indent=1))
+        return 1 if over else 0
+    if not over:
+        if not args.quiet_ok:
+            print("記憶容量正常：檢查了 %d 個記憶資料夾，沒有超過上限。" % len(results))
+        return 0
+    print("記憶容量超過上限（%d／%d 個資料夾）。只是提示，沒有改任何檔：" % (len(over), len(results)))
+    print(render(results, args))
+    return 1
+
+if __name__ == "__main__":
+    sys.exit(main())

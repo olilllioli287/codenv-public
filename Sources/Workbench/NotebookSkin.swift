@@ -6,7 +6,7 @@ import WebKit
 // 跟 Gemini 不一樣的地方：NotebookLM 的顏色全部走設計變數（--nb-sys-color--*、--gm3-sys-color-*，2026/10 從公開的首頁 HTML 看到的），
 // 所以主要做法是把這些變數換成 codenv 主題色，不靠會變的元素名稱或 class；首頁和筆記本內頁用同一組變數，一起換。
 // 網址主機：notebooklm.google.com 會轉到 notebook.google.com，兩個都收。
-// 變數名稱只有看過公開首頁（沒登入），登入後的內頁（來源欄、聊天、工作室）用到哪些變數沒有驗證；有沒換到的就照使用者說的熱修。
+// 變數名稱只有看過公開首頁（沒登入），登入後的內頁（來源欄、聊天、工作室）用到哪些變數沒有驗證；有沒換到的就照需求熱修。
 
 enum NotebookSkin {
     static var on: Bool { appDefaults.object(forKey: "notebookSkin") as? Bool ?? false }

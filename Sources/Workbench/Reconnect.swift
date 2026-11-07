@@ -8,7 +8,15 @@ extension MainWindowController {
     func reconnectPlaced() {
         guard Prefs.shared.reconnectOnLaunch else { return }
         var ids: [UUID] = []
-        for s in store.sessions { for w in s.windows { for id in w.root?.leaves ?? [] where !ids.contains(id) { ids.append(id) } } }
+        // 總指揮模式：只預熱目前 Session 的目前 Window＋獨立視窗，其他 Session 的 Window 等切過去才開（九個總指揮常駐會吃掉數 GB）
+        let commander = Prefs.shared.sidebarMode == "commander"
+        let cur = store.currentSessionLayout
+        for s in store.sessions {
+            for w in s.windows {
+                if commander, !(w.detached || (s.id == cur?.id && w.id == (s.current ?? s.windows.first { !$0.detached }?.id))) { continue }
+                for id in w.root?.leaves ?? [] where !ids.contains(id) { ids.append(id) }
+            }
+        }
         let convs = ids.compactMap { store.conversation($0) }.filter { $0.terminal != true && !$0.isBrowser && $0.draft != true && !store.isArchived($0) }
         // 一格隔一秒，不要同時開一堆 claude
         for (i, c) in convs.enumerated() {
@@ -25,10 +33,19 @@ extension MainWindowController {
 extension MainWindowController {
     /// codenv-todo wake <名字>：把那段聊天室的 claude 開起來（不送訊息），等到登錄檔（sessions/<pid>.json）出現、名字對了才回成功；最多等 20 秒。
     /// 不在版面上的也開，但不擺進版面（Workspace.woken 讓它不被 releaseUnplaced 收掉）；終端機、瀏覽器、草稿、封存的不開
-    func wake(name raw: String, done: @escaping ([String: Any]) -> Void) {
+    func wake(name raw: String, caller: String? = nil, done: @escaping ([String: Any]) -> Void) {
         let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return done(["ok": false, "error": "要寫聊天室的名字（側欄上的名字）"]) }
-        let hits = store.conversations.filter { $0.title == name && !$0.isGadget }
+        var hits = store.conversations.filter { $0.title == name && !$0.isGadget }
+        // 同名的有封存的（舊的交接過、改過名又撞名）：只看沒封存的；剩一段就是它（使用者的「discord」有兩段，11/7）
+        if hits.count > 1 { let live = hits.filter { !store.isArchived($0) }; if !live.isEmpty { hits = live } }
+        // 還是同名：優先叫跟呼叫者同一個總指揮的那段（A 總指揮叫「x」＝A 底下那段，不是 B 底下那段）
+        if hits.count > 1, let cv = caller?.lowercased(), !cv.isEmpty,
+           let me = store.conversations.first(where: { $0.id.uuidString.lowercased().hasPrefix(cv) }),
+           let mine = store.commander(of: me.id)?.id {
+            let same = hits.filter { store.commander(of: $0.id)?.id == mine }
+            if same.count == 1 { hits = same }
+        }
         guard !hits.isEmpty else { return done(["ok": false, "error": "找不到叫「\(name)」的聊天室（名字要跟側欄上一樣）"]) }
         guard hits.count == 1, let c = hits.first else {
             let ids = hits.map { String($0.id.uuidString.prefix(8)).lowercased() }.joined(separator: "、")
@@ -110,7 +127,7 @@ extension MainWindowController {
         let m = CollabBoardModel.shared
         m.tab = "goals"
         if m.collapsed.contains(g.id) { m.toggleCollapsed(g.id) }
-        m.open = true
+        openCollabBoard()      // 總指揮模式：打開右欄並選看板
         if activate {
             window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)

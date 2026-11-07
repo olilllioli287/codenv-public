@@ -1,12 +1,12 @@
 import AppKit
 import WebKit
 
-// Gemini 網頁換皮（使用者 10/29：「Gemini 換皮」「這個就熱修，我有問題或網友有這問題就熱修」）：
+// Gemini 網頁換皮
 // 只改外觀（背景、字型、顏色、使用者訊息、Gemini 回答、輸入框、模型選單），不動 Gemini 本身的功能。
 // 做法跟隱藏歷史列表一樣：WKUserScript 注入 CSS，只在 gemini.google.com 生效（NotebookLM 不受影響）；設定頁有開關，預設關。
 // 所有規則集中在下面的 blocks：Google 改版要熱修時只改這一處。每個區塊各自一個 <style>，選擇器對不上只會讓那一塊不生效；
 // 選擇器盡量用 Gemini 的自訂元素名稱（user-query、model-response、rich-textarea…），不用會變的 class 雜湊。
-// 這些選擇器都沒有在真的 Gemini 頁面驗證過（不能用使用者的帳號），只在本機假頁測過；有對不上的照使用者說的熱修。
+// 這些選擇器都沒有在真的 Gemini 頁面驗證過（不能用使用者的帳號），只在本機假頁測過；有對不上的照需求熱修。
 
 enum GeminiSkin {
     static var on: Bool { appDefaults.object(forKey: "geminiSkin") as? Bool ?? false }

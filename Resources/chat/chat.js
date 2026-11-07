@@ -776,7 +776,7 @@
       this.start = Date.now();
       this.final = false;
       this.head.addEventListener('click', () => { this.userToggled = true; this.toggle(); });
-      // 還在想的時候展開（字邊來邊顯示），想完自動收起（使用者 10/23 要的）
+      // 還在想的時候展開（字邊來邊顯示），想完自動收起
       if (live) { this.autoOpened = true; this.body = this.el.appendChild(el('div', 'think-b')); this.el.classList.add('open'); }
       this.refresh();
     }
@@ -1050,7 +1050,7 @@
       if (this.kind === 'todo' || this.kind === 'plan') this.open = true;
       this.setState('running');
       this.refreshHead();
-      // 還沒跑完的展開（內容邊來邊顯示），跑完自動收起；舊對話載入時不展開（使用者 10/23 要的）
+      // 還沒跑完的展開（內容邊來邊顯示），跑完自動收起；舊對話載入時不展開
       if (!S.historyMode && !this.open) {
         this.autoOpened = true;
         this.open = true;
@@ -2169,7 +2169,7 @@
     for (const [u, t] of queued) { takeQueued(t); unconfirmed.set(u, t); }
     queued.clear();
   }
-  // 使用者 10/24：排隊的訊息還沒被讀，程序就結束了 → 原本當成已送出、刪不掉；改成標「沒送到」＋刪除
+  // 排隊的訊息還沒被讀，程序就結束了 → 原本當成已送出、刪不掉；改成標「沒送到」＋刪除
   function markLost(t) {
     t.classList.add('lost');
     const n = t.appendChild(el('div', 'queued-note'));

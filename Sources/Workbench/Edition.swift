@@ -26,6 +26,8 @@ enum Edition {
     static var isPublic: Bool { string("CodenvEdition") == "public" }
     static var bundleID: String { string("CFBundleIdentifier") ?? "com.local.aiworkbench" }
     static var version: String { string("CFBundleShortVersionString") ?? "" }
+    /// 一次性遷移建學習資料夾的位置（私人版指到專案資料夾底下；沒有就放家目錄底下的「語言區」）
+    static var languageRoot: String? { string("CodenvLanguageRoot") }
     static var updateRepo: String? { string("CodenvUpdateRepo") }
     static var sourceDir: String? { string("CodenvSourceDir") }
     static var feedbackEmail: String? { string("CodenvFeedbackEmail") }

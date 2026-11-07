@@ -25,6 +25,7 @@ extension Store {
         if c.manualArchive == true { return true }               // 自己按了封存
         if status[c.id] == .working || status[c.id] == .waiting { return false } // 正在跑
         if locate(c.id) != nil { return false }                  // 擺在畫面上
+        if sessions.contains(where: { $0.chief == c.id }) { return false }   // 總指揮聊天室不自動封存（阿公 11/7）
         return Date().timeIntervalSince(lastTouched(c)) > Store.archiveAfter
     }
 
@@ -75,7 +76,8 @@ extension Store {
         let prev = list.last { ($0.order ?? 0) < to && $0.id != id }?.order ?? (to - 1)
         conversations[i].order = (prev + to) / 2
         renumberIfTight()
-        setBundle(id, t.bundle)   // 拖到框裡的某段旁邊＝加入那個框；拖到框外＝離開
+        // 掛件框藏起來時只改順序，不因為看不見的框而加入／離開，免得連帶清掉掛件。
+        if Prefs.shared.webFeaturesEnabled { setBundle(id, t.bundle) }
     }
 
     /// 拖到另一段對話的下半：排到它後面
@@ -88,7 +90,7 @@ extension Store {
         let next = list.first { ($0.order ?? 0) > to && $0.id != id }?.order ?? (to + 1)
         conversations[i].order = (to + next) / 2
         renumberIfTight()
-        setBundle(id, t.bundle)
+        if Prefs.shared.webFeaturesEnabled { setBundle(id, t.bundle) }
     }
 
     /// 側欄上跟它排在同一串的：有分組＝同一組（不分資料夾）；沒分組＝同一個資料夾。封存的另外一串

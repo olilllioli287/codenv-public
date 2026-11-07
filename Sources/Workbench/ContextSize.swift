@@ -25,11 +25,12 @@ final class ContextMonitor: ObservableObject {
     }
 
     /// 從紀錄檔讀（在背景、只看尾巴 3 MB）
-    func load(_ c: Conversation, path: String) {
-        guard !loading.contains(c.id) else { return }
-        loading.insert(c.id)
-        let url = Self.transcript(c, path: path)
-        let id = c.id
+    func load(_ c: Conversation, path: String) { load(id: c.id, url: Self.transcript(c, path: path)) }
+
+    /// 同上，直接給紀錄檔（聊天室輸入框下面那行用：ChatPane 手上有 session.transcriptURL）
+    func load(id: UUID, url: URL) {
+        guard !loading.contains(id) else { return }
+        loading.insert(id)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var found: Int?
             if let h = try? FileHandle(forReadingFrom: url) {
@@ -66,7 +67,7 @@ final class ContextMonitor: ObservableObject {
     }
 
     static func text(_ n: Int) -> String { n >= 1000 ? "\(n / 1000)K" : "\(n)" }
-    /// 不上色：使用者 10/26「不要紅字標示」（原本 60 萬以上是紅的）；很長的那列下面照樣有說明和「壓縮」
+    /// 不上色：（原本 60 萬以上是紅的）；很長的那列下面照樣有說明和「壓縮」
     static func color(_ n: Int) -> Color { .secondary }
 }
 
@@ -108,7 +109,7 @@ struct ContextBlock: View {
                     .foregroundStyle(n.map(ContextMonitor.color) ?? .secondary)
             }
             .help(c?.title ?? "")
-            // 使用者 10/24：這格是哪個模型在跑
+            // 這格是哪個模型在跑
             Text(store.displayModel(id))
                 .font(.system(size: 10.5 * s)).foregroundStyle(.tertiary).lineLimit(1).padding(.leading, 18 * s)
             if let n, n >= 600_000 {

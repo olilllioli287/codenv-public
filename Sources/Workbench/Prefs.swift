@@ -6,6 +6,7 @@ final class Prefs: ObservableObject {
     static let shared = Prefs()
     private let d = appDefaults
 
+    /// 首頁側欄：commander＝總指揮 Session 清單、tree＝原本的分類樹
     /// 新對話的預設模型（nil＝跟 Claude 的設定）
     @Published var defaultModel: String? { didSet { d.set(defaultModel, forKey: "defaultModel") } }
     /// 新對話的預設思考強度（nil＝跟 Claude 的設定）
@@ -25,6 +26,18 @@ final class Prefs: ObservableObject {
     @Published var cloudCompactTokens: Int { didSet { d.set(cloudCompactTokens, forKey: "cloudCompactTokens") } }
     /// 本機模型自動壓縮的門檻，token：超過就先請 Claude 把前面整理成摘要（LocalCompact.swift；實際取它和模型上限 × 0.8 的較小值）
     @Published var localCompactTokens: Int { didSet { d.set(localCompactTokens, forKey: "localCompactTokens") } }
+    /// 網頁外掛的總開關：只切換呈現與執行中的網頁，不改聊天室、掛件或版面資料。
+    /// 闔蓋時讓正在做事的聊天室做完這一段（LidKeeper.swift），預設開
+    @Published var lidKeepWorking: Bool { didSet { d.set(lidKeepWorking, forKey: "lidKeepWorking") } }
+    @Published var webFeaturesEnabled: Bool {
+        didSet {
+            d.set(webFeaturesEnabled, forKey: "webFeaturesEnabled")
+            if webFeaturesEnabled != oldValue { NotificationCenter.default.post(name: Self.webFeaturesChanged, object: nil) }
+        }
+    }
+    static let webFeaturesChanged = Notification.Name("codenv.webFeaturesChanged")
+    /// 左欄模式先記設定，畫面切換留到下一步。
+    @Published var sidebarMode: String { didSet { d.set(sidebarMode, forKey: "sidebarMode") } }
     /// 瀏覽器格子用哪個核心：webkit（系統內建、省記憶體）或 chromium（第二階段，還沒做好前照樣用 WebKit）
     @Published var browserEngine: String { didSet { d.set(browserEngine, forKey: "browserEngine") } }
     /// Gemini 網頁換皮（GeminiSkin.swift）：預設關
@@ -34,6 +47,10 @@ final class Prefs: ObservableObject {
     @Published var geminiCmdEnter: Bool { didSet { d.set(geminiCmdEnter, forKey: "geminiCmdEnter"); BrowserPane.setGeminiKeys(geminiCmdEnter) } }
     /// 幾天沒碰收進封存
     @Published var archiveDays: Int { didSet { d.set(archiveDays, forKey: "archiveDays") } }
+    /// 每日交接（DailyHandoff.swift）：開關、分界時間（時，本地）、一天最多幾件
+    @Published var dailyHandoffEnabled: Bool { didSet { d.set(dailyHandoffEnabled, forKey: "dailyHandoffEnabled") } }
+    @Published var dailyHandoffHour: Int { didSet { d.set(dailyHandoffHour, forKey: "dailyHandoffHour") } }
+    @Published var dailyHandoffMax: Int { didSet { d.set(dailyHandoffMax, forKey: "dailyHandoffMax") } }
     /// 打開對話先載入幾則（往上捲再載入更早的）
     @Published var historyLimit: Int { didSet { d.set(historyLimit, forKey: "historyLimit") } }
     /// 用量多久查一次（分鐘）
@@ -43,11 +60,11 @@ final class Prefs: ObservableObject {
     /// 程式碼顏色的配色（CodeColors.schemes）和自訂的顏色
     @Published var codeScheme: String { didSet { d.set(codeScheme, forKey: "codeScheme") } }
     @Published var customCode: [String: String] { didSet { d.set(customCode, forKey: "customCode") } }
-    /// 對話文字的字型：terminal＝跟終端機（iTerm）一樣的字型、粗細、大小（預設，使用者 10/22 要的）；system＝系統字型
+    /// 對話文字的字型：terminal＝跟終端機（iTerm）一樣的字型、粗細、大小（預設）；system＝系統字型
     @Published var chatFont: String { didSet { d.set(chatFont, forKey: "chatFont") } }
     /// 自動加入正在 tmux／iTerm 裡進行的對話（跟匯入視窗裡的同一個開關）
     @Published var autoImportLive: Bool { didSet { d.set(autoImportLive, forKey: "autoImportLive") } }
-    /// 模型清單列出全部；關著（預設）只列常用的：Opus／Sonnet／Haiku 5.5 (cc)、Gemini 3.8 Flash、本機模型（使用者 10/24 要的）
+    /// 模型清單列出全部；關著（預設）只列常用的：Opus／Sonnet／Haiku 5.5 (cc)、Gemini 3.8 Flash、本機模型
     @Published var allModels: Bool { didSet { d.set(allModels, forKey: "allModels") } }
     /// agy（Google Antigravity CLI）功能的總開關：Gemini 聊天室、灰字建議、用量、看板 @agy 自動做事都靠它。預設開（Edition.agyDefault）；公版第一次用前要先看過提醒（agyNoticeSeen）；
     /// 從關到開要先看警告（Prefs.confirmEnableAgy），所以設定頁的開關不直接改這個值
@@ -60,6 +77,10 @@ final class Prefs: ObservableObject {
     @Published var codeLabLayout: Int { didSet { d.set(codeLabLayout, forKey: "codeLabLayout") } }
 
     private init() {
+        // 舊版用同一個鍵記 home／codelab；這些舊值視為尚未選過側欄模式
+        // 公版沒有私人的九個總指揮：預設用一般的樹狀側欄（使用者自己切到總指揮模式才會有）
+        let storedMode = d.string(forKey: "sidebarMode")
+        sidebarMode = storedMode == "tree" ? "tree" : (storedMode == nil && Edition.isPublic ? "tree" : "commander")
         defaultModel = d.string(forKey: "defaultModel")
         defaultEffort = d.string(forKey: "defaultEffort")
         permissionMode = d.object(forKey: "permissionMode") == nil ? "auto" : d.string(forKey: "permissionMode").flatMap { $0.isEmpty ? nil : $0 }
@@ -69,13 +90,18 @@ final class Prefs: ObservableObject {
         artifacts = d.object(forKey: "artifacts") as? Bool ?? true
         reconnectOnLaunch = d.object(forKey: "reconnectOnLaunch") as? Bool ?? true
         claudeDebugLog = d.object(forKey: "claudeDebugLog") as? Bool ?? false
-        cloudCompactTokens = d.object(forKey: "cloudCompactTokens") as? Int ?? 640_000   // 使用者 10/25 定的預設
+        cloudCompactTokens = d.object(forKey: "cloudCompactTokens") as? Int ?? 640_000   // 定的預設
         localCompactTokens = d.object(forKey: "localCompactTokens") as? Int ?? 400_000
+        lidKeepWorking = d.object(forKey: "lidKeepWorking") as? Bool ?? true
+        webFeaturesEnabled = d.bool(forKey: "webFeaturesEnabled")
         browserEngine = d.string(forKey: "browserEngine") ?? "webkit"
         geminiCmdEnter = d.object(forKey: "geminiCmdEnter") as? Bool ?? true
         geminiSkin = d.object(forKey: "geminiSkin") as? Bool ?? false
         notebookSkin = d.object(forKey: "notebookSkin") as? Bool ?? false
         archiveDays = d.object(forKey: "archiveDays") as? Int ?? 7
+        dailyHandoffEnabled = d.object(forKey: "dailyHandoffEnabled") as? Bool ?? true
+        dailyHandoffHour = min(23, max(0, d.object(forKey: "dailyHandoffHour") as? Int ?? 6))
+        dailyHandoffMax = max(1, d.object(forKey: "dailyHandoffMax") as? Int ?? 15)
         historyLimit = d.object(forKey: "historyLimit") as? Int ?? 400
         usageMinutes = d.object(forKey: "usageMinutes") as? Int ?? 5
         colorScheme = d.string(forKey: "colorScheme") ?? "system"

@@ -33,7 +33,7 @@ enum Transcripts {
                   o["isMeta"] as? Bool != true, o["isReplay"] as? Bool != true,
                   let msg = o["message"] as? [String: Any] else { continue }
             let time = (o["timestamp"] as? String).flatMap { iso.date(from: $0) ?? plain.date(from: $0) }
-            // 自動壓縮的摘要（LocalCompact）：自己一則、標明是摘要，不算使用者說的話
+            // 自動壓縮的摘要（LocalCompact）：自己一則、標明是摘要，不算的話
             if o["isCompactSummary"] as? Bool == true {
                 let s = (msg["content"] as? String ?? "").replacingOccurrences(of: LocalCompact.marker, with: "")
                 out.append(Turn(time: time, user: false, text: s.trimmingCharacters(in: .whitespacesAndNewlines), model: "（自動壓縮摘要）"))

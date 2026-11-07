@@ -17,17 +17,34 @@ final class ChatSession {
     var forkFrom: UUID?
     /// 開 claude 時用的名字（--name）：別的聊天室用這個名字聯絡（SendMessage／ListAgents）。開的那一刻才問，改名後下次啟動生效
     var nameProvider: (() -> String?)?
+    /// 聊天室說明（Conversation.topic）：跟名字一起放進系統提示「你負責…」，改了在下一則訊息補一行
+    var topicProvider: (() -> String?)?
+    /// 總指揮聊天室的角色說明（底下有哪些聊天室、怎麼派工）：每次啟動重算，附在系統提示
+    var roleProvider: (() -> String?)?
+    /// 這個聊天室載入哪些 MCP（McpMode）；啟動 claude 時才讀，所以右鍵改了下次啟動生效
+    var mcpProvider: (() -> McpMode)?
+    /// codenv 裡這段聊天室的 id：放進環境變數 CODENV_CONVERSATION，codenv-todo team 用它認出自己是誰
+    var conversationTag: String?
     /// 模型已經知道的聊天室名稱（沒帶過是 nil）。Claude 開程序時用 --append-system-prompt 帶，其他家和改名之後在下一則訊息後面附一行（ChatPane.send），送出成功才記
     var announcedName: String?
     static let nameMarker = "〔codenv 聊天室名稱〕"
     /// 給模型的一句話（不用 L()：這是提示詞）。要它被問到直接照答，不要依內容編
-    static func nameNote(_ name: String) -> String {
-        nameMarker + "這段對話在 codenv 裡的聊天室名稱目前是「\(name)」（使用者在側欄看到的名字，不是對話主題）。使用者問聊天室名稱時直接回這個名字，不要依對話內容自己編。改名後我會再附一行，以最新的為準。"
+    static func nameNote(_ name: String, topic: String? = nil) -> String {
+        var s = nameMarker + "這段對話在 codenv 裡的聊天室名稱目前是「\(name)」（使用者在側欄看到的名字，不是對話主題）。使用者問聊天室名稱時直接回這個名字，不要依對話內容自己編。改名後我會再附一行，以最新的為準。"
+        if let t = topic, !t.isEmpty {
+            s += "\n你負責：\(t)\n（這是使用者或總指揮替這個聊天室寫的說明，照它的範圍做事；說明改了我也會再附一行，以最新的為準。）"
+        }
+        return s
     }
+    /// 名字加說明合成一個比對用的值：任一個變了就要重新告訴模型
+    static func nameKey(_ name: String, _ topic: String?) -> String { name + "\u{1}" + (topic ?? "") }
+    var currentTopic: String? { Store.cleanTopic(topicProvider?() ?? "") }
     /// 下一則訊息要不要附名稱：名字有而且跟模型知道的不一樣才回傳（名字、要記的值）
     func pendingNameNote() -> (note: String, name: String)? {
-        guard let n = nameProvider?()?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty, n != announcedName else { return nil }
-        return (Self.nameNote(n), n)
+        guard let n = nameProvider?()?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty else { return nil }
+        let key = Self.nameKey(n, currentTopic)
+        guard key != announcedName else { return nil }
+        return (Self.nameNote(n, topic: currentTopic), key)
     }
     /// 複製出新的對話編號後通知（要存回對話）
     var onForked: ((UUID) -> Void)?
@@ -46,6 +63,15 @@ final class ChatSession {
     var onOutboxError: ((String) -> Void)?
     /// result 後仍可能有未回送的排隊訊息，不能只靠 status 判斷畫面能否卸載。
     var hasUnacknowledgedInput: Bool { !unacked.isEmpty }
+    var hasPendingPermission: Bool { !pending.isEmpty }
+    /// 只觀察指定訊息的 UUID 回送，不把 token、result 或寫入 stdin 當成送達。
+    private var deliveryCallbacks: [String: (Bool) -> Void] = [:]
+
+    private func resolveDelivery(_ uuid: String, acknowledged: Bool) {
+        guard let done = deliveryCallbacks.removeValue(forKey: uuid.lowercased()) else { return }
+        // 本機後端可能在 send 裡同步回送，延後通知避免呼叫端在送出途中切換版面。
+        DispatchQueue.main.async { done(acknowledged) }
+    }
     /// 這次程序裡已送出、還在等回送的訊息編號（寄件匣對照時要排除：它們還在路上，不是「上次沒送到」）
     var inFlightIDs: Set<String> { Set(unacked.map(\.uuid)) }
     /// Claude 回報可以選的模型（啟動時），和目前用的模型
@@ -266,7 +292,10 @@ final class ChatSession {
                     "--replay-user-messages"]   // Claude 真的讀進訊息時會回送一份：排隊中的訊息靠這個知道什麼時候被讀到
         let suggest = Prefs.shared.promptSuggestions && localEndpoint == nil
         if suggest { args += ["--prompt-suggestions"] }
-        if Prefs.shared.claudeInChrome, localEndpoint == nil, !Self.extraArgs.contains("--no-chrome") { args += ["--chrome"] }
+        let mcp = mcpProvider?() ?? .full
+        if Prefs.shared.claudeInChrome, localEndpoint == nil, mcp.allowsChrome, !Self.extraArgs.contains("--no-chrome") { args += ["--chrome"] }
+        // 精簡／不載入 MCP：測試用 --chat-args 自己給了 MCP 參數就不再加
+        if !Self.extraArgs.contains("--mcp-config"), !Self.extraArgs.contains("--strict-mcp-config") { args += mcp.arguments }
         // 接手：新的 id 等程序真的開起來才記下（開不起來就還是原本那段，下次再試）
         var forked: UUID?
         if let old = forkFrom {
@@ -283,9 +312,11 @@ final class ChatSession {
         let shownName = nameProvider?()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !shownName.isEmpty, !Self.extraArgs.contains("--name") { args += ["--name", shownName] }
         // 名字也放進系統提示（不進紀錄檔、不會出現在泡泡）：--resume 也每次重帶；改名後改在下一則訊息附一行
-        if !shownName.isEmpty, !Self.extraArgs.contains("--append-system-prompt") {
-            args += ["--append-system-prompt", Self.nameNote(shownName)]
-            announcedName = shownName
+        let role = roleProvider?()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if (!shownName.isEmpty || !role.isEmpty), !Self.extraArgs.contains("--append-system-prompt") {
+            let note = [shownName.isEmpty ? "" : Self.nameNote(shownName, topic: currentTopic), role].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            args += ["--append-system-prompt", note]
+            if !shownName.isEmpty { announcedName = Self.nameKey(shownName, currentTopic) }
         }
         // 除錯紀錄（設定裡打開）：一個 claude 一個檔，查 MCP 斷線等問題用
         if Prefs.shared.claudeDebugLog, !Self.extraArgs.contains("--debug-file"), let f = Self.debugLogPath(name: shownName.isEmpty ? String(id.prefix(8)) : shownName) {
@@ -308,8 +339,9 @@ final class ChatSession {
         if suggest { env["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] = "true" }
         // Artifact（發布網頁到 claude.ai/artifact）在 -p 模式預設關著（sdk_default_off），終端機才有；這個變數打開它
         if Prefs.shared.artifacts, localEndpoint == nil { env["CLAUDE_CODE_ARTIFACT"] = "1" }
-        // 自動壓縮的門檻（⌘ , 對話頁「自動壓縮上下文」；使用者 10/25 要能自己調，預設 640K）
+        // 自動壓縮的門檻（⌘ , 對話頁「自動壓縮上下文」；要能自己調，預設 640K）
         env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = String(Prefs.shared.cloudCompactTokens)
+        if let t = conversationTag { env["CODENV_CONVERSATION"] = t }
         // 沙盒：nono 擋掉鑰匙圈，登入權杖由這裡（沙盒外）取出、用環境變數帶進去
         var wrap: [String]? = nil
         // 本機模型（自己的伺服器）不包沙盒：不要假裝有包，直接說
@@ -416,6 +448,7 @@ final class ChatSession {
                 let lost = self.unacked
                 self.unacked.removeAll()
                 if !lost.isEmpty { self.onLost?(lost) }
+                for m in lost { self.resolveDelivery(m.uuid, acknowledged: false) }
                 self.onExit?(proc.terminationStatus, self.stderrTail)
             }
         }
@@ -434,7 +467,7 @@ final class ChatSession {
     /// 送出使用者的訊息（文字＋圖片 PNG/JPEG）。uuid 用來對回 Claude 讀進去的那份回送；
     /// now：Claude 還在做的話叫它停下目前這一步、先讀這則（終端機的 ⌃ Enter）
     @discardableResult
-    func send(text: String, images: [(data: Data, mediaType: String)], uuid: String, now: Bool = false, displayText: String? = nil, quotes: [MessageQuote] = [], filePaths: [String] = [], imageDrafts: [DraftPersistence.Image] = []) -> Bool {
+    func send(text: String, images: [(data: Data, mediaType: String)], uuid: String, now: Bool = false, displayText: String? = nil, quotes: [MessageQuote] = [], filePaths: [String] = [], imageDrafts: [DraftPersistence.Image] = [], onDelivery: ((Bool) -> Void)? = nil) -> Bool {
         guard start() else { return false }
         let uuid = uuid.lowercased()   // 寄件匣、unacked、回送比對、插話一律小寫（呼叫端現在都給小寫，這裡保險）
         let wasBusy = status != .idle
@@ -470,10 +503,16 @@ final class ChatSession {
         }
         // 本機／Apple 會在 write 裡同步回送，必須先登記，不能在回送後才加入 unacked。
         unacked.append((uuid: uuid.lowercased(), text: displayText ?? original, images: images, quotes: quotes))
+        if let onDelivery {
+            deliveryCallbacks[uuid] = onDelivery
+            // 程序沒結束卻一直不回送時也要結束交接等待；寄件匣與 unacked 繼續保留。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in self?.resolveDelivery(uuid, acknowledged: false) }
+        }
         // 正在等權限回答（waiting）時排隊送一則：維持 waiting，不要蓋成 working（agy Argon 11/6）
         if pending.isEmpty { status = .working }
         guard write(["type": "user", "uuid": uuid, "message": ["role": "user", "content": content]]) else {
             unacked.removeAll { $0.uuid == uuid.lowercased() }
+            deliveryCallbacks[uuid] = nil   // 同步失敗由 send 的 false 回傳處理，不再呼叫通知。
             if !wasBusy { status = .idle }
             // 管線可能只寫入一部分，保留磁碟快照，下次仍需對照紀錄。
             emit(["type": "result", "subtype": "error_during_execution", "is_error": true, "result": L("訊息沒有送到（Claude 剛好結束了），請再送一次。")])
@@ -679,6 +718,7 @@ final class ChatSession {
         unacked.removeAll()
         // 排到下一輪再交出去：呼叫端（換模型、重開）常是 terminate(); 改設定; start()，同步呼叫 onLost 可能在中間重入（agy Opus 11/6）
         if !lost.isEmpty { DispatchQueue.main.async { [weak self] in self?.onLost?(lost) } }
+        for m in lost { resolveDelivery(m.uuid, acknowledged: false) }
         onTerminated?()
     }
 
@@ -809,6 +849,7 @@ final class ChatSession {
                     unacked.removeAll { $0.uuid == u.lowercased() }
                     do { try outboxPersistence?.remove(ids: [u.lowercased()]) }
                     catch { onOutboxError?(L("寄件匣更新失敗，已保留原檔；重開時會再對照對話紀錄。")) }
+                    if ours { resolveDelivery(u, acknowledged: true) }
                 }
                 // 換模型的回報（從預設換過去時 claude 會回一則「Set model to …」）不是一輪的開始：後面沒有 result，當成開工會一直轉圈
                 let local = ((o["message"] as? [String: Any])?["content"] as? String)?.hasPrefix("<local-command-stdout>") == true

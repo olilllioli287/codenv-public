@@ -25,6 +25,10 @@ struct Conversation: Codable, Identifiable, Hashable {
     var lastOpened = Date()
     /// 使用者自己改過名字就不再跟著終端機標題變
     var renamed = false
+    /// 名字是總指揮（codenv-todo rename／new）取的，不是使用者自己取的；使用者手動改名就清掉。總指揮只能改這種名字
+    var namedByCommander: Bool? = nil
+    /// 使用者在右鍵勾了「讓總指揮改名」：這段使用者自己取的名字，總指揮也可以改（改完算總指揮取的，勾選留著）
+    var commanderMayRename: Bool? = nil
     /// 用終端機（舊的方式）打開，而不是聊天介面；nil＝聊天
     var terminal: Bool? = nil
     /// 這段對話選的模型（Claude 的別名或全名，例如 opus、fable；本機模型用「local:<名稱>」）；nil＝預設
@@ -52,6 +56,14 @@ struct Conversation: Codable, Identifiable, Hashable {
     /// 這格瀏覽器在 Gemini、NotebookLM 各自最後停在哪個網址（key＝GadgetKind.rawValue：gemini／notebooklm）；
     /// ⌥ 八宮格在這一格原地切換網站時，切回去接續最後那段對話／筆記本。掛件格也一樣（跟著同一筆 Conversation 存檔，不另存一份）。舊存檔沒有這欄就是 nil
     var lastURLs: [String: String]? = nil
+    /// 上次交接成功的時間（每日交接用，DailyHandoff.swift）；交接出來的新聊天室繼承這個時間。nil＝從沒交接過
+    var lastHandoffAt: Date? = nil
+    /// 啟動 claude 時載入哪些 MCP（full／lite／none，McpMode.swift）；nil＝完整。下次啟動生效。`codenv-todo new` 開的分支預設 lite
+    var mcp: String? = nil
+    /// 聊天室說明（類似 Discord 頻道主題，上限 1024 字）：這個聊天室負責什麼。給它自己的 Claude（系統提示「你負責…」）、總指揮的名單、使用者的資訊卡看。舊存檔沒有這欄＝nil
+    var topic: String? = nil
+    /// 說明是總指揮（codenv-todo topic／new --topic）寫的；使用者在 App 裡改過就清掉。總指揮只能改這種說明或空的說明（除非右鍵勾了「讓總指揮改名」）
+    var topicByCommander: Bool? = nil
 }
 
 extension Conversation {
@@ -71,7 +83,7 @@ extension Conversation {
 final class Store: ObservableObject {
     @Published var projects: [Project] = []
     @Published var conversations: [Conversation] = []
-    /// 「選取整個 Window」（使用者 10/26：點上方 Window 分頁、或 ⌘ 數字之後，當成框選目前 Window 的全部格子；此時 F2 改的是 Window 名字）。
+    /// 「選取整個 Window」（點上方 Window 分頁、或 ⌘ 數字之後，當成框選目前 Window 的全部格子；此時 F2 改的是 Window 名字）。
     /// 點任一格、換紫框、打字就離開；不存檔
     @Published var windowSelected = false
     @Published var selected: UUID?          // 目前打開的對話
@@ -88,10 +100,10 @@ final class Store: ObservableObject {
     private(set) var busySince: [UUID: Date] = [:]
     /// 每段對話 Claude 實際回報在用的模型（claude-opus-5-5…，不存檔）：沒自己選模型時「預設」到底是哪個，看這裡
     @Published var liveModel: [UUID: String] = [:]
-    /// 在背景替這段對話跑的模型（本機模型自動壓縮時請 Claude Haiku 整理摘要）：右側欄「使用中」也列出來（使用者 10/25）
+    /// 在背景替這段對話跑的模型（本機模型自動壓縮時請 Claude Haiku 整理摘要）：右側欄「使用中」也列出來
     @Published var backgroundModel: [UUID: String] = [:]
 
-    /// 右側欄顯示的模型名稱：自己選過的照選的；沒選（預設）而 Claude 回報過實際模型的，照實際的（使用者 10/25：輸入框寫 Opus、右側欄卻寫 Sonnet）
+    /// 右側欄顯示的模型名稱：自己選過的照選的；沒選（預設）而 Claude 回報過實際模型的，照實際的（輸入框寫 Opus、右側欄卻寫 Sonnet）
     func displayModel(_ id: UUID) -> String {
         guard let c = conversation(id) else { return UsagePool.modelName(nil) }
         if c.isBrowser { return L("瀏覽器") }
@@ -107,14 +119,20 @@ final class Store: ObservableObject {
     @Published var lastActivity: [UUID: Date] = [:]
     /// 版面：Session → Window → Pane（Layout.swift）
     @Published var sessions: [SessionLayout] = []
-    /// 側欄最上層的分組（學業、RTS…）；空的就照舊只列資料夾
+    /// 側欄最上層的分組（A 組、B 組…）；空的就照舊只列資料夾
     @Published var groups: [ConvGroup] = []
     /// 瀏覽器格子的縮放比例，每個網站一份（gemini.google.com → 1.25）；100% 的不記
     @Published var browserZoom: [String: Double] = [:]
     @Published var currentSession: UUID? { didSet { followSessionArea() } }
     /// 目前看哪一區：home＝首頁、codelab＝程式碼學習專區（側欄最左邊的圖示列）。兩區各有自己的一套 Session／Window（Layout.swift）
-    @Published var area: String = appDefaults.string(forKey: "sidebarMode") == Store.codeLabArea ? Store.codeLabArea : "home" {
-        didSet { appDefaults.set(area, forKey: "sidebarMode") }
+    @Published var area: String = {
+        // 舊版把首頁／codelab 記在 sidebarMode；先保留區域記憶，讓新左欄模式能獨立使用原本的鍵。
+        let saved = appDefaults.string(forKey: "workspaceArea") ?? appDefaults.string(forKey: "sidebarMode")
+        let area = saved == Store.codeLabArea ? Store.codeLabArea : "home"
+        appDefaults.set(area, forKey: "workspaceArea")
+        return area
+    }() {
+        didSet { appDefaults.set(area, forKey: "workspaceArea") }
     }
 
     private let url: URL
@@ -220,6 +238,12 @@ final class Store: ObservableObject {
         refreshActivity()
         // 有變動就（稍等一下合併成一次）存檔
         objectWillChange.sink { [weak self] _ in self?.scheduleSave() }.store(in: &bag)
+        // Published 在 willSet 發送，排到下一輪再讀完整資料；切回首頁、切模式或首次加入專案都可補做遷移
+        Publishers.CombineLatest3($area, Prefs.shared.$sidebarMode, $projects).dropFirst().sink { [weak self] _, _, _ in
+            DispatchQueue.main.async { [weak self] in self?.migrateCommandersIfNeeded() }
+        }.store(in: &bag)
+        migrateCommandersIfNeeded()
+        migrateCommanderKinds()
         // 用備份還原的：馬上寫回 state.json，不要讓硬碟上一直是壞的那份
         if startupTitle != nil { scheduleSave() }
     }
@@ -346,10 +370,11 @@ final class Store: ObservableObject {
         return c
     }
 
-    /// 側欄點一段對話。⇧ 點（replaceFocused）：舊的開法，放進目前紫框那格、換掉它原本的內容，不開新 Window（使用者 10/29）；
+    /// 側欄點一段對話。⇧ 點（replaceFocused）：舊的開法，放進目前紫框那格、換掉它原本的內容，不開新 Window；
     /// 已經擺出來的照樣跳到它那格。⌥ 點是八宮格（RadialMenu 在事件最前面就吃掉了），不會進到這裡
     func open(_ id: UUID, replaceFocused: Bool? = nil) {
-        guard conversation(id) != nil else { return }
+        guard let c = conversation(id), Prefs.shared.webFeaturesEnabled || !c.isBrowser else { return }
+        routeUnplacedToCommander(id)   // 總指揮模式：還沒擺出來的聊天室先回到它所屬的總指揮 Session
         let shift = replaceFocused ?? (NSApp.currentEvent.map { $0.modifierFlags.intersection([.command, .control, .option, .shift]) == .shift } ?? false)
         if shift, locate(id) == nil { show(id, replaceFocused: true); return }
         // 剛用 ⌘ W 關掉的 Window 裡有它：整個 Window 照原樣找回來（掛件、比例、紫框）；已經在別的 Window 就照原本的跳過去
@@ -362,6 +387,7 @@ final class Store: ObservableObject {
         if !byUser && conversations[i].renamed { return }
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
+        if byUser { conversations[i].namedByCommander = nil }   // 使用者動手改了：之後是他的名字，總指揮不能再改
         if conversations[i].title == t {      // 使用者確認了同一個名字：也算他定的，之後自動標題不能再蓋掉
             if byUser, !conversations[i].renamed { conversations[i].renamed = true; onUserRename?(id, t) }
             return
@@ -371,6 +397,20 @@ final class Store: ObservableObject {
     }
     /// 使用者自己改名之後通知：正在跑的 Claude 要跟著改 session 名字（ChatSession.syncName），別的聊天室才找得到
     var onUserRename: ((UUID, String) -> Void)?
+
+    static let topicLimit = 1024
+    /// 說明整理：去頭尾空白、超過上限截掉；空的回 nil
+    static func cleanTopic(_ raw: String) -> String? {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : String(t.prefix(topicLimit))
+    }
+    /// 設定聊天室說明。byUser＝使用者在 App 裡改（之後總指揮不能改，除非他放行）；否則是總指揮改（標記成總指揮寫的）
+    func setTopic(_ id: UUID, _ raw: String, byUser: Bool) {
+        guard let i = conversations.firstIndex(where: { $0.id == id }) else { return }
+        let t = Store.cleanTopic(raw)
+        conversations[i].topic = t
+        conversations[i].topicByCommander = byUser || t == nil ? nil : true
+    }
 
     func removeConversation(_ id: UUID) {
         conversations.removeAll { $0.id == id }

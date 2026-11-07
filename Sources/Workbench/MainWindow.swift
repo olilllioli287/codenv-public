@@ -13,6 +13,9 @@ final class MainWindowController: NSWindowController {
     private var bag: Set<AnyCancellable> = []
     var openSettings: () -> Void = {}
     private var keys: PrefixKeys?
+    var lidKeeper: LidKeeper?
+    var lidTimer: Timer?
+    lazy var floatingTerminal = FloatingTerminalController(parent: window!, store: store, workspace: workspace)
 
     init(store: Store, workspace: Workspace) {
         self.store = store
@@ -26,7 +29,7 @@ final class MainWindowController: NSWindowController {
         // 上緣不能拖視窗（系統會在 App 收到之前就接走，分頁就拖不了）；只有分頁列左邊那塊空白能拖（TabBar 的 DragHandle）
         w.isMovable = false
         let testing = CommandLine.arguments.contains("--state-dir")   // 測試 App 不記視窗大小，免得蓋掉使用者調好的
-        w.minSize = NSSize(width: 480, height: 400)   // 寬 480：Rectangle 等的「一半」在 iPad 第二螢幕（1366 寬→683）、筆電的「三分之一」（504）都放得下（使用者 11/6：版面超出一半）
+        w.minSize = NSSize(width: 480, height: 400)   // 寬 480：Rectangle 等的「一半」在 iPad 第二螢幕（1366 寬→683）、筆電的「三分之一」（504）都放得下（版面超出一半）
         super.init(window: w)
         shouldCascadeWindows = false
         // 上次的位置（自己記的原始座標；沒有就讀以前系統記的那份）
@@ -47,10 +50,10 @@ final class MainWindowController: NSWindowController {
             newBrowser: { [weak self] in self?.newBrowser() },
             changeFolder: { [weak self] id in self?.changeFolder(id) },
             about: { [weak self] id in self?.showAbout(id) },
-            toggleCollab: { CollabBoardModel.shared.open.toggle() },
+            toggleCollab: { [weak self] in self?.toggleCollabBoard() },
             schedule: { [weak self] id in self?.showSchedule(id) },
             toggleSandbox: { [weak self] id in self?.toggleSandbox(id) })
-        let side = NSHostingController(rootView: Scaled { SidebarView(store: store, actions: actions) })
+        let side = NSHostingController(rootView: Scaled { SidebarView(store: store, workspace: workspace, actions: actions) })
         // 側欄最上面那條（紅綠燈右邊、跟分頁列一樣高）：按住拖整個視窗、點兩下放大
         // （SwiftUI 的 hosting view 點擊只看自己的內容、不看加進去的子 view，所以放在它外面那層，對齊它的上緣）
         let sideDrag = DragHandle()
@@ -82,6 +85,8 @@ final class MainWindowController: NSWindowController {
         boardItem.minimumThickness = 280
         boardItem.maximumThickness = 560
         boardItem.canCollapse = true
+        // 總指揮模式：看板改嵌在右欄的「看板」分頁（RightPanelView），這一欄一律收著
+        if Prefs.shared.sidebarMode == "commander" { collab.open = false }
         boardItem.isCollapsed = !collab.open
         split.addSplitViewItem(boardItem)
         collab.sources = { [weak self] in self?.collabSources() ?? [] }
@@ -91,14 +96,18 @@ final class MainWindowController: NSWindowController {
         store.$sessions.dropFirst().debounce(for: .seconds(0.3), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.store.syncWindowBundles() }.store(in: &bag)
         // 使用者改聊天室名字：正在跑的 Claude 也改 session 名字（ListAgents、cross-session 的 from-name 才會跟著變）
+        installChatInfoKey()
         store.onUserRename = { [weak self] id, title in (self?.workspace.panes[id] as? ChatPane)?.session.syncName(title) }
         // 聊天室改名：非 Claude 聊天室的 md 紀錄檔名跟著改（Transcripts.swift）
         store.$conversations.map { Dictionary($0.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a }) }
             .removeDuplicates().dropFirst().debounce(for: .seconds(1), scheduler: RunLoop.main)
             .sink { Transcripts.renamed($0) }.store(in: &bag)
         collabSub = collab.$open.dropFirst().removeDuplicates().sink { open in
-            DispatchQueue.main.async { boardItem.animator().isCollapsed = !open }
+            DispatchQueue.main.async { boardItem.animator().isCollapsed = !open || Prefs.shared.sidebarMode == "commander" }
         }
+        Prefs.shared.$sidebarMode.dropFirst().receive(on: RunLoop.main).sink { mode in
+            if mode == "commander", collab.open { collab.open = false }
+        }.store(in: &bag)
         if !testing { split.splitView.autosaveName = "AI 工作台側欄" }
         // 沒有記過側欄寬度（第一次開、或測試 App）：側欄預設打開、260 寬
         let hasSaved = !testing && UserDefaults.standard.object(forKey: "NSSplitView Subview Frames AI 工作台側欄") != nil
@@ -109,7 +118,7 @@ final class MainWindowController: NSWindowController {
         w.contentViewController = split
         splitController = split
         w.setContentSize(NSSize(width: 1280, height: 800))
-        // 照上次關掉（⌘ Q）時的位置和大小打開（使用者 10/22 要的）；沒記過、或那個螢幕已經不在（外接螢幕拔掉）才放正中間
+        // 照上次關掉（⌘ Q）時的位置和大小打開；沒記過、或那個螢幕已經不在（外接螢幕拔掉）才放正中間
         var restored = false
         // 照原座標擺。不用系統的 setFrame(from:)／frameAutosaveName：視窗還沒顯示時系統當它在筆電螢幕上，
         // 會照筆電螢幕重新換算，外接螢幕上的位置每次都被搬到筆電螢幕（10/22 實測）
@@ -137,6 +146,7 @@ final class MainWindowController: NSWindowController {
             }
         }
 
+        host.onCollabPause = { [weak self] p in self?.pauseCollab(p) }
         host.onNewWindow = { [weak self] in self?.newWindow() }
         RadialMenu.shared.controller = self
         NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: w, queue: .main) { [weak self] _ in self?.fitWidth() }
@@ -150,11 +160,13 @@ final class MainWindowController: NSWindowController {
         store.ensureCodeLabGroup()
         host.tabBar.onToggleSidebar = { [weak self] in self?.toggleSidebar() }
         host.onCompact = { [weak self] id in self?.compact(id) }
-        // 分頁上的 ×：直接關，跟 ⌘ W 一樣不問（對話都留在側欄，使用者 10/25 要的）；Ctrl+A & 照 tmux 的習慣還是會問
+        // 分頁上的 ×：直接關，跟 ⌘ W 一樣不問（對話都留在側欄）；Ctrl+A & 照 tmux 的習慣還是會問
         host.onCloseWindowRequest = { [weak self] i in self?.store.selectWindow(at: i); self?.store.closeWindow() }
         host.onRenameWindowRequest = { [weak self] i in self?.store.selectWindow(at: i); self?.renameWindow() }
         host.sessionMenu = { [weak self] in self?.treeMenu() ?? NSMenu() }
         host.tabBar.onSessions = { [weak self] v in self?.showSessionPanel(from: v) }
+        floatingTerminal.onVisibilityChange = { visible in FloatTermButton.setVisible(visible) }
+        floatingTerminal.chatRect = { [weak self] in self?.host.chatScreenRect }
         keys = PrefixKeys(controller: self)
         watchDrafts()
         // 設定檔存不進去：在這個視窗上跳一次說明（sheet，不把 App 叫到前景、不搶別的 App 的焦點）
@@ -179,13 +191,38 @@ final class MainWindowController: NSWindowController {
             .sink { [weak self] _ in self?.workspace.releaseUnplaced() }.store(in: &bag)
         // 保底：別格事件一直來時防抖會一直延後，每 15 秒一定檢查一次（Codex 11/6）
         Timer.publish(every: 15, on: .main, in: .common).autoconnect()
-            .sink { [weak self] _ in self?.workspace.releaseUnplaced() }.store(in: &bag)
+            .sink { [weak self] _ in self?.workspace.releaseUnplaced(); self?.workspace.releaseBackgroundIdle() }.store(in: &bag)
         reconnectPlaced()
         // 瀏覽器格子給 AI 讀的通道（codenv-browser）；名字照側欄
         BrowserServer.shared.titleOf = { [weak self] id in self?.store.conversation(id)?.title }
-        BrowserServer.shared.wake = { [weak self] name, done in self?.wake(name: name, done: done) ?? done(["ok": false, "error": "codenv 關閉中"]) }
+        BrowserServer.shared.wake = { [weak self] name, conv, done in self?.wake(name: name, caller: conv, done: done) ?? done(["ok": false, "error": "codenv 關閉中"]) }
+        BrowserServer.shared.team = { [weak self] conv, name, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            done(self.store.teamInfo(conversation: conv, name: name) { [weak self] id in (self?.workspace.panes[id] as? ChatPane)?.session.isRunning == true })
+        }
+        BrowserServer.shared.renameChat = { [weak self] conv, target, name, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            done(self.store.commanderRename(caller: conv, target: target, name: name))
+        }
+        BrowserServer.shared.newChat = { [weak self] conv, name, dir, project, model, effort, mcp, topic, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            self.commanderNewChat(caller: conv, name: name, dir: dir, project: project, model: model, effort: effort, mcp: mcp, topic: topic, done: done)
+        }
+        BrowserServer.shared.setTopicChat = { [weak self] conv, target, topic, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            self.commanderSetTopicChat(caller: conv, target: target, topic: topic, done: done)
+        }
+        BrowserServer.shared.setModelChat = { [weak self] conv, target, model, effort, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            self.commanderSetModelChat(caller: conv, target: target, model: model, effort: effort, done: done)
+        }
+        BrowserServer.shared.setMcpChat = { [weak self] conv, target, mode, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            done(self.store.commanderSetMcp(caller: conv, target: target, mode: mode))
+        }
         BrowserServer.shared.showGoal = { [weak self] goal, activate, done in self?.showGoal(goal, activate: activate, done: done) ?? done(["ok": false, "error": "codenv 關閉中"]) }
         BrowserServer.shared.start()
+        setupLidKeeper()
         // 右邊欄的記憶體：哪個程序是哪個聊天室
         MemoryMonitor.shared.labeler = { [weak self] in
             guard let self else { return [:] }
@@ -194,6 +231,15 @@ final class MainWindowController: NSWindowController {
                 let title = self.store.conversation(id)?.title ?? L("聊天室")
                 if let c = p as? ChatPane, let pid = c.session.pid { out[pid] = title }
                 else if let t = p as? TerminalPane, t.terminal.process.shellPid > 0 { out[t.terminal.process.shellPid] = title + L("（終端機）") }
+            }
+            return out
+        }
+        MemoryMonitor.shared.idLabeler = { [weak self] in
+            guard let self else { return [:] }
+            var out: [pid_t: UUID] = [:]
+            for (id, p) in self.workspace.panes {
+                if let c = p as? ChatPane, let pid = c.session.pid { out[pid] = id }
+                else if let t = p as? TerminalPane, t.terminal.process.shellPid > 0 { out[t.terminal.process.shellPid] = id }
             }
             return out
         }
@@ -230,9 +276,10 @@ final class MainWindowController: NSWindowController {
     }
 
     /// 新瀏覽器格子：開在目前那格的專案，切開目前那格放右邊（沒有格子就直接擺上去）
-    /// url：nil＝掛件用 Gemini、一般格子用空白頁（使用者 10/25：瀏覽器不該預設開 Gemini）
+    /// url：nil＝掛件用 Gemini、一般格子用空白頁（瀏覽器不該預設開 Gemini）
     func newBrowser(url: String? = nil) {
-        // ⌘ ⇧ B 是切換（使用者 10/25）：紫框選中聊天室＝開／收它那個框的掛件（Bundles.swift toggleBundle）；選中掛件＝收起那個框的掛件
+        guard Prefs.shared.webFeaturesEnabled else { return }
+        // ⌘ ⇧ B 是切換：紫框選中聊天室＝開／收它那個框的掛件（Bundles.swift toggleBundle）；選中掛件＝收起那個框的掛件
         if url == nil, let f = store.currentWindow?.focused, let c = store.conversation(f) {
             if let b = c.gadgetOf { store.hideGadgets(of: b); return }
             if Store.isChat(c) { store.toggleBundle(from: c.id); return }
@@ -474,6 +521,9 @@ final class MainWindowController: NSWindowController {
     // 切回來之後再刻意點輸入框以外，才會離開。
     private var activatedAt = Date.distantPast
     private var activationObservers: [Any] = []
+    /// 每日交接（DailyHandoff.swift）
+    lazy var dailyHandoff = DailyHandoff(store: store, main: self)
+
     func setupActivationFocus() {
         activationObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.activatedAt = Date()
@@ -499,7 +549,7 @@ final class MainWindowController: NSWindowController {
     /// 輸入框以外按 /（注音的 ㄥ 同一顆鍵）：回到輸入框。正在打字的地方（輸入框、改名、終端機）照常
     func slashFocus() -> Bool {
         guard let w = window else { return false }
-        // 沒跳回去的原因記進事件紀錄（使用者 10/30：紫框在聊天室、沒在打字，按 / 卻沒進去；只記種類，不記內容）
+        // 沒跳回去的原因記進事件紀錄（紫框在聊天室、沒在打字，按 / 卻沒進去；只記種類，不記內容）
         func no(_ why: String) -> Bool { EventLog.log("焦點", "按 / 沒跳回輸入框：\(why)"); return false }
         guard let f = store.currentWindow?.focused, let c = workspace.panes[f] as? ChatPane else { return false }   // 瀏覽器、終端機格的 / 照常，不記（打字時太多筆）
         let v = w.firstResponder as? NSView
@@ -515,7 +565,7 @@ final class MainWindowController: NSWindowController {
         return c.focusInput() ? true : no("輸入框鎖住")
     }
 
-    /// 輸入框以外按 Tab：輸入框是空的、有灰字建議，就跳回輸入框並採用建議（使用者 10/25）。規則跟 / 一樣：正在打字的地方、終端機照常
+    /// 輸入框以外按 Tab：輸入框是空的、有灰字建議，就跳回輸入框並採用建議。規則跟 / 一樣：正在打字的地方、終端機照常
     func tabSuggestion(from eventWindow: NSWindow?) -> Bool {
         guard let w = window, let f = store.currentWindow?.focused, let c = workspace.panes[f] as? ChatPane, !c.webEditing else { return false }
         let tv = c.inputBar.textView
@@ -626,67 +676,234 @@ final class MainWindowController: NSWindowController {
 
     /// 正在寫交接的對話（同一段不要重複按）
     private var handingOff: Set<UUID> = []
+    /// 每日交接的背景任務（key＝舊聊天室）：記最後一則失敗原因與是否成功，結束時回報
+    struct BackgroundHandoff {
+        var completion: ((HandoffOutcome) -> Void)?
+        var lastMessage: String?
+        var succeeded = false
+    }
+    private var bgHandoffs: [UUID: BackgroundHandoff] = [:]
 
-    /// 交接：Claude 讀完這段寫交接 → 同一組開新聊天室、交接當第一則送出 → 原本那格換成新的（舊的留在側欄）
+    /// 一件交接結束（成功或任何原因沒完成）：解除「正在交接」，背景任務在這裡回報結果
+    private func endHandoff(_ id: UUID) {
+        handingOff.remove(id)
+        guard let job = bgHandoffs.removeValue(forKey: id) else { return }
+        job.completion?(job.succeeded ? .success : .failed(job.lastMessage ?? L("交接沒有完成")))
+    }
+
+    /// 交接：先存文字，再開新聊天室送出；收到指定訊息的送達確認才換格與封存。
     func handoff(_ id: UUID) {
-        guard let c = store.conversation(id), c.terminal != true, !c.isBrowser, !handingOff.contains(id), let dir = store.project(c.projectID)?.path else { return }
+        guard let c = store.conversation(id), c.terminal != true, !c.isBrowser,
+              let dir = store.project(c.projectID)?.path, let pane = workspace.pane(for: c) as? ChatPane else { return }
+        if handingOff.contains(id) { pane.notice(L("這段對話正在交接，請等這次完成。")); return }
+        if let reason = handoffBlockReason(c, pane: pane) { pane.notice(reason); return }
         guard Store.claudeHasSession(c.claudeSession, path: dir) else {
-            return confirm(L("「\(c.title)」還沒有對話紀錄"), L("先跟 Claude 聊幾句再交接。"), button: L("好")) {}
+            pane.notice(L("「\(c.title)」還沒有對話紀錄，先跟 Claude 聊幾句再交接。")); return
         }
-        confirm(L("交接「\(c.title)」？"), L("Claude 會讀完這段對話寫一份交接（大約半分鐘到幾分鐘，會用到額度），寫好後開一個新聊天室、把交接當第一則訊息送出，新的沿用這個名字、畫面上這一格換成新的。原本的對話改名成「今天日期_原名稱」收進封存（側欄上面的封存按鈕看得到），紀錄不會改。"), button: L("交接")) { [weak self] in
+        confirm(L("交接「\(c.title)」？"), L("Claude 會讀完這段對話寫一份交接（大約半分鐘到幾分鐘，會用到額度）。交接文字會先存檔，再送到新聊天室；確認送達後，新的沿用這個名字、草稿與原本的位置，舊的改名成「今天日期_原名稱」收進封存。期間有新內容就不切換；沒有送達確認也會保留舊的。"), button: L("交接")) { [weak self] in
             self?.startHandoff(c, directory: dir)
         }
     }
 
-    func startHandoff(_ c: Conversation, directory: String) {
+    /// 確認框之後與測試掛鉤都走這裡，開始時重新檢查，不採用開確認框時的舊副本。
+    /// background＝每日交接用：不改目前選取、不切 Session／Window、不搶焦點；結果（成功／延後／失敗）從 completion 回報，不跳視窗。
+    func startHandoff(_ source: Conversation, directory: String, background: Bool = false, completion: ((HandoffOutcome) -> Void)? = nil) {
+        guard let c = store.conversation(source.id), c.terminal != true, !c.isBrowser,
+              let pane = workspace.pane(for: c) as? ChatPane else { if background { completion?(.failed(L("找不到這段聊天室"))) }; return }
+        if handingOff.contains(c.id) {
+            if background { completion?(.deferred(L("這段對話正在交接"))) } else { pane.notice(L("這段對話正在交接，請等這次完成。")) }
+            return
+        }
+        if let reason = handoffBlockReason(c, pane: pane) {
+            if background { completion?(.deferred(reason)) } else { pane.notice(reason) }
+            return
+        }
+        guard store.project(c.projectID)?.path == directory,
+              let version = try? handoffTranscriptVersions(c, pane: pane, directory: directory) else {
+            let why = L("交接沒有開始：讀不到這段對話的紀錄，或工作資料夾已經改變。")
+            if background { completion?(.failed(why)) } else { pane.notice(why) }
+            return
+        }
+        if background { bgHandoffs[c.id] = BackgroundHandoff(completion: completion) }
         handingOff.insert(c.id)
-        let oldPane = workspace.panes[c.id] as? ChatPane
-        oldPane?.notice(L("正在寫交接…（寫好會開新聊天室，這一格換成新的）"))
-        Handoff.write(session: c.claudeSession, directory: directory, model: c.model, effort: c.effort) { [weak self] r in
+        pane.notice(L("正在寫交接…（文字會先存檔，確認送達新聊天室後才換格）"))
+        Handoff.write(session: c.claudeSession, directory: directory, model: c.model, effort: c.effort, proposals: { MemoryAdvice.submit($0, from: c.title) }) { [weak self] r in
             guard let self else { return }
-            self.handingOff.remove(c.id)
+            var waitingForDelivery = false
+            defer { if !waitingForDelivery { self.endHandoff(c.id) } }
             switch r {
             case .failure(let e):
-                if let p = self.workspace.panes[c.id] as? ChatPane { p.notice(L("交接沒寫成：\(e.message)")) }
-                else { self.confirm(L("交接沒寫成"), e.message, button: L("好")) {} }
+                self.handoffNotice(c.id, L("交接沒寫成：\(e.message)"))
             case .success(let text):
-                guard let old = self.store.conversation(c.id) else { return }
+                let file: URL
+                do { file = try Handoff.save(text, conversation: c.id, directory: self.store.directory) }
+                catch {
+                    self.handoffNotice(c.id, L("交接文字存檔失敗，沒有切換或封存：\(error.localizedDescription)")); return
+                }
+                // 一定先存檔再檢查：即使舊對話已被刪掉、程序剛開始下一輪，寫好的文字也留得住。
+                guard self.handoffSourceUnchanged(c, directory: directory, version: version),
+                      let old = self.store.conversation(c.id) else {
+                    self.handoffNotice(c.id, self.handoffChangedNotice(file)); return
+                }
+                guard let oldPane = self.workspace.pane(for: old) as? ChatPane else { return }
+                if let reason = self.handoffBlockReason(old, pane: oldPane) {
+                    oldPane.notice(reason + L(" 交接文字已存在 \(file.path)，這次沒有切換。")); return
+                }
+                let projectBefore = self.store.selectedProject
                 var n = self.store.createConversation(in: old.projectID)
+                if self.bgHandoffs[c.id] != nil { self.store.selectedProject = projectBefore }   // 背景交接不改「新對話開在哪」
                 if let i = self.store.conversations.firstIndex(where: { $0.id == n.id }) {
                     self.store.conversations[i].groupID = old.groupID
                     self.store.conversations[i].model = old.model
                     self.store.conversations[i].effort = old.effort
+                    self.store.conversations[i].permissionMode = old.permissionMode
+                    self.store.conversations[i].sandbox = old.sandbox
+                    self.store.conversations[i].order = old.order
+                    self.store.conversations[i].lastHandoffAt = ScheduleStore.now()   // 新的繼承交接時間，每日交接不會又把它當待交接
                     n = self.store.conversations[i]
                 }
-                // 新的接手原本的名字；舊的改成「交接當天日期_原名稱」（之前交接過的日期換成今天，不疊兩個）
-                let f = DateFormatter(); f.dateFormat = "yyyyMMdd"
                 let base = old.title.replacingOccurrences(of: #"^\d{8}_"#, with: "", options: .regularExpression)
                 self.store.rename(n.id, to: base, byUser: true)
-                self.store.rename(old.id, to: f.string(from: Date()) + "_" + base, byUser: true)
-                // 舊的在掛件框裡：新的先接手那個框，不然舊的一封存框就空了，掛件和記著的網址被當成孤兒刪掉
-                if let b = self.store.conversation(old.id)?.bundle { self.store.setBundle(n.id, b) }
-                // 舊的收進封存：側欄平常不列（按封存按鈕才看得到），紀錄還在
-                self.store.setArchived(old.id, true)
-                self.store.reorder(n.id, before: old.id)
-                // 原本那格換成新的；舊的沒擺在畫面上就照一般打開
-                if !self.store.replacePane(old.id, with: n.id) { self.store.show(n.id) }
-                self.store.selected = n.id
-                DispatchQueue.main.async {
-                    guard let conv = self.store.conversation(n.id), let p = self.workspace.pane(for: conv) as? ChatPane else { return }
-                    let message = Handoff.firstMessage(from: old.title, text)
-                    if !p.sendText(message) {
-                        // 送不出去：交接內容存一份檔，也放進新聊天室的輸入框，使用者按送出就能再試
-                        let file = self.store.directory.appendingPathComponent("handoff-\(n.id.uuidString.prefix(8)).txt")
-                        let saved = (try? message.write(to: file, atomically: true, encoding: .utf8)) != nil
-                        if saved { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
-                        p.inputBar.setDraft(message)
-                        p.notice(saved
-                            ? L("交接內容沒有送出去（程序開不起來，或這段對話在別處進行）。內容已放進輸入框，也存了一份在 \(file.path)；舊的聊天室已收進封存。")
-                            : L("交接內容沒有送出去（程序開不起來，或這段對話在別處進行）。內容已放進輸入框；舊的聊天室已收進封存。"))
+                let message = Handoff.firstMessage(from: old.title, text)
+                // 先保存新聊天室的編號，再送出；此時舊名字、草稿、掛件框與版面都還沒動。
+                guard self.store.saveNow() else {
+                    self.preserveFailedHandoff(message, file: file, old: c.id, new: n.id, reason: L("新聊天室還沒存好，交接訊息沒有送出。")); return
+                }
+                guard let conv = self.store.conversation(n.id), let p = self.workspace.pane(for: conv) as? ChatPane else { return }
+                oldPane.notice(L("交接文字已存在 \(file.path)，正在等新聊天室確認收到第一則訊息…"))
+                waitingForDelivery = p.sendText(message, onDelivery: { [weak self] acknowledged in
+                    guard let self else { return }
+                    defer { self.endHandoff(c.id) }
+                    guard acknowledged else {
+                        self.preserveFailedHandoff(message, file: file, old: c.id, new: n.id, reason: L("交接訊息尚未確認送達（程序結束、被關閉，或等候超過 60 秒）。重送前請先確認新聊天室是否已收到，避免重複。")); return
                     }
+                    self.finishHandoff(c, new: n.id, directory: directory, version: version, file: file)
+                })
+                if !waitingForDelivery {
+                    self.preserveFailedHandoff(message, file: file, old: c.id, new: n.id, reason: L("交接訊息沒有送出去（程序開不起來、寄件匣存檔失敗，或這段對話在別處進行）。"))
                 }
             }
         }
+    }
+
+    private func handoffNotice(_ id: UUID, _ message: String) {
+        bgHandoffs[id]?.lastMessage = message
+        if let c = store.conversation(id), let pane = workspace.pane(for: c) as? ChatPane { pane.notice(message) }
+        else if bgHandoffs[id] == nil, let selected = store.selected, let pane = workspace.panes[selected] as? ChatPane { pane.notice(message) }
+    }
+
+    private func handoffBlockReason(_ c: Conversation, pane: ChatPane) -> String? {
+        if pane.session.hasPendingPermission || pane.session.status == .waiting || store.status[c.id] == .waiting {
+            return L("交接沒有開始：這格有權限詢問或問題還沒回覆，請先處理。")
+        }
+        if pane.session.hasUnacknowledgedInput { return L("交接沒有開始：寄件匣還有訊息未確認送達，請先確認或處理。") }
+        do {
+            if let outbox = pane.session.outboxPersistence,
+               !(try outbox.reconcile(transcriptURLs: pane.session.allTranscripts.map(\.url))).isEmpty {
+                return L("交接沒有開始：寄件匣還有訊息未確認送達，請先確認或處理。")
+            }
+        } catch { return L("交接沒有開始：寄件匣讀取或更新失敗，無法確認是否還有未送達訊息。") }
+        if pane.session.status == .working || store.status[c.id] == .working || pane.inputBar.busy {
+            return L("交接沒有開始：這格正在回答，請等回答結束。")
+        }
+        let activity = SessionActivity.shared
+        if !activity.running(c.id).isEmpty
+            || store.backgroundModel[c.id] != nil || pane.isBangRunning || pane.codeLab?.isProgramRunning == true {
+            return L("交接沒有開始：這格還有背景工作或程式正在跑，請等它完成或先停下來。")
+        }
+        return nil
+    }
+
+    /// 曾換過模型的同一段對話可能有多份紀錄，任何一份新增、刪除或改寫都要中止切換。
+    private func handoffTranscriptVersions(_ c: Conversation, pane: ChatPane, directory: String) throws -> [URL: Handoff.TranscriptVersion] {
+        let claude = Store.claudeTranscript(c.claudeSession, path: directory)
+        var versions = [claude: try Handoff.TranscriptVersion(claude)]
+        for item in pane.session.allTranscripts where item.url != claude && FileManager.default.fileExists(atPath: item.url.path) {
+            versions[item.url] = try Handoff.TranscriptVersion(item.url)
+        }
+        return versions
+    }
+
+    private func handoffSourceUnchanged(_ source: Conversation, directory: String, version: [URL: Handoff.TranscriptVersion]) -> Bool {
+        guard let old = store.conversation(source.id), old.claudeSession == source.claudeSession, old.projectID == source.projectID,
+              store.project(old.projectID)?.path == directory,
+              let pane = workspace.pane(for: old) as? ChatPane,
+              let current = try? handoffTranscriptVersions(old, pane: pane, directory: directory) else { return false }
+        return current == version
+    }
+
+    private func handoffChangedNotice(_ file: URL) -> String {
+        L("交接期間這段對話又有新內容，交接文字已存在 \(file.path)；要用最新內容請再按一次交接")
+    }
+
+    /// 失敗時保留原本那格與草稿；新聊天室留在側欄，交接第一則放進它的輸入框，不自動重送。
+    private func preserveFailedHandoff(_ message: String, file: URL, old: UUID, new: UUID, reason: String) {
+        var draftSaved = false
+        // 新舊同名會讓 codenv-todo wake 等以名字找人的地方撞名：沒完成的新聊天室標出來
+        if let o = store.conversation(old), let n = store.conversation(new), n.title == o.title {
+            store.rename(new, to: o.title + L("（交接未送達）"), byUser: true)
+        }
+        if let conv = store.conversation(new), let p = workspace.pane(for: conv) as? ChatPane {
+            // onLost 可能已經從寄件匣放回同一則，不再重複附一次。
+            if !p.inputBar.textView.string.contains(message) { p.inputBar.setDraft(message) }
+            draftSaved = p.flushDraft()
+            p.notice(reason + L(" 交接文字已存在 \(file.path)；舊聊天室沒有改名或封存。"))
+        }
+        let input = draftSaved ? L("交接訊息已放進新聊天室（\(new.uuidString.prefix(8))）的輸入框。") : L("新聊天室的草稿還沒存好，請從交接檔取回內容。")
+        handoffNotice(old, reason + " " + input + L(" 交接文字已存在 \(file.path)；舊聊天室沒有改名或封存，原本的草稿也留著。"))
+    }
+
+    private func finishHandoff(_ source: Conversation, new: UUID, directory: String, version: [URL: Handoff.TranscriptVersion], file: URL) {
+        // 等送達期間也可能有新內容：最後一次檢查通過後才動舊對話。
+        guard handoffSourceUnchanged(source, directory: directory, version: version), let old = store.conversation(source.id) else {
+            let message = handoffChangedNotice(file)
+            handoffNotice(source.id, message); handoffNotice(new, message); return
+        }
+        guard let oldPane = workspace.pane(for: old) as? ChatPane, let next = store.conversation(new),
+              let newPane = workspace.pane(for: next) as? ChatPane else { return }
+        let bg = bgHandoffs[source.id] != nil
+        if let reason = handoffBlockReason(old, pane: oldPane) {
+            bgHandoffs[old.id]?.lastMessage = reason
+            oldPane.notice(reason + L(" 交接文字已存在 \(file.path)，新聊天室已收到交接，但這次沒有切換或封存。")); return
+        }
+        guard oldPane.moveDraft(to: newPane) else {
+            let why = L("新聊天室已收到交接，但草稿搬移未完成（存檔失敗或新輸入框已有內容），舊聊天室沒有改名或封存。交接文字已存在 \(file.path)")
+            bgHandoffs[old.id]?.lastMessage = why
+            oldPane.notice(why); return
+        }
+        let bundle = old.bundle ?? store.windowFrames[old.id]?.window
+        if let i = store.conversations.firstIndex(where: { $0.id == new }) {
+            // 直接接手原位置；reorder 會順便搬框，封存後再叫它會把新聊天室的框清掉。
+            store.conversations[i].order = old.order
+            store.conversations[i].groupID = old.groupID
+            store.conversations[i].projectID = old.projectID
+            store.conversations[i].bundle = old.bundle
+        }
+        guard store.saveNow(), ScheduleStore.shared.retarget(from: old.id, to: new) else {
+            newPane.moveDraft(to: oldPane)
+            let why = L("新聊天室已收到交接，但聊天室或排程存檔失敗，沒有切換、改名或封存。交接文字已存在 \(file.path)")
+            bgHandoffs[old.id]?.lastMessage = why
+            oldPane.notice(why); return
+        }
+        // 具名的已關閉 Window 也先整個找回，再換掉原格，框的編號、掛件、網址與比例都能接續。
+        // 背景交接（每日交接）不找回已關閉的 Window、不 show：舊的不在版面上，新的就只留在側欄
+        if !bg, store.locate(old.id) == nil { store.reopenClosedWindow(containing: old.id) }
+        if bg { _ = store.replacePane(old.id, with: new, activate: false) }
+        else if !store.replacePane(old.id, with: new) { store.show(new) }
+        // 總指揮換代：Session 的總指揮聊天室指向舊的，就改指新的
+        for i in store.sessions.indices where store.sessions[i].chief == old.id { store.sessions[i].chief = new }
+        // 一般框直接繼承 bundle；Window 框通常由 windowFrames 現算，必要時補明確記號，保證封存前新成員已在框裡。
+        if let bundle, store.conversation(new)?.bundle != bundle, store.windowFrames[new]?.window != bundle { store.setBundle(new, bundle) }
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyyMMdd"
+        let base = old.title.replacingOccurrences(of: #"^\d{8}_"#, with: "", options: .regularExpression)
+        store.rename(old.id, to: f.string(from: Date()) + "_" + base, byUser: true)
+        store.setArchived(old.id, true)
+        // 背景交接只在「目前選取的正是舊的」時順延給新的；其他情況不碰目前選取
+        if !bg || store.selected == old.id { store.selected = new }
+        bgHandoffs[old.id]?.succeeded = true
+        let saved = store.saveNow()
+        newPane.notice(saved ? L("交接已確認送達，舊聊天室已封存。交接文字存在 \(file.path)")
+                            : L("交接已確認送達，但切換後的設定還沒存好，請先不要關閉 codenv。交接文字存在 \(file.path)"))
     }
 
     func switchMode(_ id: UUID, terminal: Bool) {

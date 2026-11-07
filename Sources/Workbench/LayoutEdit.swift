@@ -53,16 +53,16 @@ extension Store {
 
     // MARK: Pane
 
-    /// 版面上 old 那格直接換成 new（焦點跟著換）；old 不在版面上回傳 false
+    /// 版面上 old 那格直接換成 new（焦點跟著換；activate＝false 時不切到那個 Window）；old 不在版面上回傳 false
     @discardableResult
-    func replacePane(_ old: UUID, with new: UUID) -> Bool {
+    func replacePane(_ old: UUID, with new: UUID, activate: Bool = true) -> Bool {
         guard locate(old) != nil else { return false }
         if old == new { return true }       // 換成自己：什麼都不用做（不然下面 unplace 會先把它拿掉）
         unplace(new)
         guard let (si2, wi2) = locate(old) else { return false }
         sessions[si2].windows[wi2].root = sessions[si2].windows[wi2].root?.replacing(old, with: .leaf(new))
         if sessions[si2].windows[wi2].focused == old { sessions[si2].windows[wi2].focused = new }
-        makeCurrent(si2, wi2)
+        if activate { makeCurrent(si2, wi2) }      // 背景交接（activate＝false）只換節點，不切 Session／Window、不動目前選取
         return true
     }
 
@@ -99,9 +99,21 @@ extension Store {
     }
 
     /// 在某個 Session 最後開一個新 Window 放這段對話
-    func movePaneToNewWindow(_ conv: UUID, inSession sid: UUID) {
+    func movePaneToNewWindow(_ conv: UUID, inSession sid: UUID, reuseEmpty: Bool = false) {
         guard conversation(conv) != nil, let si = sessionPosition(sid) else { return }
         unplace(conv)
+        if reuseEmpty, let wi = sessions[si].windows.firstIndex(where: { w in
+            !w.detached && !w.renamed && (w.root?.leaves.allSatisfy { isEmptySlot($0) } ?? true)
+        }) {
+            for slot in sessions[si].windows[wi].root?.leaves ?? [] { Store.emptySlots.remove(slot) }
+            sessions[si].windows[wi].root = .leaf(conv)
+            sessions[si].windows[wi].focused = conv
+            sessions[si].windows[wi].zoomed = false
+            sessions[si].current = sessions[si].windows[wi].id
+            currentSession = sid
+            syncSelection()
+            return
+        }
         var w = WindowLayout(name: "\(visibleWindowCount(si) + 1)")
         w.root = .leaf(conv)
         w.focused = conv
@@ -133,6 +145,7 @@ extension Store {
     /// 刪掉一個 Window（只刪版面）。Session 空了就補一個空的 Window
     func deleteWindow(_ id: UUID) {
         guard let (si, wi) = windowPosition(id) else { return }
+        if isChiefProtected(si, wi) { return }      // 總指揮 Window 不能刪
         sessions[si].windows.remove(at: wi)
         if scope == id { scope = nil }
         ensureVisibleWindow(si)     // 主視窗分頁列沒有可見的 Window 了（剩下的都是獨立視窗）：補一個空的
@@ -144,6 +157,7 @@ extension Store {
     /// 同一個 Session 就是換順序。原本的 Session 空了就補一個空的 Window。
     func moveWindow(_ id: UUID, toSession sid: UUID, at index: Int) {
         guard let (si, wi) = windowPosition(id), let ti = sessionPosition(sid) else { return }
+        if isChiefProtected(si, wi) { return }      // 總指揮 Window 固定在自己 Session 的最前面
         if si == ti {
             let to = max(0, min(index, sessions[si].windows.count))
             Self.move(&sessions[si].windows, from: wi, to: to)

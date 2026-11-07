@@ -1,6 +1,6 @@
 import Foundation
 
-/// 單一聊天室的 Claude 跑在 nono 沙盒裡（使用者 11/5「nono 沙盒的放行清單，和 codenv 單一聊天室包 nono 的開關。：：開做吧」）。
+/// 單一聊天室的 Claude 跑在 nono 沙盒裡。
 /// 放行清單在 Resources/nono/codenv-claude.json：聊天室資料夾可讀寫；~/.claude 只開會寫的子資料夾（設定、hooks、外掛、技能、~/.claude.json 只能讀，
 /// 改了會影響沙盒外的 Claude）；鑰匙圈不開。登入權杖在沙盒外取出、用 CLAUDE_CODE_OAUTH_TOKEN 帶進去：
 /// 優先用鑰匙圈「codenv-nono-claude」裡的長效權杖（`claude setup-token` 產生），沒有就暫用 Claude Code 目前的登入權杖（幾小時會過期）。

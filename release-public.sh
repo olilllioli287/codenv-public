@@ -19,6 +19,12 @@ mkdir -p "$WORK/dmg" "$WORK/src" dist
 git archive HEAD | tar -x -C "$WORK/src"
 CODENV_SIGN_IDENTITY=- APP="$WORK/dmg/codenv.app" "$WORK/src/build.sh" --no-open --no-register
 
+# 檢查：命令列工具一定要在 App 裡（總指揮派工、看板、記憶檢查都靠它們）
+for t in codenv-todo codenv-browser memory-check; do
+    [ -x "$WORK/dmg/codenv.app/Contents/Resources/bin/$t" ] || { echo "App 裡缺少 $t，沒有做 dmg"; exit 2; }
+done
+echo "檢查：App 裡有 codenv-todo、codenv-browser、memory-check"
+
 # 檢查：做好的 App 裡面不能有你的家目錄路徑或使用者名稱
 LEAK=0
 for NEEDLE in "$HOME" "$(id -un)"; do

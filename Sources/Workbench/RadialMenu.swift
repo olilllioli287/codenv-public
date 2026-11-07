@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// ⌥ ＋左鍵：在游標位置叫出八宮格環狀選單（使用者 10/29）。
+// ⌥ ＋左鍵：在游標位置叫出八宮格環狀選單。
 // 先於任何東西看到事件：KeyStatsApp.sendEvent（NSApplication 層）一開始就問 RadialMenu.intercept，所以聊天格的 WebView、
 // 終端機格（原本 ⌥ 點是移動游標）、文字框（⌥ 拖是方塊選取）、瀏覽器格、側欄都一樣先顯示八宮格。只按 ⌥（沒有 ⌘ ⌃ ⇧）才算。
 // 操作：按住不放、滑到某一格放開＝執行；點一下放開＝選單留著，再點某一格執行；Esc、點中間、點選單外面＝取消。
@@ -89,8 +89,17 @@ enum RadialAction: String, CaseIterable {
         }
     }
 
+    /// 舊自訂八宮格照樣保存在 defaults，只在顯示、設定選項與執行時過濾網頁動作。
+    var available: Bool {
+        switch self {
+        case .browser, .geminiExport, .google, .openGemini, .openNotebook: return Prefs.shared.webFeaturesEnabled
+        default: return true
+        }
+    }
+
     /// 這一格現在能不能用（灰掉的按了沒反應）
     func enabled(for c: Conversation?) -> Bool {
+        guard available else { return false }
         if self == .none { return false }
         if !needsPane { return true }
         guard let c else { return false }
@@ -107,11 +116,12 @@ enum RadialAction: String, CaseIterable {
     }
 
     func run(_ mc: MainWindowController, on id: UUID?) {
+        guard available else { return }
         let store = mc.store
         let pane = id.flatMap { mc.workspace.panes[$0] }
         switch self {
         case .none: break
-        case .collab: CollabBoardModel.shared.open.toggle()
+        case .collab: mc.toggleCollabBoard()
         case .settings: mc.openSettings()
         case .newChat:
             guard let id, let c = store.conversation(id) else { return }
@@ -155,7 +165,7 @@ enum RadialAction: String, CaseIterable {
 /// 八格的設定：存在 appDefaults（radialSlots，8 個動作名字）。順序＝從正上方開始順時針：上、右上、右、右下、下、左下、左、左上
 enum RadialSlots {
     static let names = [L("上"), L("右上"), L("右"), L("右下"), L("下"), L("左下"), L("左"), L("左上")]
-    /// 預設（使用者 10/29）：右＝協作面板、右下＝設定、左＝壓縮、左下＝交接（⌥ 點的那一格）、右上＝開 Google 子選單，其他空白
+    /// 預設：右＝協作面板、右下＝設定、左＝壓縮、左下＝交接（⌥ 點的那一格）、右上＝開 Google 子選單，其他空白
     static let defaults: [RadialAction] = [.none, .google, .collab, .settings, .none, .handoff, .compact, .none]
     static var current: [RadialAction] {
         get {
@@ -166,6 +176,7 @@ enum RadialSlots {
         set { appDefaults.set(newValue.map(\.rawValue), forKey: "radialSlots") }
     }
     static func reset() { appDefaults.removeObject(forKey: "radialSlots") }
+    static var visible: [RadialAction] { current.map { $0.available ? $0 : .none } }
     /// 第二層（右上「開 Google」）：這版固定兩格，左＝Gemini、右＝NotebookLM，不能自訂
     static let google: [RadialAction] = [.none, .none, .openNotebook, .none, .none, .none, .openGemini, .none]
 }
@@ -246,7 +257,7 @@ final class RadialMenu {
         panel.hidesOnDeactivate = false
         let conv = target.flatMap { controller?.store.conversation($0) }
         let v = RadialView(frame: NSRect(x: 0, y: 0, width: s, height: s))
-        v.slots = RadialSlots.current
+        v.slots = RadialSlots.visible
         v.enabled = v.slots.map { $0.enabled(for: conv) }
         let host = NSView(frame: NSRect(x: 0, y: 0, width: s, height: s))
         host.wantsLayer = true
@@ -260,6 +271,7 @@ final class RadialMenu {
         // 切到別的 App、選單所在的視窗失去焦點、放著不管：自動收掉，不然選單開著會吃掉所有按鍵
         let nc = NotificationCenter.default
         observers = [nc.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.close() }]
+        observers.append(nc.addObserver(forName: Prefs.webFeaturesChanged, object: nil, queue: .main) { [weak self] _ in self?.close() })
         if let w = event?.window {
             observers.append(nc.addObserver(forName: NSWindow.didResignKeyNotification, object: w, queue: .main) { [weak self] _ in self?.close() })
         }
@@ -316,7 +328,7 @@ final class RadialMenu {
 
     /// 右上「開 Google」：第一層縮小淡出（約 0.12 秒），同一個位置換成第二層淡入放大。「減少動態效果」只做淡入淡出
     private func openSubmenu() {
-        guard let panel, let old = view, let host = panel.contentView, !transitioning else { return }
+        guard Prefs.shared.webFeaturesEnabled, let panel, let old = view, let host = panel.contentView, !transitioning else { return }
         transitioning = true
         generation += 1
         let gen = generation
@@ -324,7 +336,7 @@ final class RadialMenu {
         let small: CGFloat = reduce ? 1 : 0.8
         let nv = RadialView(frame: old.frame)
         nv.slots = RadialSlots.google
-        nv.enabled = nv.slots.map { $0 != .none }
+        nv.enabled = nv.slots.map { $0.enabled(for: target.flatMap { controller?.store.conversation($0) }) }
         nv.wantsLayer = true
         host.addSubview(nv)
         for v in [old, nv] { v.layer?.anchorPoint = CGPoint(x: 0.5, y: 0.5); v.layer?.position = CGPoint(x: v.frame.midX, y: v.frame.midY) }
@@ -463,14 +475,15 @@ private extension NSImage {
 // MARK: 設定頁
 
 struct RadialPage: View {
+    @ObservedObject private var prefs = Prefs.shared
     @State private var slots = RadialSlots.current
     var body: some View {
         Form {
             Text(L("按住 ⌥ 再按滑鼠左鍵，在游標位置叫出八宮格。按住不放滑到某一格再放開＝執行；點一下放開，選單會留著，再點某一格執行；Esc、點中間或點外面＝取消。「這一格」是 ⌥ 點下去的位置所在的那一格。"))
                 .font(.callout).foregroundStyle(.secondary)
             ForEach(0..<8, id: \.self) { i in
-                Picker(RadialSlots.names[i], selection: Binding(get: { slots[i] }, set: { slots[i] = $0; RadialSlots.current = slots })) {
-                    ForEach(RadialAction.allCases.filter { $0 != .openGemini && $0 != .openNotebook }, id: \.self) { a in
+                Picker(RadialSlots.names[i], selection: Binding(get: { slots[i].available ? slots[i] : .none }, set: { slots[i] = $0; RadialSlots.current = slots })) {
+                    ForEach(RadialAction.allCases.filter { $0 != .openGemini && $0 != .openNotebook && (prefs.webFeaturesEnabled || $0.available) }, id: \.self) { a in
                         if a == .none { Text(a.title).tag(a) } else { Label(a.title, systemImage: a.symbol).tag(a) }
                     }
                 }

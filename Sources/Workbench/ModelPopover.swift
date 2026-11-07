@@ -336,7 +336,7 @@ final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     @objc private func appLeft() { close() }
 
-    /// 滑鼠離開面板就自動收（模型面板用，使用者 10/25）：要先移進來過一次才算，打開時滑鼠還在按鈕上不會馬上關
+    /// 滑鼠離開面板就自動收（模型面板用）：要先移進來過一次才算，打開時滑鼠還在按鈕上不會馬上關
     func closeWhenMouseLeaves() {
         var entered = false
         mouseTimer?.invalidate()

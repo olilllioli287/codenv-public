@@ -3,13 +3,13 @@ import SwiftUI
 
 // 協作看板（側欄最左邊的「協作」圖示，右邊打開）：兩個分頁——
 //   目標：使用者訂的事，拆成步驟、每步誰負責（codenv_1／codenv_2／你）、做到哪；最後一步「使用者驗收」只有本人能勾，勾了目標才算完成。
-//     Claude 用 codenv-todo goal add 開的是「提議」，使用者按同意才生效（使用者 10/25 照建議）。下面另列「登記中的檔」。
+//     Claude 用 codenv-todo goal add 開的是「提議」，使用者按同意才生效（照建議）。下面另列「登記中的檔」。
 //   往來：兩個 Claude 互相傳了什麼。
 // 不另外接線：讀 codenv 裡各聊天室的 Claude 紀錄檔——
 //   收到的：「Another Claude session sent a message: <cross-session-message from=… from-name=…>內容</…>」
 //     （也可能是排隊時的 attachment.prompt，直接以 <cross-session-message 開頭）
 //   送出的：assistant 的 SendMessage tool_use（to＋message）
-// 同一則在送方、收方紀錄各有一筆，用「誰 → 誰＋內容」併成一則。只看不送（使用者 10/25：第一版只看）。
+// 同一則在送方、收方紀錄各有一筆，用「誰 → 誰＋內容」併成一則。只看不送（第一版只看）。
 // 兩邊來回超過 12 次（中間使用者本人都沒說話）跳提醒＋「兩邊都暫停」，不自動停。
 // 目標和登記都存 collab.json（goals、items），兩個 Claude 用 scripts/codenv-todo 寫，這裡顯示、可以改。
 
@@ -544,6 +544,23 @@ final class CollabBoardModel: ObservableObject {
         Self.kickAgy()   // 新目標直接生效、可能有 @agy 步驟：叫醒背景執行器（其他新增／同意都有叫，這裡漏了；agy Argon 11/6）
     }
 
+    /// 記憶相關的提議（記憶容量提示、交接時的記憶提議）：一律「提議中」（不看 autoApprove），只有使用者自己的步驟，沒有任何 agent 步驟，
+    /// 所以背景不會有人自己動手；使用者在看板同意後，才會有 Claude 去寫記憶。同標題還沒完成的不重複開；同來源的提議中最多留 limit 筆，免得洗版。
+    func addMemoryProposal(title: String, done: String, step: String, by: String, limit: Int = 10) {
+        let now = Self.iso.string(from: Date())
+        let g: [String: Any] = ["id": Self.newID(), "title": title, "status": "proposed", "at": now, "by": by, "done": done,
+                                "steps": [["id": Self.newID(), "text": step, "owner": Self.user, "state": "todo", "at": now],
+                                          ["id": Self.newID(), "text": Self.verify, "owner": Self.user, "state": "todo", "at": now]]]
+        edit { o in
+            var goals = o["goals"] as? [[String: Any]] ?? []
+            if goals.contains(where: { $0["title"] as? String == title && $0["status"] as? String != "done" }) { return false }
+            if goals.filter({ $0["by"] as? String == by && $0["status"] as? String == "proposed" }).count >= limit { return false }
+            goals.append(g)
+            o["goals"] = goals
+            return true
+        }
+    }
+
     /// 改一個目標（fn 改那一筆；回傳 nil＝刪掉）。所有步驟都完成就標成完成，反過來又有沒完成的就回到進行中
     func editGoal(_ id: String, _ fn: @escaping ([String: Any]) -> [String: Any]?) {
         edit { o in
@@ -745,7 +762,7 @@ final class CollabBoardModel: ObservableObject {
     /// 測試 App 用同一個 --state-dir 的 collab.json；--codenv-todo <路徑> 換成還沒安裝的那份
     static func kickAgy() {
         let a = CommandLine.arguments
-        var tool = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/codenv-todo").path
+        var tool = CLITools.path("codenv-todo") ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/codenv-todo").path
         if stateDir != nil {
             // 測試版沒指定 --codenv-todo 就不叫：用正式的 codenv-todo 會在使用者的正式看板上開執行器
             guard let i = a.firstIndex(of: "--codenv-todo"), i + 1 < a.count else { return }
@@ -797,24 +814,28 @@ struct CollabBoardView: View {
     @Environment(\.uiScale) private var s
     var openConversation: (UUID) -> Void
     var pause: (CollabPair) -> Void
+    /// 嵌在右欄分頁裡：不畫自己的標題列（右欄的分頁列取代它）
+    var embedded = false
     @State private var expanded: Set<String> = []
     @State private var editing: GoalDraft?
     @State private var newStep: [String: String] = [:]
     @State private var showDone = false
     @State private var deleting: CollabGoal?
-    /// 「來回太多次」的提醒平常收成一行，點了再展開（使用者 10/25：佔太多位置）
+    /// 「來回太多次」的提醒平常收成一行，點了再展開（佔太多位置）
     @AppStorage("collabWarningsOpen", store: appDefaults) private var warningsOpen = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(L("協作看板")).font(.system(size: 14 * s, weight: .semibold))
-                Spacer()
-                Button { m.open = false } label: { Image(systemName: "xmark").font(.system(size: 11 * s)) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help(L("關掉看板"))
+            if !embedded {
+                HStack {
+                    Text(L("協作看板")).font(.system(size: 14 * s, weight: .semibold))
+                    Spacer()
+                    Button { m.open = false } label: { Image(systemName: "xmark").font(.system(size: 11 * s)) }
+                        .buttonStyle(.plain).foregroundStyle(.secondary).help(L("關掉看板"))
+                }
+                .padding(.horizontal, 12).frame(height: WindowHost.barHeight)
+                Divider()
             }
-            .padding(.horizontal, 12).frame(height: WindowHost.barHeight)
-            Divider()
             agyBar
             if !m.warnings.isEmpty { warnings }
             if let n = m.notice {
@@ -832,7 +853,7 @@ struct CollabBoardView: View {
             default: goalList
             }
         }
-        .frame(minWidth: 280)
+        .frame(minWidth: embedded ? 0 : 280)
         .onAppear { m.start() }
         .sheet(item: $editing) { d in GoalEditor(draft: d) { t, done, steps in
             if let id = d.goalID { m.updateGoal(id, title: t, done: done) } else { m.addGoal(title: t, done: done, steps: steps) }

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// 排程喚醒：到時間自動送一則訊息給某段對話（對話右鍵「排程…」）。使用者 10/25 定的範圍：
+// 排程喚醒：到時間自動送一則訊息給某段對話（對話右鍵「排程…」）。定的範圍
 // - codenv 沒開就不送（不裝 LaunchAgent、不叫醒 Mac）；重開時錯過好幾次只補一次，下一次從現在算
 // - 只能送訊息，不能關 codenv 或聊天室
 // - 小視窗和排程頁都寫出會送給哪個模型；全部排程合計每天最多送 10 則，超過就跳過、記「超過每日上限」
@@ -149,6 +149,18 @@ final class ScheduleStore: ObservableObject {
 
     func has(_ conversation: UUID) -> Bool { items.contains { $0.conversation == conversation && $0.enabled } }
     func of(_ conversation: UUID) -> [WakeSchedule] { items.filter { $0.conversation == conversation } }
+
+    /// 交接只換接收者：不經 put，不重算時間、不清待送與歷史；存不成就保留原本的指向。
+    @discardableResult
+    func retarget(from old: UUID, to new: UUID) -> Bool {
+        guard old != new, items.contains(where: { $0.conversation == old }) else { return true }
+        guard !protectOriginal else { return false }
+        let original = items
+        for i in items.indices where items[i].conversation == old { items[i].conversation = new }
+        if save() { return true }
+        items = original
+        return false
+    }
 
     /// 新增或改一個排程（下一次時間從現在重算）
     /// saved：存好了；retrying：這次寫檔失敗，排程留在記憶體、每 30 秒重試存檔（關掉 codenv 前沒存成就會不見）；refused：保護原檔中，沒有加進去

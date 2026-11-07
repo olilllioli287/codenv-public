@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import CoreGraphics
 
 // 版面：照 tmux 的三層 Session → Window → Pane，但每個 Pane 放的是一段對話。
@@ -115,7 +115,7 @@ struct WindowLayout: Codable, Identifiable, Equatable {
     var zoomed = false        // Ctrl+A z：只顯示目前那格
     /// 使用者自己取過名字；沒取的話名字跟著目前那格的對話標題
     var renamed = false
-    /// 拉出去變成獨立視窗了（使用者 10/29：⌘ Q 再回來不用再移動位置，所以存檔、重開還原）。獨立的 Window 一律排在 Session 的 windows 最後面，主視窗的分頁用前面那幾個，位置編號不會錯
+    /// 拉出去變成獨立視窗了（⌘ Q 再回來不用再移動位置，所以存檔、重開還原）。獨立的 Window 一律排在 Session 的 windows 最後面，主視窗的分頁用前面那幾個，位置編號不會錯
     var detached = false
     /// 獨立視窗的位置和大小：x、y、寬、高，x、y 是相對它所在螢幕左下角的位移（螢幕排列變了也不會跑掉）；detachedScreen＝那個螢幕的名字（NSScreen.localizedName）
     var detachedFrame: [Double]? = nil
@@ -146,8 +146,29 @@ struct SessionLayout: Codable, Identifiable, Equatable {
     var name: String
     var windows: [WindowLayout]
     var current: UUID?
-    /// 屬於哪一區：nil＝首頁、"codelab"＝程式碼學習專區（使用者 10/25：codelab 的 Session／Window 跟首頁分開）。舊存檔沒有這欄＝首頁
+    /// 屬於哪一區：nil＝首頁、"codelab"＝程式碼學習專區（codelab 的 Session／Window 跟首頁分開）。舊存檔沒有這欄＝首頁
     var area: String? = nil
+    /// 總指揮涵蓋的頂層組（查詢時包含所有子組）；nil＝一般版面，空陣列仍是已設定的總指揮
+    var groups: [UUID]? = nil
+    /// 總指揮聊天室；只記關聯，不代表要啟動程序或搬動 Window
+    var chief: UUID? = nil
+    /// 總指揮類型："single"＝整個總指揮是一個專案；"multi"＝底下的子群組各是一個子專案；nil＝依群組結構推斷（有子群組＝multi）
+    var commanderKind: String? = nil
+}
+
+/// 舊存檔沒有總指揮欄位，照 WindowLayout 的慣例用手寫解碼保留相容性
+extension SessionLayout {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        windows = try c.decode([WindowLayout].self, forKey: .windows)
+        current = try c.decodeIfPresent(UUID.self, forKey: .current)
+        area = try c.decodeIfPresent(String.self, forKey: .area)
+        groups = try c.decodeIfPresent([UUID].self, forKey: .groups)
+        chief = try c.decodeIfPresent(UUID.self, forKey: .chief)
+        commanderKind = try c.decodeIfPresent(String.self, forKey: .commanderKind)
+    }
 }
 
 extension Store {
@@ -219,6 +240,7 @@ extension Store {
     /// 加一個 Window 到 Session 的最後（獨立視窗的 Window 一律排在最後面，新的插在它們前面，主視窗分頁的位置編號才不會錯）
     func appendWindow(_ w: WindowLayout, at si: Int) {
         sessions[si].windows.insert(w, at: sessions[si].windows.firstIndex { $0.detached } ?? sessions[si].windows.count)
+        partitionDetached(si)      // 新 Window 裡有總指揮聊天室的話，要排到最前面
     }
 
     /// 這個 Session 主視窗分頁列上的 Window 數（沒拉出去的）
@@ -227,8 +249,59 @@ extension Store {
     /// 不變量：獨立視窗的 Window 一律排在 Session 最後面（主視窗分頁列的編號才不會錯）。穩定排序，一般 Window 彼此的順序不變
     func partitionDetached(_ si: Int) {
         let w = sessions[si].windows
-        let sorted = w.filter { !$0.detached } + w.filter { $0.detached }
+        var vis = w.filter { !$0.detached }
+        // 總指揮模式：放總指揮聊天室的那個 Window 固定排主視窗分頁列的最前面（＝⌘ 1、最左邊的紫色方塊）
+        if let ci = chiefWindowIndex(si, in: vis), ci != 0 { vis.insert(vis.remove(at: ci), at: 0) }
+        let sorted = vis + w.filter { $0.detached }
         if sorted.map(\.id) != w.map(\.id) { sessions[si].windows = sorted }
+    }
+
+    // MARK: 總指揮 Window（分頁列最左邊的紫色方塊）
+
+    /// 這個 Session 的總指揮聊天室 id（只有總指揮模式、而且聊天室還在才算）
+    func chiefID(_ si: Int) -> UUID? {
+        guard Prefs.shared.sidebarMode == "commander", sessions.indices.contains(si), sessions[si].area == nil,
+              let c = sessions[si].chief, conversation(c) != nil else { return nil }
+        return c
+    }
+    /// 一串 Window 裡放著總指揮聊天室的那個（只看主視窗分頁列上的，所以傳進來的是沒拉出去的）
+    func chiefWindowIndex(_ si: Int, in vis: [WindowLayout]) -> Int? {
+        guard let c = chiefID(si) else { return nil }
+        return vis.firstIndex { $0.root?.contains(c) == true }
+    }
+    /// 總指揮在分頁列上的狀態：0＝不是總指揮模式；1＝總指揮 Window 就在分頁列最前面（它就是第 0 個分頁，畫成紫色方塊）；
+    /// 2＝總指揮沒擺在任何 Window、或已經拉出去變獨立視窗（方塊獨立在最左邊，不佔分頁；⌘ 1 是它，其他分頁的 ⌘ 數字順延一個）
+    func chiefTabMode(_ si: Int) -> Int {
+        guard chiefID(si) != nil else { return 0 }
+        let vis = sessions[si].windows.filter { !$0.detached }
+        return chiefWindowIndex(si, in: vis) == nil ? 2 : 1
+    }
+    /// 這個 Window 是不是不能關的總指揮 Window（沒拉出去、裡面有總指揮聊天室；拉出去的獨立視窗可以關）
+    func isChiefProtected(_ si: Int, _ wi: Int) -> Bool {
+        guard let c = chiefID(si), sessions[si].windows.indices.contains(wi) else { return false }
+        let w = sessions[si].windows[wi]
+        return !w.detached && w.root?.contains(c) == true
+    }
+    /// 點紫色方塊／⌘ 1（總指揮沒在分頁列上時）：叫總指揮聊天室回來——在獨立視窗就叫到最前面，沒擺著就開一個 Window 放它
+    func summonChief() {
+        scope = nil
+        guard let si = sessionIndex, let c = chiefID(si) else { return }
+        windowSelected = false
+        show(c)
+        if let si = sessionIndex { partitionDetached(si) }
+        syncSelection()
+    }
+    /// Ctrl+A 數字（只切過去、不選取整個 Window）：位置的算法同 toggleWindowSelection(slot:)
+    func selectWindow(slot n: Int) {
+        if let si = scoped(nil, { sessionIndex }), scoped(nil, { chiefTabMode(si) }) == 2 {
+            if n == 0 { summonChief() } else { selectWindow(at: n - 1) }
+        } else { selectWindow(at: n) }
+    }
+    /// ⌘ 數字用（0 起算的第幾個位置）：總指揮方塊算第 0 個
+    func toggleWindowSelection(slot n: Int) {
+        if let si = scoped(nil, { sessionIndex }), scoped(nil, { chiefTabMode(si) }) == 2 {
+            if n == 0 { summonChief() } else { toggleWindowSelection(at: n - 1) }
+        } else { toggleWindowSelection(at: n) }
     }
 
     /// 主視窗分頁列上一個可見的 Window 都沒有了（最後一個被關掉、刪掉、搬走）：在最前面補一個空的（獨立視窗不算主視窗的分頁）。回傳補的那個的 id
@@ -266,9 +339,11 @@ extension Store {
     func detachWindow(_ id: UUID) -> Bool {
         guard let si = sessions.firstIndex(where: { $0.windows.contains { $0.id == id } }),
               let wi = sessions[si].windows.firstIndex(where: { $0.id == id }), !sessions[si].windows[wi].detached,
-              visibleWindowCount(si) > 1 else { return false }
+              sessions[si].windows[wi].root != nil else { return false }     // 空的 Window 拉出去沒意義
         sessions[si].windows[wi].detached = true
         sessions[si].windows.append(sessions[si].windows.remove(at: wi))      // 獨立的排最後面
+        // 只有一個也能拉出去：主視窗補一個空的 Window 當分頁，不會整條空掉
+        ensureVisibleWindow(si)
         if sessions[si].current == id { sessions[si].current = sessions[si].windows.first { !$0.detached }?.id }
         syncSelection()
         return true
@@ -302,6 +377,7 @@ extension Store {
 
     /// 側欄的選取跟著目前 Window 的那格走
     func syncSelection() {
+        if let si = sessionIndex { partitionDetached(si) }      // 總指揮 Window 永遠排最前面（只在順序不對時才會動）
         let f = currentWindow?.focused
         if selected != f { selected = f }
         if let f { unread.remove(f); if let i = conversations.firstIndex(where: { $0.id == f }) { conversations[i].lastOpened = Date(); selectedProject = conversations[i].projectID } }
@@ -355,6 +431,7 @@ extension Store {
 
     /// 打開一段對話：已經擺在某格就跳過去；不然放進目前那格（換掉原本的對話）
     func show(_ id: UUID, replaceFocused: Bool = false) {
+        guard Prefs.shared.webFeaturesEnabled || conversation(id)?.isBrowser != true else { return }
         if windowSelected { windowSelected = false }
         // 這段對話屬於哪一區（codelab 的對話放 codelab 那套 Session，其他放首頁那套）
         let want = conversation(id).map(wantsCodeLab) == true ? Store.codeLabArea : "home"
@@ -367,7 +444,8 @@ extension Store {
         }
         // 還沒擺著：放進它那一區的 Session
         if want != area { switchArea(want) }
-        // 使用者 10/29：所有 Window 裡都沒有這個聊天室，就開在新的 Window（目前的 Window 是空的就開在那裡），不再換掉紫框那格；
+        routeUnplacedToCommander(id)
+        // 所有 Window 裡都沒有這個聊天室，就開在新的 Window（目前的 Window 是空的就開在那裡），不再換掉紫框那格；
         // 它在掛件框裡，框裡還沒擺出來的聊天室和掛件一起開。瀏覽器、終端機、草稿、codelab 那一區照舊
         if !replaceFocused, want == "home", let c = conversation(id), Store.isChat(c) { openUnplaced(c); return }
         editWindow { w in
@@ -379,6 +457,42 @@ extension Store {
         }
     }
 
+    /// 未擺出的聊天室先回到所屬總指揮；版面已經有它時，保留原本的跨組協作配置。
+    func routeUnplacedToCommander(_ id: UUID) {
+        guard Prefs.shared.sidebarMode == "commander", locate(id) == nil,
+              let c = conversation(id), !wantsCodeLab(c),
+              let g = groupOf(c), let sid = commanderSessionID(forGroup: g) else { return }
+        scope = nil
+        if area != "home" { switchArea("home") }
+        selectSession(sid)
+    }
+
+    /// 右欄「叫出來」只在安全的單格版面間搬移，其餘保留原 Window 並切過去。
+    func summonConversation(_ id: UUID, inSession sid: UUID) {
+        guard let c = conversation(id), Prefs.shared.webFeaturesEnabled || !c.isBrowser,
+              let target = sessionPosition(sid) else { return }
+        scope = nil
+        windowSelected = false
+        if let (si, wi) = locate(id) {
+            let w = sessions[si].windows[wi]
+            if w.detached {
+                sessions[si].windows[wi].focused = id
+                makeCurrent(si, wi)
+                return
+            }
+            if si == target || w.root?.leaves.count != 1 || w.renamed {
+                let a = sessions[si].area ?? "home"
+                if area != a { switchArea(a) }
+                sessions[si].windows[wi].focused = id
+                makeCurrent(si, wi)
+                return
+            }
+        }
+        let a = sessions[target].area ?? "home"
+        if area != a { switchArea(a) }
+        movePaneToNewWindow(id, inSession: sid, reuseEmpty: true)
+    }
+
     /// 還沒擺在任何 Window 的聊天室：開在空的目前 Window、不然新開一個 Window；掛件框裡還沒擺出來的聊天室左右平分一起開，框的掛件（沒擺在別處的）排最右邊，焦點在點的那一格。
     /// 框裡已經擺在別的 Window 的不動
     private func openUnplaced(_ c: Conversation) {
@@ -388,7 +502,7 @@ extension Store {
         if !blank { newWindow(with: nil) }
         else { for slot in currentWindow?.root?.leaves ?? [] { Store.emptySlots.remove(slot) } }
         var members = [c.id]
-        if let b = c.bundle {
+        if Prefs.shared.webFeaturesEnabled, let b = c.bundle {
             members = conversations.filter { $0.bundle == b && Store.isChat($0) && locate($0.id) == nil }.sorted(by: orderedBefore).map(\.id)
             if !members.contains(c.id) { members.insert(c.id, at: 0) }
         }
@@ -401,7 +515,7 @@ extension Store {
             w.focused = c.id
             w.zoomed = false
         }
-        if let b = c.bundle {
+        if Prefs.shared.webFeaturesEnabled, let b = c.bundle {
             for g in gadgets(of: b) where locate(g.id) == nil { appendRight(g.id) }
             editWindow { $0.focused = c.id }      // appendRight 會把焦點給掛件：還給使用者點的那格
         }
@@ -409,7 +523,7 @@ extension Store {
 
     // MARK: Pane
 
-    /// 在目前 Window 的最右邊加一欄：整棵樹包一層左右切，新格在右邊（掛件用；使用者 10/25「優先顯示在最右邊，之後使用者再調整位置」）。
+    /// 在目前 Window 的最右邊加一欄：整棵樹包一層左右切，新格在右邊（掛件用）。
     /// 新欄寬度＝跟每欄平分（1 格→1/2、2 格→1/3…），最窄 1/4
     /// animated：從右邊彈進來（WindowHost 的 PaneSlide；掛件用）
     func appendRight(_ conv: UUID, animated: Bool = false) {
@@ -442,8 +556,8 @@ extension Store {
         }
     }
 
-    /// ⌘ W（使用者 10/25：「紫框選中的，按下 ⌘ W 會單純關掉那個 pane」）：Window 裡有兩格以上只關目前那格，只剩一格才關整個 Window。
-    /// 掛件不算格子（使用者 10/26：「Windows 內只有一個聊天室，掛件 gemini 或其他的面板時，⌘ W 可以直接關掉整個 Windows」）：
+    /// ⌘ W：Window 裡有兩格以上只關目前那格，只剩一格才關整個 Window。
+    /// 掛件不算格子
     /// 一般格子（聊天室、終端機、空格子…）只有一格、其他都是掛件，就關整個 Window；有兩個以上一般格子，照舊只關紫框那格
     func closePaneOrWindow() {
         let normal = (currentWindow?.root?.leaves ?? []).filter { conversation($0)?.isGadget != true }.count
@@ -452,6 +566,8 @@ extension Store {
 
     /// 關掉目前那格（對話留著）。關之前記下整個 Window 的版面，⌘ ⇧ T 可以放回原位、原比例；空格子不記
     func closePane() {
+        // 總指揮聊天室那格不能關（要關先把它的 Window 拉出成獨立視窗）
+        if let si = sessionIndex, let wi = windowIndex, isChiefProtected(si, wi), sessions[si].windows[wi].focused == chiefID(si) { NSSound.beep(); return }
         if let si = sessionIndex, let wi = windowIndex, let w = Optional(sessions[si].windows[wi]), let f = w.focused, let root = w.root,
            root.leaves.count >= 2, conversation(f) != nil {
             Store.closed.append(.pane(session: sessions[si].id, window: w.id, before: root, pane: f))
@@ -544,6 +660,7 @@ extension Store {
 
     func closeWindow() {
         guard let si = sessionIndex, let wi = windowIndex else { return }
+        if isChiefProtected(si, wi) { NSSound.beep(); return }     // 總指揮 Window 不能關，只能拉出成獨立視窗
         var closed = sessions[si].windows.remove(at: wi)
         // 存進 closed 的不再是獨立的（獨立視窗已經跟著關了）：不然 ⌘ ⇧ T 找回來會變成一個看不見的幽靈 Window
         closed.detached = false
@@ -675,7 +792,7 @@ extension Store {
         syncSelection()
     }
 
-    /// 點上方的 Window 分頁、或按 ⌘ 數字（使用者 10/26）：選取整個 Window；再點同一個 Window 一次＝回到原本那一格
+    /// 點上方的 Window 分頁、或按 ⌘ 數字：選取整個 Window；再點同一個 Window 一次＝回到原本那一格
     /// （紫框那格 focused 在選取期間沒變；原本那格被關掉了，focused 已經由關格子時換到別格，直接用它）
     func toggleWindowSelection(at i: Int) {
         let again = windowSelected && windowIndex == i

@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-// 掛件框（使用者 10/25）：側欄用紫框把幾段聊天室框在一起（左邊一個「{」），框底下一列掛件（Gemini、NotebookLM、任意網頁），
+// 掛件框：側欄用紫框把幾段聊天室框在一起（左邊一個「{」），框底下一列掛件（Gemini、NotebookLM、任意網頁）
 // 由右往左排，新加的在左邊。點掛件就在目前的 Window 開那一格。
 // 資料：聊天室在哪個框＝Conversation.bundle；掛件是一格不列在側欄的瀏覽器（Conversation.gadgetOf＝哪個框），
 // 網址照瀏覽器格子自己記（使用者換到別段 Gemini 對話，就記最後那個連結）。
 // 進出框只看拖到哪裡：拖到框裡某一段的上下＝加入，拖到框外＝離開；移到別組、自己封存、刪掉也算離開。
-// 框裡一段聊天室都不剩：掛件連同網址一起刪掉（使用者 10/25）。
+// 框裡一段聊天室都不剩：掛件連同網址一起刪掉。
 
 enum GadgetKind: String, CaseIterable {
     case gemini, notebooklm, web
@@ -69,6 +69,7 @@ extension Store {
     /// 在這段聊天室的框掛一個掛件（還沒有框就開一個只框它的）；回傳掛件
     @discardableResult
     func addGadget(_ kind: GadgetKind, url: String? = nil, to conv: UUID) -> Conversation? {
+        guard Prefs.shared.webFeaturesEnabled else { return nil }
         guard let i = conversations.firstIndex(where: { $0.id == conv }), !conversations[i].isGadget else { return nil }
         let b = bundleForNewGadget(conv)
         conversations[i].bundle = b
@@ -90,6 +91,7 @@ extension Store {
     /// ⌥ 八宮格在瀏覽器格上選了 Gemini／NotebookLM：這一格原地換網站。回傳要載入的網址（先前這個網站的最後網址，沒有就首頁）；
     /// 這格已經在這個網站就回 nil（什麼都不做）。離開之前先把目前的網址記下來
     func switchBrowserSite(_ id: UUID, to kind: GadgetKind) -> String? {
+        guard Prefs.shared.webFeaturesEnabled else { return nil }
         guard let i = conversations.firstIndex(where: { $0.id == id }), conversations[i].isBrowser else { return nil }
         let cur = conversations[i].browser ?? ""
         if GadgetKind.of(cur) == kind { return nil }
@@ -101,6 +103,7 @@ extension Store {
 
     /// 側欄原本的瀏覽器格子改成掛在某段聊天室的框上（右鍵「改成掛件，掛在…」）
     func attachBrowser(_ browser: UUID, to conv: UUID) {
+        guard Prefs.shared.webFeaturesEnabled else { return }
         guard let bi = conversations.firstIndex(where: { $0.id == browser }), conversations[bi].isBrowser, !conversations[bi].isGadget,
               let ci = conversations.firstIndex(where: { $0.id == conv }), !conversations[ci].isBrowser else { return }
         let b = bundleForNewGadget(conv)
@@ -111,6 +114,7 @@ extension Store {
 
     /// 打開掛件：已經在目前 Window 就跳過去；不然（沒開、或開在別的 Window）搬到目前 Window 的最右邊（加一欄）
     func openGadget(_ id: UUID) {
+        guard Prefs.shared.webFeaturesEnabled else { return }
         guard conversation(id)?.isGadget == true else { return }
         if currentWindow?.root?.contains(id) == true {
             if PaneSlide.shared.isLeaving(id) { PaneSlide.shared.slideIn(id) }   // 正在滑出去：從目前位置彈回來
@@ -125,7 +129,7 @@ extension Store {
         return t.isEmpty || t.allSatisfy(\.isNumber) || t.range(of: #"^Window \d+$"#, options: .regularExpression) != nil
     }
 
-    /// 使用者取過名字的 Window 的聊天室框（使用者 10/26：「Window 被取名，就會生成紫框，跟掛件的一樣功能，只是沒有 gemini 的標示」）：
+    /// 使用者取過名字的 Window 的聊天室框
     /// 聊天室 id → (Window 的 id, Window 名字)。每次現算，不存檔：聊天室放進／拿出 Window、Window 改名改回預設、關掉 Window，框都自己跟著變。
     /// 已經在掛件框裡的聊天室（Conversation.bundle）不搶：留在自己的框，掛件框不受影響
     var windowFrames: [UUID: (window: UUID, name: String)] {
@@ -138,7 +142,7 @@ extension Store {
                 }
             }
         }
-        // 關掉的 Window（Store.closed，會存進 state.json）：框和名字照留（使用者 10/29：⌃ ⌘ W 關掉後紫框和標題不該消失）。
+        // 關掉的 Window（Store.closed，會存進 state.json）：框和名字照留（⌃ ⌘ W 關掉後紫框和標題不該消失）。
         // 聊天室現在已經在別的 Window 裡的不算（那邊自己決定框）；Window 被 ⌘ ⇧ T 或側欄點聊天室找回來後，就變回上面開著的那一種
         for item in Store.closed.reversed() {
             guard case .window(_, _, let w, _) = item, w.renamed, !Store.isDefaultWindowName(w.name) else { continue }
@@ -169,6 +173,7 @@ extension Store {
     /// 一個留下的成員都沒有（名字清空、改回預設、最後一個成員被移出）：框有掛件就把剩下的成員連同掛件一起搬到一個新的一般掛件框
     /// （掛件和記著的網址都留著，不能因為改個名字就丟掉）；沒有掛件才單純清掉記號
     func syncWindowBundles() {
+        guard Prefs.shared.webFeaturesEnabled else { return }
         let wins = Dictionary(sessions.flatMap(\.windows).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var changed = false
         let bundles = Set(conversations.compactMap { $0.isGadget ? nil : $0.bundle })
@@ -199,10 +204,11 @@ extension Store {
     /// 一般的聊天室格子（不是瀏覽器、終端機、草稿、掛件）
     static func isChat(_ c: Conversation) -> Bool { !c.isBrowser && c.terminal != true && c.draft != true && !c.isGadget }
 
-    /// ⌘ ⇧ B（使用者 10/25）：選中聊天室時切換它那個框的掛件——
+    /// ⌘ ⇧ B：選中聊天室時切換它那個框的掛件——
     /// 先把目前 Window 裡同一組、還沒在別的框的聊天室都框進來（別的框裡的不搶，免得那個框變空、掛件被刪）；
     /// 框的掛件在版面上 → 收起來（只是不顯示，掛件和網址都留著）；都沒顯示 → 打開最近用過的那個；還沒有掛件 → 掛一個 Gemini。都放最右邊
     func toggleBundle(from conv: UUID) {
+        guard Prefs.shared.webFeaturesEnabled else { return }
         guard let c = conversation(conv), Store.isChat(c) else { return }
         let b = bundleForNewGadget(conv)
         let g = groupOf(c)
@@ -223,6 +229,7 @@ extension Store {
 
     /// 收起目前 Window 裡這個框的掛件（不刪）；紫框原本在掛件上的話，回到打開它的那段聊天室（不在這個 Window 就找框裡別段，都沒有才是第一格）
     func hideGadgets(of b: UUID) {
+        guard Prefs.shared.webFeaturesEnabled else { return }
         let here = Set(currentWindow?.root?.leaves ?? [])
         let onGadget = currentWindow?.focused.flatMap { conversation($0) }?.gadgetOf == b
         let going = gadgets(of: b).filter { here.contains($0.id) && !PaneSlide.shared.isLeaving($0.id) }.map(\.id)
@@ -230,7 +237,7 @@ extension Store {
         for id in going {
             PaneSlide.shared.slideOut(id) { [weak self] in
                 // 滑出去的 0.2 秒裡使用者切到別的 Window：掛件還在原本那個 Window 的版面裡，照樣拿掉（不要只看目前的 Window）
-                guard let self, PaneSlide.shared.isLeaving(id) == false, self.locate(id) != nil else { return }
+                guard let self, Prefs.shared.webFeaturesEnabled, PaneSlide.shared.isLeaving(id) == false, self.locate(id) != nil else { return }
                 let keep = self.currentWindow?.focused
                 self.unplace(id)
                 if let keep, keep != id, self.currentWindow?.root?.contains(keep) == true { self.editWindow { $0.focused = keep } }
@@ -291,7 +298,7 @@ struct BundleBox<Rows: View>: View {
     /// 目前 Window 顯示中的掛件（沒在裡面的圖示半暗）
     var shownGadgets: Set<UUID> = []
     var depth = 0
-    /// 取過名字的 Window 的框（使用者 10/26）：外觀跟掛件框一樣，名字（小字、紫色）放在框裡上方；沒有掛件就不畫下面那排掛件區
+    /// 取過名字的 Window 的框：外觀跟掛件框一樣，名字（小字、紫色）放在框裡上方；沒有掛件就不畫下面那排掛件區
     var windowTitle: String? = nil
     var onOpen: (UUID) -> Void
     var onRemoveGadget: (UUID) -> Void
@@ -329,9 +336,9 @@ struct BundleBox<Rows: View>: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 5)
                     .help(L("Window「\(t)」裡的聊天室"))
             }
-            // 一行一個（使用者 11/5 參考 Herdr：「版面很滿」）：掛件圖示放在名字那一行的右邊，不再另起一排、不畫分隔線
+            // 一行一個：掛件圖示放在名字那一行的右邊，不再另起一排、不畫分隔線
             HStack(alignment: .center, spacing: 0) {
-                // 「{」由上往下描，跟原本一樣過一半開始放慢（使用者 10/25：「{由上至下，一樣0.8，快到慢」）
+                // 「{」由上往下描，跟原本一樣過一半開始放慢
                 BraceShape().trim(from: 0, to: BundleAnim.progress(t, slowFrom: 0.5))
                     .stroke(accent, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                     .frame(width: 8 * s).padding(.vertical, 4).padding(.leading, 7)
@@ -391,7 +398,7 @@ struct BundleBox<Rows: View>: View {
     }
 }
 
-/// 掛件框的描邊動畫（使用者 10/25）：外框從上緣正中間逆時針畫一圈、分隔線由左往右、「{」由上往下，同時開始、同時結束，0.8 秒。
+/// 掛件框的描邊動畫：外框從上緣正中間逆時針畫一圈、分隔線由左往右、「{」由上往下，同時開始、同時結束，0.8 秒。
 /// 速度：前段等速，畫到減速點（外框＝右邊中間、分隔線和「{」＝正中間）之後二次方放慢，到終點時速度剛好是 0。
 final class BundleAnim: ObservableObject {
     static let shared = BundleAnim()
@@ -481,7 +488,7 @@ struct GadgetIcon: View {
     @Environment(\.uiScale) private var s
     let gadget: Conversation
     let accent: Color
-    /// 目前 Window 有沒有顯示這個掛件：沒顯示就半暗、底色拿掉，像還沒觸發（使用者 10/26）；滑鼠移上去照舊會亮
+    /// 目前 Window 有沒有顯示這個掛件：沒顯示就半暗、底色拿掉，像還沒觸發；滑鼠移上去照舊會亮
     var shown = true
     var action: () -> Void
     @State private var hover = false

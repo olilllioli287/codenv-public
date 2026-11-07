@@ -29,7 +29,10 @@ struct SidebarActions {
 struct SidebarView: View {
     @Environment(\.uiScale) private var s
     @ObservedObject var store: Store
+    @ObservedObject private var prefs = Prefs.shared
+    let workspace: Workspace
     let actions: SidebarActions
+    @ObservedObject private var activity = SessionActivity.shared
     @ObservedObject private var schedules = ScheduleStore.shared
     @ObservedObject private var update = UpdateCheck.shared
     @State private var renaming: Conversation?
@@ -45,6 +48,10 @@ struct SidebarView: View {
     /// 右鍵「掛網頁…」：要掛在哪段聊天室、網址
     @State private var addingWebFor: UUID?
     @State private var webURLText = ""
+    @State private var renamingCommander: SessionLayout?
+    @State private var creatingCommander = false
+    @State private var deletingCommander: SessionLayout?
+    @State private var commanderRenameText = ""
     /// 最左邊圖示列選的是哪一區：home＝首頁（各組）、codelab＝程式碼學習專區
     /// （跟著 store.area：兩區各有自己的 Session／Window，換區由 Store.switchArea 做）
     private var mode: String { store.area }
@@ -59,7 +66,7 @@ struct SidebarView: View {
                     Text(mode == "codelab" ? "codelab" : "codenv").font(.system(size: 20 * s, weight: .semibold))
                         .lineLimit(1).minimumScaleFactor(0.7)
                     Spacer()
-                    // 收起側欄的按鈕拿掉了（使用者 10/29）：只靠 F3（或選單的 ⌃ ⌘ S）
+                    // 收起側欄的按鈕拿掉了：只靠 F3（或選單的 ⌃ ⌘ S）
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -79,6 +86,8 @@ struct SidebarView: View {
                         .padding(.horizontal, 8)
                         .help(L("開一個新的練習聊天室（程式放 \(Edition.display(Edition.practiceFolder))）：左邊 AI、右邊寫程式和執行"))
                     codeLabList
+                } else if prefs.sidebarMode == "commander" {
+                    commanderList
                 } else {
                 SidebarButton(icon: "square.and.pencil", title: L("新對話"), action: actions.newConversation)
                     .padding(.horizontal, 8)
@@ -125,9 +134,10 @@ struct SidebarView: View {
                             ForEach(store.topGroups.filter { $0.name != Store.codeLabGroupName }) { g in groupBlock(g, depth: 0) }
                         }
 
-                        if !store.recent.isEmpty {
+                        let recent = store.recent.filter { prefs.webFeaturesEnabled || !$0.isBrowser }
+                        if !recent.isEmpty {
                             sectionHeader(L("最近項目")).padding(.top, 14)
-                            ForEach(store.recent) { c in
+                            ForEach(recent) { c in
                                 ConversationRow(title: c.title, selected: store.selected == c.id, indent: false,
                                                 status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id)) { store.open(c.id) }
                                     .onDrag { Self.dragItem(c.id) }
@@ -139,6 +149,8 @@ struct SidebarView: View {
                     .padding(.bottom, 16)
                 }
                 }
+                // 最下面固定一塊（用量剩餘＋記憶體）：兩區、兩種清單模式都在
+                SidebarFooter()
             }
         }
         .frame(minWidth: 250)
@@ -168,15 +180,122 @@ struct SidebarView: View {
             Button(L("好")) { if let r = renaming { store.rename(r.id, to: renameText, byUser: true) }; renaming = nil }
             Button(L("取消"), role: .cancel) { renaming = nil }
         }
+        .sheet(isPresented: $creatingCommander) { CommanderCreateForm(store: store) }
+        .alert(L("刪除總指揮"), isPresented: Binding(get: { deletingCommander != nil }, set: { if !$0 { deletingCommander = nil } })) {
+            Button(L("刪除總指揮"), role: .destructive) {
+                if let d = deletingCommander { store.deleteCommander(d.id) }
+                deletingCommander = nil
+            }
+            Button(L("取消"), role: .cancel) { deletingCommander = nil }
+        } message: {
+            Text(L("只會移除「\(deletingCommander?.name ?? "")」這個總指揮。底下的聊天室和分組都不會刪，切回原本的樹狀清單照樣看得到。"))
+        }
+        .alert(L("重新命名總指揮"), isPresented: Binding(get: { renamingCommander != nil }, set: { if !$0 { renamingCommander = nil } })) {
+            TextField(L("名稱"), text: $commanderRenameText)
+            Button(L("好")) {
+                if let session = renamingCommander { store.renameSession(session.id, to: commanderRenameText) }
+                renamingCommander = nil
+            }
+            Button(L("取消"), role: .cancel) { renamingCommander = nil }
+        }
+    }
+
+    /// 首頁總指揮是 Session，點選時只切版面；讀程序狀態絕不呼叫 pane(for:)。
+    private var commanderList: some View {
+        // ChatSession 的程序存活狀態不一定伴隨 Store.status 改變，定期只讀已存在的 Pane。
+        TimelineView(.periodic(from: .now, by: 2)) { _ in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    sectionHeader(L("總指揮"), trailing: AnyView(
+                        Button(action: { creatingCommander = true }) { Image(systemName: "plus") }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                            .help(L("新增總指揮"))
+                            .accessibilityIdentifier("commander-add")))
+                    let commanders = store.sessions.filter { $0.area == nil && $0.groups != nil }
+                    if commanders.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(L("尚未建立總指揮")).font(.system(size: 12 * s)).foregroundStyle(.secondary)
+                            Text(L("總指揮管一批分組，左欄列出底下的聊天室，並有一個總指揮聊天室負責派工。")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+                            Button(L("新增總指揮")) { creatingCommander = true }
+                                .accessibilityIdentifier("commander-add-empty")
+                            Text(L("想用原本的樹狀清單：設定 → 外觀 → 左欄。")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+                        }.padding(12)
+                    }
+                    ForEach(commanders) { session in
+                        let covered = store.conversations(inCommander: session)
+                        CommanderRow(name: session.name,
+                                     chief: session.chief.flatMap { store.conversation($0)?.title } ?? L("尚未指定總指揮聊天室"),
+                                     count: covered.count, running: commanderIsRunning(covered), working: covered.contains { store.status[$0.id] == .working }, selected: store.currentSession == session.id) {
+                            store.scope = nil
+                            store.selectSession(session.id)
+                        }
+                        .help(L("涵蓋 \(covered.count) 段聊天室（含子組與封存）"))
+                        .contextMenu { commanderMenu(session) }
+                    }
+                    let others = store.sessions.filter { $0.area == nil && $0.groups == nil }
+                    if !others.isEmpty {
+                        sectionHeader(L("其他版面")).padding(.top, 8)
+                        ForEach(others) { session in
+                            CommanderRow(name: session.name, selected: store.currentSession == session.id) {
+                                store.scope = nil
+                                store.selectSession(session.id)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 6).padding(.bottom, 10)
+            }
+        }
+    }
+
+    private func commanderIsRunning(_ covered: [Conversation]) -> Bool {
+        let active = activity.activeIDs
+        return covered.contains { c in
+            if let pane = workspace.panes[c.id] as? ChatPane, pane.session.isRunning { return true }
+            if let pane = workspace.panes[c.id] as? TerminalPane, pane.hasRunningProcess { return true }
+            return active.contains(c.id)
+        }
+    }
+
+    @ViewBuilder
+    private func commanderMenu(_ session: SessionLayout) -> some View {
+        Button(L("改名")) { renamingCommander = session; commanderRenameText = session.name }
+        Button(L("刪除總指揮…"), role: .destructive) { deletingCommander = session }
+        Divider()
+        Menu(L("總指揮類型")) {
+            let inferred = store.inferredKind(session)
+            Button((session.commanderKind == nil ? "✓ " : "") + L("自動（依群組：\(inferred == "multi" ? L("多個子專案") : L("單一專案"))）")) { store.setCommanderKind(session.id, nil) }
+            Button((session.commanderKind == "single" ? "✓ " : "") + L("單一專案（整個總指揮是一個專案）")) { store.setCommanderKind(session.id, "single") }
+            Button((session.commanderKind == "multi" ? "✓ " : "") + L("多個子專案（底下的子群組各是一個專案）")) { store.setCommanderKind(session.id, "multi") }
+        }
+        Menu(L("換總指揮聊天室")) {
+            let chats = store.conversations(inCommander: session).filter { Store.isChat($0) }
+            if chats.isEmpty { Text(L("沒有對話")) }
+            ForEach(chats) { c in
+                Button(action: { store.setCommanderChief(session.id, to: c.id) }) {
+                    if session.chief == c.id { Label(c.title, systemImage: "checkmark") }
+                    else { Text(c.title) }
+                }
+            }
+        }
+        Menu(L("編輯涵蓋的組")) {
+            ForEach(store.topGroups.filter { $0.name != Store.codeLabGroupName }) { g in
+                Toggle(g.name, isOn: Binding(get: {
+                    store.sessions.first { $0.id == session.id }?.groups?.contains(g.id) == true
+                }, set: { included in
+                    store.setCommanderGroup(session.id, group: g.id, included: included)
+                }))
+            }
+        }
     }
 
     /// 程式碼學習專區：只列這一組的聊天室（草稿也列，這裡就是它的家）
     @ViewBuilder
     private var codeLabList: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 0) {
                 if let g = store.groups.first(where: { $0.name == Store.codeLabGroupName }) {
-                    let all = store.conversations(inGroup: g.id)
+                    let all = store.conversations(inGroup: g.id).filter { prefs.webFeaturesEnabled || !$0.isBrowser }
                     let active = all.filter { !store.isArchived($0) }
                     let archived = showArchived ? all.filter { store.isArchived($0) } : []
                     sectionHeader(L("練習"), trailing: AnyView(
@@ -191,14 +310,14 @@ struct SidebarView: View {
                     }
                     ForEach(active) { c in
                         ConversationRow(title: c.title, selected: store.selected == c.id, indent: false,
-                                        status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id)) { store.open(c.id) }
+                                        status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id), compact: true) { store.open(c.id) }
                             .help(folderHint(c))
                             .onDrag { Self.dragItem(c.id) }
                             .modifier(ReorderDrop(target: c.id, store: store))
                             .contextMenu { conversationMenu(c) }
                     }
                     ForEach(archived) { c in
-                        ConversationRow(title: c.title, selected: store.selected == c.id, indent: false, dimmed: true) { store.open(c.id) }
+                        ConversationRow(title: c.title, selected: store.selected == c.id, indent: false, dimmed: true, compact: true) { store.open(c.id) }
                             .help(folderHint(c))
                             .onDrag { Self.dragItem(c.id) }
                             .contextMenu { conversationMenu(c) }
@@ -215,7 +334,7 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func projectBlock(_ p: Project) -> some View {
-        let all = store.conversations(in: p.id).filter { $0.draft != true }   // 草稿只列在「最近項目」
+        let all = store.conversations(in: p.id).filter { $0.draft != true && (prefs.webFeaturesEnabled || !$0.isBrowser) }   // 草稿只列在「最近項目」
         let convs = all.filter { !store.isArchived($0) }
         let archived = all.filter { store.isArchived($0) }
         ProjectRow(name: p.name, expanded: p.expanded, selected: store.selectedProject == p.id && store.selected == nil) {
@@ -256,6 +375,16 @@ struct SidebarView: View {
     @ViewBuilder
     private func conversationMenu(_ c: Conversation) -> some View {
         Button(L("重新命名…")) { renameText = c.title; renaming = c }
+        if Store.isChat(c) {
+            Button((c.commanderMayRename == true ? "✓ " : "") + L("讓總指揮改名")) { store.setCommanderMayRename(c.id, c.commanderMayRename != true) }
+        }
+        if Store.isChat(c) {
+            Menu(L("MCP（下次啟動生效）")) {
+                ForEach(McpMode.allCases, id: \.self) { m in
+                    Button((McpMode.from(c.mcp) == m ? "✓ " : "") + m.label) { store.setMcp(c.id, m) }
+                }
+            }
+        }
         if c.isBrowser {
             // 瀏覽器格子：沒有聊天介面／終端機／壓縮／交接／排程
         } else if c.terminal == true {
@@ -267,22 +396,24 @@ struct SidebarView: View {
             Button(L("壓縮這段對話（/compact）…")) { actions.compact(c.id) }
             Button(L("交接")) { actions.handoff(c.id) }
         }
-        if c.isBrowser {
-            // 原本列在側欄的瀏覽器格子：改成掛在同一串的某段聊天室上，就不再佔聊天室清單的位置
-            let chats = store.siblings(of: c).filter { !$0.isBrowser }
-            if !chats.isEmpty {
-                Menu(L("改成掛件，掛在…")) {
-                    ForEach(chats) { t in Button(t.title) { store.attachBrowser(c.id, to: t.id) } }
+        if prefs.webFeaturesEnabled {
+            if c.isBrowser {
+                // 原本列在側欄的瀏覽器格子：改成掛在同一串的某段聊天室上，就不再佔聊天室清單的位置
+                let chats = store.siblings(of: c).filter { !$0.isBrowser }
+                if !chats.isEmpty {
+                    Menu(L("改成掛件，掛在…")) {
+                        ForEach(chats) { t in Button(t.title) { store.attachBrowser(c.id, to: t.id) } }
+                    }
                 }
-            }
-        } else {
-            Menu(L("掛件")) {
-                Button(L("掛 Gemini")) { if let g = store.addGadget(.gemini, to: c.id) { store.openGadget(g.id) } }
-                Button(L("掛 NotebookLM")) { if let g = store.addGadget(.notebooklm, to: c.id) { store.openGadget(g.id) } }
-                Button(L("掛網頁…")) { webURLText = ""; addingWebFor = c.id }
-                if c.bundle != nil {
-                    Divider()
-                    Button(L("離開掛件框")) { store.setBundle(c.id, nil) }
+            } else {
+                Menu(L("掛件")) {
+                    Button(L("掛 Gemini")) { if let g = store.addGadget(.gemini, to: c.id) { store.openGadget(g.id) } }
+                    Button(L("掛 NotebookLM")) { if let g = store.addGadget(.notebooklm, to: c.id) { store.openGadget(g.id) } }
+                    Button(L("掛網頁…")) { webURLText = ""; addingWebFor = c.id }
+                    if c.bundle != nil {
+                        Divider()
+                        Button(L("離開掛件框")) { store.setBundle(c.id, nil) }
+                    }
                 }
             }
         }
@@ -305,7 +436,7 @@ struct SidebarView: View {
         Button(L("刪除對話（Claude 的紀錄還在）"), role: .destructive) { actions.deleteConversation(c.id) }
     }
 
-    // MARK: 分組（學業、RTS…）：組 → 資料夾 → 對話；一個禮拜沒碰的收在組最下面的「封存」
+    // MARK: 分組（A 組、B 組…）：組 → 資料夾 → 對話；一個禮拜沒碰的收在組最下面的「封存」
 
     /// 組的標題拖曳：內容是「codenv-group:<id>」
     static let groupDragPrefix = "codenv-group:"
@@ -322,10 +453,10 @@ struct SidebarView: View {
     @ViewBuilder
     private func groupBlock(_ g: ConvGroup, depth: Int) -> some View {
         let children = store.childGroups(of: g.id).filter { $0.name != Store.codeLabGroupName }
-        let all = store.conversations(inGroup: g.id).filter { $0.draft != true }   // 草稿只列在「最近項目」
+        let all = store.conversations(inGroup: g.id).filter { $0.draft != true && (prefs.webFeaturesEnabled || !$0.isBrowser) }   // 草稿只列在「最近項目」
         let active = all.filter { !store.isArchived($0) }
         let allArchived = all.filter { store.isArchived($0) }
-        // 上面的封存按鈕＝各組都列；組標題左邊的封存圖示＝只列這一組的（使用者 10/24）
+        // 上面的封存按鈕＝各組都列；組標題左邊的封存圖示＝只列這一組的
         let archived = showArchived || g.archiveOpen ? allArchived : []
         GroupHeader(name: g.name, count: active.count, expanded: g.expanded, targeted: dropGroup == g.id, depth: depth,
                     archivedCount: allArchived.count, archiveOpen: showArchived || g.archiveOpen,
@@ -370,11 +501,11 @@ struct SidebarView: View {
             ForEach(children) { c in AnyView(groupBlock(c, depth: depth + 1)) }
             if active.isEmpty && archived.isEmpty && children.isEmpty {
                 Text(L("沒有對話")).font(.system(size: 14 * s)).foregroundStyle(.tertiary).padding(.leading, 36 + CGFloat(depth) * 16 * s).padding(.vertical, 4)
-                    // 使用者 10/24：空資料夾拖到「沒有對話」這行也要放得進去（以前只有標題收）
+                    // 空資料夾拖到「沒有對話」這行也要放得進去（以前只有標題收）
                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     .onDrop(of: [.text], isTargeted: groupTargeted(g)) { dropOnGroup(g, $0) }
             }
-            // 使用者 10/22：資料夾那一行、封存那一行都太佔位置。組底下直接列對話（在哪個資料夾滑鼠停著看），
+            // 資料夾那一行、封存那一行都太佔位置。組底下直接列對話（在哪個資料夾滑鼠停著看）
             // 封存的平常不列，按上面的封存按鈕才在各組最下面用灰字列出來
             ForEach(Self.sideItems(active, windowFrames: store.windowFrames)) { item in sideItem(item, depth: depth) }
             ForEach(archived) { c in
@@ -429,6 +560,8 @@ struct SidebarView: View {
         var id: UUID { switch self { case .conv(let c): return c.id; case .bundle(let b, _): return b } }
     }
     static func sideItems(_ list: [Conversation], windowFrames: [UUID: (window: UUID, name: String)] = [:]) -> [SideItem] {
+        // 只攤平成普通聊天室列；掛件框與具名 Window 框的資料原樣留著。
+        if !Prefs.shared.webFeaturesEnabled { return list.filter { !$0.isBrowser && !$0.isGadget }.map { .conv($0) } }
         // 框的編號：自己的掛件框（Conversation.bundle），或取過名字的 Window（Store.windowFrames，已經在掛件框裡的不搶）
         func key(_ c: Conversation) -> UUID? { c.bundle ?? windowFrames[c.id]?.window }
         var seen = Set<UUID>(), out: [SideItem] = []
@@ -506,6 +639,43 @@ struct SidebarView: View {
     }
 }
 
+/// 總指揮列：名稱、聊天室副標、涵蓋數量與程序燈號；一般版面只顯示名稱
+private struct CommanderRow: View {
+    @Environment(\.uiScale) private var s
+    let name: String
+    var chief: String? = nil
+    var count: Int? = nil
+    var running = false
+    var working = false       // 涵蓋的聊天室有在工作中：綠點呼吸閃爍
+    let selected: Bool
+    var action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            // 名稱和總指揮聊天室同一行，列高約 22 點
+            HStack(spacing: 7 * s) {
+                if chief != nil {
+                    if working { PulseDot(color: .green, size: 6 * s) }
+                    else { Circle().fill(running ? Color.green : Color.secondary.opacity(0.35)).frame(width: 6 * s, height: 6 * s) }
+                }
+                Text(name).font(.system(size: 13 * s, weight: .semibold)).lineLimit(1).layoutPriority(1)
+                if let chief {
+                    Text(chief).font(.system(size: 11 * s)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                }
+                Spacer(minLength: 4)
+                if let count { Text("\(count)").font(.system(size: 11 * s)).monospacedDigit().foregroundStyle(.secondary) }
+            }
+            .padding(.horizontal, 8 * s).padding(.vertical, 3 * s)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(selected ? 0.12 : (hover ? 0.06 : 0))))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+    }
+}
+
 /// 最左邊的圖示列
 struct IconRail: View {
     @Environment(\.uiScale) private var s
@@ -513,15 +683,17 @@ struct IconRail: View {
     var openSettings: () -> Void
     var toggleCollab: () -> Void = {}
     @ObservedObject private var collab = CollabBoardModel.shared
+    @ObservedObject private var rightPanel = RightPanelModel.shared
     var body: some View {
+        let boardOn = collab.open || rightPanel.boardShown
         VStack(spacing: 14) {
             RailIcon(name: "house.fill", help: L("首頁"), active: mode != "codelab") { mode = "home" }
             RailIcon(name: "chevron.left.forwardslash.chevron.right", help: L("程式碼學習專區：左邊 Claude、右邊寫程式和執行"), active: mode == "codelab") { mode = "codelab" }
             Spacer()
-            RailIcon(name: "bubble.left.and.bubble.right", help: L("協作看板：目標、兩個 Claude 互傳的訊息"), active: collab.open, action: toggleCollab)
+            RailIcon(name: "bubble.left.and.bubble.right", help: L("協作看板：目標、兩個 Claude 互傳的訊息"), active: boardOn, action: toggleCollab)
                 .overlay(alignment: .topTrailing) {
                     // 看板沒開時：有一對來回太多次亮橘點，有目標在等你（提議待同意、輪到你的步驟）亮藍點
-                    if !collab.open && (!collab.warnings.isEmpty || collab.waitingOnYou > 0) {
+                    if !boardOn && (!collab.warnings.isEmpty || collab.waitingOnYou > 0) {
                         Circle().fill(collab.warnings.isEmpty ? Color.accentColor : .orange).frame(width: 8, height: 8).offset(x: -4, y: 4)
                     }
                 }
@@ -609,6 +781,7 @@ struct ConversationRow: View {
     var unread = false
     var scheduled = false       // 有開著的排程：標題旁一個小時鐘
     var dimmed = false          // 封存裡的：灰色字
+    var compact = false         // 壓扁一行（跟總指揮清單同款：13 點字、列高約 22、圓角 5）；程式碼學習專區用
     var action: () -> Void
     @State private var hover = false
     // 不用 Button：macOS 的 Button 按下就自己追滑鼠，外面掛的 onDrag 永遠開始不了（側欄拖不動的原因）。
@@ -630,9 +803,9 @@ struct ConversationRow: View {
                     Circle().fill(Color.blue).frame(width: 7, height: 7)
                 }
             }
-            .font(.system(size: 15 * s))
-            .padding(.leading, indent ? 28 : 8).padding(.trailing, 8).padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(selected ? 0.12 : (hover ? 0.06 : 0))))
+            .font(.system(size: (compact ? 13 : 15) * s))
+            .padding(.leading, indent ? 28 : 8).padding(.trailing, 8).padding(.vertical, (compact ? 3 : 6) * s)
+            .background(RoundedRectangle(cornerRadius: compact ? 5 : 7).fill(Color.primary.opacity(selected ? 0.12 : (hover ? 0.06 : 0))))
             .contentShape(Rectangle())
             .onTapGesture(perform: action)
             .accessibilityAddTraits(.isButton)

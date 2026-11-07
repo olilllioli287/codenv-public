@@ -1,7 +1,7 @@
 import Foundation
 import Network
 
-// 斷網時別叫 agy（使用者 10/25 回報：斷網那段時間 Chrome 開了二十幾個 Google 登入頁）。
+// 斷網時別叫 agy（斷網那段時間 Chrome 開了二十幾個 Google 登入頁）。
 // 原因（agy 紀錄）：token 換新連不上 → agy 當成沒登入 → print 模式改走「互動登入」，自己打開瀏覽器的登入頁，60 秒後才放棄；
 // codenv 每 5 分鐘查一次 agy 額度，所以每 5 分鐘多一個分頁。
 // 三層：
