@@ -15,6 +15,7 @@ final class MainWindowController: NSWindowController {
     private var keys: PrefixKeys?
     var lidKeeper: LidKeeper?
     var lidTimer: Timer?
+    var sprintRunner: SprintRunner?
     lazy var floatingTerminal = FloatingTerminalController(parent: window!, store: store, workspace: workspace)
 
     init(store: Store, workspace: Workspace) {
@@ -139,6 +140,7 @@ final class MainWindowController: NSWindowController {
                 w.center()
             }
         }
+        TestScreen.fit(w)      // 測試用：--test-screen 指定的螢幕（只在測試實例生效）
         // 擺好了才開始記：拖動、調大小就存原始座標（⌘ Q 時 AppDelegate 再存一次）
         if !testing {
             for n in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
@@ -204,13 +206,35 @@ final class MainWindowController: NSWindowController {
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
             done(self.store.commanderRename(caller: conv, target: target, name: name))
         }
-        BrowserServer.shared.newChat = { [weak self] conv, name, dir, project, model, effort, mcp, topic, done in
+        BrowserServer.shared.newChat = { [weak self] conv, name, dir, project, model, effort, mcp, topic, area, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
-            self.commanderNewChat(caller: conv, name: name, dir: dir, project: project, model: model, effort: effort, mcp: mcp, topic: topic, done: done)
+            self.commanderNewChat(caller: conv, name: name, dir: dir, project: project, model: model, effort: effort, mcp: mcp, topic: topic, area: area, done: done)
+        }
+        BrowserServer.shared.areaCmd = { [weak self] req, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            let conv = req["conv"] as? String
+            switch req["op"] as? String {
+            case "add": done(self.store.commanderAreaAdd(caller: conv, name: (req["name"] as? String) ?? "", parent: req["parent"] as? String))
+            case "move": done(self.store.commanderAreaMove(caller: conv, target: (req["target"] as? String) ?? "", area: (req["area"] as? String) ?? ""))
+            case "ls": done(self.store.commanderAreaList(conversation: conv, name: req["name"] as? String) { [weak self] id in (self?.workspace.panes[id] as? ChatPane)?.session.isRunning == true })
+            default: done(["ok": false, "error": "area 只有 add、move、ls"])
+            }
         }
         BrowserServer.shared.setTopicChat = { [weak self] conv, target, topic, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
             self.commanderSetTopicChat(caller: conv, target: target, topic: topic, done: done)
+        }
+        BrowserServer.shared.newEngineChat = { [weak self] conv, name, engine, dir, project, model, effort, topic, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            self.commanderNewEngineChat(caller: conv, name: name, engine: engine, dir: dir, project: project, model: model, effort: effort, topic: topic, done: done)
+        }
+        BrowserServer.shared.sendChat = { [weak self] conv, target, text, wait, timeout, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            self.commanderSendChat(caller: conv, target: target, text: text, wait: wait, timeout: timeout, done: done)
+        }
+        BrowserServer.shared.lastChat = { [weak self] conv, target, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            done(self.commanderLastChat(caller: conv, target: target))
         }
         BrowserServer.shared.setModelChat = { [weak self] conv, target, model, effort, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
@@ -223,6 +247,8 @@ final class MainWindowController: NSWindowController {
         BrowserServer.shared.showGoal = { [weak self] goal, activate, done in self?.showGoal(goal, activate: activate, done: done) ?? done(["ok": false, "error": "codenv 關閉中"]) }
         BrowserServer.shared.start()
         setupLidKeeper()
+        sprintRunner = SprintRunner(host: self)
+        BrowserServer.shared.sprintCmd = { [weak self] req, done in done(self?.sprintRunner?.command(req) ?? ["ok": false, "error": "codenv 關閉中"]) }
         // 右邊欄的記憶體：哪個程序是哪個聊天室
         MemoryMonitor.shared.labeler = { [weak self] in
             guard let self else { return [:] }
@@ -429,8 +455,16 @@ final class MainWindowController: NSWindowController {
     }
 
     private func pick(_ r: SessionPanelRow) {
-        if let w = r.window, let si = store.sessions.firstIndex(where: { $0.id == r.session }) { store.sessions[si].current = w }
+        if let w = r.window { return selectWindow(session: r.session, window: w) }
         store.selectSession(r.session)
+    }
+
+    /// 選某個 Window：獨立視窗（detached）不是可見的 Window，不能設成 current（不然主視窗跳回第 1 頁、獨立視窗又沒叫出來），改成把它叫到前面
+    private func selectWindow(session: UUID, window: UUID) {
+        guard let si = store.sessions.firstIndex(where: { $0.id == session }) else { return }
+        if store.sessions[si].windows.first(where: { $0.id == window })?.detached == true { store.onRaiseWindow?(window); return }
+        store.sessions[si].current = window
+        store.selectSession(session)
     }
 
     func treeMenu() -> NSMenu {
@@ -466,9 +500,8 @@ final class MainWindowController: NSWindowController {
 
     @objc private func pickSession(_ i: NSMenuItem) { if let id = i.representedObject as? UUID { store.selectSession(id) } }
     @objc private func pickWindow(_ i: NSMenuItem) {
-        guard let ids = i.representedObject as? [UUID], let si = store.sessions.firstIndex(where: { $0.id == ids[0] }) else { return }
-        store.sessions[si].current = ids[1]
-        store.selectSession(ids[0])
+        guard let ids = i.representedObject as? [UUID], ids.count == 2 else { return }
+        selectWindow(session: ids[0], window: ids[1])
     }
     @objc private func newSessionAction() {
         ask(L("新 Session 的名字"), current: "") { [weak self] t in
@@ -769,7 +802,10 @@ final class MainWindowController: NSWindowController {
                 guard self.store.saveNow() else {
                     self.preserveFailedHandoff(message, file: file, old: c.id, new: n.id, reason: L("新聊天室還沒存好，交接訊息沒有送出。")); return
                 }
-                guard let conv = self.store.conversation(n.id), let p = self.workspace.pane(for: conv) as? ChatPane else { return }
+                guard let conv = self.store.conversation(n.id), let p = self.workspace.pane(for: conv) as? ChatPane else {
+                    // 新聊天室已建好卻開不出格子：一樣要標「交接未送達」、記下舊的交接過，不然每日交接下一輪又開一個同名的
+                    self.preserveFailedHandoff(message, file: file, old: c.id, new: n.id, reason: L("新聊天室開不出來，交接訊息沒有送出。")); return
+                }
                 oldPane.notice(L("交接文字已存在 \(file.path)，正在等新聊天室確認收到第一則訊息…"))
                 waitingForDelivery = p.sendText(message, onDelivery: { [weak self] acknowledged in
                     guard let self else { return }
@@ -836,8 +872,18 @@ final class MainWindowController: NSWindowController {
         L("交接期間這段對話又有新內容，交接文字已存在 \(file.path)；要用最新內容請再按一次交接")
     }
 
+    /// 背景交接（每日交接）走到新聊天室已建好的階段後，不管成功或失敗都先記下舊聊天室「交接過了」：
+    /// 失敗時舊的不改名、不封存，不記的話每日交接下一輪又把它當待交接，再開一個同名新聊天室（一天最多 2 個、每個花一次額度）。
+    /// 成功時舊的會被封存，這個記號沒有影響
+    private func markHandoffAttempted(_ id: UUID) {
+        guard bgHandoffs[id] != nil, let i = store.conversations.firstIndex(where: { $0.id == id }) else { return }
+        store.conversations[i].lastHandoffAt = ScheduleStore.now()
+        _ = store.saveNow()
+    }
+
     /// 失敗時保留原本那格與草稿；新聊天室留在側欄，交接第一則放進它的輸入框，不自動重送。
     private func preserveFailedHandoff(_ message: String, file: URL, old: UUID, new: UUID, reason: String) {
+        markHandoffAttempted(old)
         var draftSaved = false
         // 新舊同名會讓 codenv-todo wake 等以名字找人的地方撞名：沒完成的新聊天室標出來
         if let o = store.conversation(old), let n = store.conversation(new), n.title == o.title {
@@ -854,6 +900,7 @@ final class MainWindowController: NSWindowController {
     }
 
     private func finishHandoff(_ source: Conversation, new: UUID, directory: String, version: [URL: Handoff.TranscriptVersion], file: URL) {
+        markHandoffAttempted(source.id)
         // 等送達期間也可能有新內容：最後一次檢查通過後才動舊對話。
         guard handoffSourceUnchanged(source, directory: directory, version: version), let old = store.conversation(source.id) else {
             let message = handoffChangedNotice(file)
@@ -965,6 +1012,22 @@ final class MainWindowController: NSWindowController {
         } else { autoCollapsed.remove("board") }
     }
     var sidebarCollapsed: Bool { splitController?.splitViewItems.first?.isCollapsed ?? false }
+
+    /// F6：大的關聯圖面板（總指揮模式才有）；左緣貼左欄右邊緣，左欄收起或在程式碼學習專區時貼視窗左邊
+    lazy var graphPanel: GraphPanelController = {
+        let g = GraphPanelController(window: window!, store: store, workspace: workspace)
+        g.sidebarEdge = { [weak self] in
+            guard let self, let split = self.splitController, let cv = self.window?.contentView,
+                  let item = split.splitViewItems.first, !item.isCollapsed, self.store.area != Store.codeLabArea else { return 0 }
+            let v = item.viewController.view
+            return v.convert(v.bounds, to: cv).maxX
+        }
+        return g
+    }()
+    @objc func toggleGraphPanel() {
+        guard Prefs.shared.sidebarMode == "commander" || graphPanel.isOpen else { return }
+        graphPanel.toggle()
+    }
 
     /// F4：開關右側欄（用量欄＋桌寵格）。收起來時協作看板開著就一起收；再按一次只打開右側欄，協作看板不跟著開（要自己點）
     @objc func toggleRightPanel() {
@@ -1118,7 +1181,8 @@ extension MainWindowController {
                         AgyBridge.transcript(for: c.claudeSession), CodexBridge.transcript(for: c.claudeSession), CopilotBridge.transcript(for: c.claudeSession),
                         LocalBridge.transcript(for: c.claudeSession), AppleBridge.transcript(for: c.claudeSession)]
             // 標記裡的日期有「/」：codenv 自己寫的紀錄（JSONSerialization）會寫成「\/」，Claude Code（Node）不會
-            let forms = [marker, QuoteText.neutralize(marker)]
+            let legacy = ScheduleStore.legacyMarker(marker)      // 升版前送出的舊格式（沒有年份）也算送過
+            let forms = [marker, QuoteText.neutralize(marker), legacy, QuoteText.neutralize(legacy)]
             let needles = Set(forms + forms.map { $0.replacingOccurrences(of: "/", with: "\\/") }).map { Data($0.utf8) }
             for url in urls {
                 guard let h = try? FileHandle(forReadingFrom: url) else { continue }

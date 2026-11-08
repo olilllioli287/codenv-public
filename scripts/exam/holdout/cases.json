@@ -56,5 +56,145 @@
     "id": "C20",
     "name": "分支聊天室 MCP 精簡參數、不帶 --chrome",
     "runner": "native.sh"
+  },
+  {
+    "id": "C21",
+    "name": "建區不刪別人的同名組、刪組清涵蓋清單",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C22",
+    "name": "send --wait 等到 timeout、不 15 秒就叫人重送",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C23",
+    "name": "額度重置日期跨年選對年",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C24",
+    "name": "看板壞一筆只跳過那筆",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C25",
+    "name": "開 Big5 檔不改就換檔，原檔不被改寫",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C26",
+    "name": "聊天網頁程序崩潰後自動重載",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C27",
+    "name": "看板開著、資料很多時按 F4 一秒內收完、不卡頓",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C28",
+    "name": "公版匯出目的地防呆、刪太多檔停下",
+    "runner": "export-guard.sh"
+  },
+  {
+    "id": "C29",
+    "name": "沙盒讀鑰匙圈卡住時逾時回 nil",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C30",
+    "name": "更新檢查連到不回應的伺服器會逾時",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C32",
+    "name": "codenv-todo 很長的請求不被截斷",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C33",
+    "name": "檔名以 - 開頭的程式檔不被當成編譯選項",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C34",
+    "name": "排程防重送標記含年份",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C35",
+    "name": "闔蓋外接螢幕：防抖、上限、虛擬螢幕不算",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C36",
+    "name": "桌寵進度通知極端數字不崩潰",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C37",
+    "name": "網頁程序反覆崩潰時重載有次數上限",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C38",
+    "name": "闔蓋外接螢幕：睡醒寬限、重擋失敗放舊連線",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C39",
+    "name": "拖放暫存清理不刪草稿還指著的檔",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C40",
+    "name": "背景 git 狀態讀對、逾時整群砍",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C41",
+    "name": "每週排程 weekdays 含 0／8 不崩潰",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C42",
+    "name": "換模型交接遇大紀錄檔只讀檔尾、背景補全文檔",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C43",
+    "name": "看板目標／步驟混壞元素：新增不丟光、留 .bak",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C44",
+    "name": "state.json 與備份都解不開：不覆蓋原檔",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C45",
+    "name": "缺鍵 decode 快照＋sprint.json 讀不懂另存",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C46",
+    "name": "螢幕開著預擋失敗：背景重試與退避",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C47",
+    "name": "測試實例：CODENV_* 指到測試資料夾、--state-dir 缺值報錯、--test-screen",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C48",
+    "name": "換模型交接：連換兩次不被舊快照蓋回、超長最後一行不回 nil",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C49",
+    "name": "看板 .bak 變少不輪替、欄位壞時留事件紀錄",
+    "runner": "native.sh"
   }
 ]

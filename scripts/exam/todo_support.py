@@ -28,11 +28,12 @@ def load(root, temp):
     return m
 
 
-def finish(m, temp, out, err='', log='', code=0):
+def finish(m, temp, out, err='', log='', code=0, jump=0, clock=time.monotonic):
+    """jump：結束前把牆鐘往前撥幾秒（模擬 Mac 睡過去）；clock：執行器記開始時間用的時鐘（現在是單調時鐘）"""
     r = m.AgyRunner()
     r.sid, r.owner = 'aaaaaa', 'gemini3.8flash'
     r.proc = SimpleNamespace(returncode=code)
-    r.started = time.time() - 1
+    r.started = clock() - 1
     r.count_date = '2026-11-04'
     r.log = lambda *a: None
     r.files = tuple(str(temp / name) for name in ('out', 'err', 'agy', 'result', 'runlog'))
@@ -42,6 +43,11 @@ def finish(m, temp, out, err='', log='', code=0):
     r.update_step = lambda sid, fn: fn({}, step)
     r.set_final = lambda *args, **kw: final.append((args, kw))
     m.refund = lambda *args: refunds.append(args)
-    r.finish()
+    real = time.time
+    time.time = lambda: real() + jump
+    try:
+        r.finish()
+    finally:
+        time.time = real
     assert len(final) == 1, final
     return final[0][0], step, refunds

@@ -38,16 +38,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 寫給已經結束的 claude 不要整個 App 被 SIGPIPE 殺掉（寫入錯誤在 ChatSession 自己處理）
         signal(SIGPIPE, SIG_IGN)
         let args = CommandLine.arguments
-        // 拖進來的暫存圖片，超過一天的清掉
-        if let old = try? FileManager.default.contentsOfDirectory(at: TerminalPane.dropFolder, includingPropertiesForKeys: [.contentModificationDateKey]) {
-            for f in old where ((try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) < Date().addingTimeInterval(-86400) {
-                try? FileManager.default.removeItem(at: f)
-            }
-        }
         installTestHooksEarly(args)
         EventLog.start()
         // 同一個資料夾只准一個 codenv：兩個各自載入再輪流寫整份 state.json 會互蓋，第二個還會刪掉第一個的 browser socket（Astra 11/5）
         // 鎖在獨立的 codenv.lock（不鎖會被原子替換的 state.json）；程序結束或當掉時系統自動放開。不同 --state-dir 照樣能並行
+        // --state-dir 後面沒給資料夾：不能悄悄落回正式資料（後面又把它當測試實例），直接報錯結束
+        if let i = args.firstIndex(of: "--state-dir"), i + 1 >= args.count || args[i + 1].hasPrefix("--") {
+            FileHandle.standardError.write(Data("codenv：--state-dir 後面要接資料夾\n".utf8))
+            exit(2)
+        }
         let dataDir = args.firstIndex(of: "--state-dir").flatMap { $0 + 1 < args.count ? URL(fileURLWithPath: args[$0 + 1], isDirectory: true) : nil } ?? Edition.supportDir
         if !Self.lockDataDir(dataDir) {
             EventLog.log(L("啟動"), L("這個資料夾已經有另一個 codenv 在用，這次不開：\(dataDir.path)"))
@@ -59,6 +58,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             exit(0)
         }
+        // 拖進來的暫存圖片，超過一天的清掉。要拿到資料夾的鎖之後才清（沒拿到鎖的第二個實例會馬上結束）；
+        // 這個暫存資料夾所有實例共用，測試實例（--state-dir）不碰，不然測試會刪掉正式實例的草稿還指著的檔案
+        if !args.contains("--state-dir") { TerminalPane.cleanDropFolder(folder: TerminalPane.dropFolder, stateDir: dataDir) }      // 草稿／寄件匣還指著的不刪
         if let i = args.firstIndex(of: "--state-dir"), i + 1 < args.count {
             store = Store(directory: URL(fileURLWithPath: args[i + 1], isDirectory: true))
         } else {
@@ -146,6 +148,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // 還有東西在跑：先問一聲，不要直接把正在工作的程式關掉
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // 設定檔讀不懂、這次一直沒存：結束前再提醒一次（改動關掉就沒了）。測試實例／背景不問
+        if store.isSaveProtected, !CommandLine.arguments.contains("--background"), !CommandLine.arguments.contains("--state-dir") {
+            let a = NSAlert(); a.alertStyle = .warning
+            a.messageText = L("這次的改動不會存")
+            a.informativeText = L("設定檔 state.json 這次讀不懂，為了不蓋掉它，這次執行沒有存檔；現在結束，剛才的改動就沒了。")
+            let cancel = a.addButton(withTitle: L("取消"))
+            cancel.keyEquivalent = "\u{1b}"
+            let quit = a.addButton(withTitle: L("直接結束"))
+            quit.keyEquivalent = ""
+            if a.runModal() != .alertSecondButtonReturn { return .terminateCancel }
+        }
         // 程式碼區改了沒存（沒有自動存檔）：先存好再結束，不然 ⌘ Q 會直接丟掉修改（Astra 11/5 審查抓到）
         let unsaved = workspace.panes.values.compactMap { ($0 as? ChatPane)?.codeLab }.filter { $0.hasUnsaved }
         if !unsaved.isEmpty {
@@ -240,6 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ⌃ ⌘ W：關掉目前整個 Window（對話留在側欄）；原本是 ⌃ W
     @objc func closeWholeWindow() { store.closeWindow() }
     @objc func toggleFloatingTerminal() { main.floatingTerminal.toggle() }
+    @objc func toggleGraphPanel() { main.toggleGraphPanel() }
     @objc func resetFloatingTerminalFrame() { main.floatingTerminal.resetGeometry() }
 
     /// ⌘ ⇧ T：找回剛關掉的格子或 Window（主視窗裡由 PrefixKeys 先攔；這裡給選單點、或焦點在小視窗時用）
@@ -247,6 +261,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func reopenWindow() {
         if !store.reopenClosedWindow() { NSSound.beep() }
     }
+
+    /// 重新建立設定視窗並停在「對話」頁（Prefs.openChatSettings 先把 settingsTab 寫成 chat）
+    func showChatSettings() { settings?.close(); settings = nil; showSettings() }
 
     @objc func showSettings() {
         if settings == nil { settings = SettingsWindowController(store: store, appearance: appearance) }
@@ -346,6 +363,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         f3.keyEquivalentModifierMask = []
         let f4 = viewMenu.addItem(withTitle: L("收起／打開右側欄（F4）"), action: #selector(toggleRightPanel), keyEquivalent: String(UnicodeScalar(NSF4FunctionKey)!))
         f4.keyEquivalentModifierMask = []
+        let f6 = viewMenu.addItem(withTitle: L("關聯圖面板（F6）"), action: #selector(toggleGraphPanel), keyEquivalent: String(UnicodeScalar(NSF6FunctionKey)!))
+        f6.keyEquivalentModifierMask = []
         viewMenu.addItem(withTitle: L("桌寵位置（Ctrl+A b）"), action: #selector(togglePetSlot), keyEquivalent: "")
         viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: L("放大文字"), action: #selector(zoomIn), keyEquivalent: "=")

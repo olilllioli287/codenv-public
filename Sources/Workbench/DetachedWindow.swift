@@ -43,6 +43,7 @@ final class DetachedWindowController: NSWindowController, NSWindowDelegate {
             w.setFrame(f, display: false)
         }
         if let r = restoreFrame { w.setFrame(r, display: false) }
+        TestScreen.fit(w)
         updateTitle()
         store.objectWillChange.receive(on: RunLoop.main).sink { [weak self] _ in self?.updateTitle() }.store(in: &bag)
     }

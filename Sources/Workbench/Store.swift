@@ -162,6 +162,7 @@ final class Store: ObservableObject {
         if sessions[si].windows[wi].detachedScreenOrigin != so { sessions[si].windows[wi].detachedScreenOrigin = so }
     }
     /// state.json 讀不懂、又沒能另存備份：保護原檔，不存檔
+    private var lastProtectedWarn: Date?
     private var protectOriginal = false
     /// 這次啟動沒讀到 state.json（讀不出來、或解不開已另存備份）：對話清單是空的不代表使用者真的沒有對話，排程、搬資料夾這類依賴對話清單的事都不能動
     private(set) var loadFailed = false
@@ -225,6 +226,10 @@ final class Store: ObservableObject {
             let bad = dir.appendingPathComponent("state.json.讀不到-\(f.string(from: Date()))")
             do { try data.write(to: bad) } catch { protectOriginal = true }     // 連備份都寫不成：原檔是唯一一份，一律不覆蓋
             loadFailed = true
+            // 原檔與備份都解不開：不能用空狀態開起來再存檔——空狀態會蓋掉 state.json，一小時後 .bak 也被輪替成空的。
+            // 這次執行不存檔（保護原檔），並告訴使用者；另存的 讀不到- 副本也留著
+            protectOriginal = true
+            startupProblem = L("codenv 的設定檔 state.json 讀不懂（檔案壞了，或是比這個版本更新的格式），備份也還原不了。為了不蓋掉它，這次執行不會存檔，改動關掉就沒了。原檔另存了一份「\(bad.lastPathComponent)」在 \(dir.path)，請先留著；可以改用較新版的 codenv 開，或把備份放回 state.json 再重開。")
             NSLog("AI 工作台：state.json 讀不到，已另存成 \(bad.lastPathComponent)")
             EventLog.log("檔案", "state.json 無法讀取，已備份為 \(bad.lastPathComponent)")
         } else if raw == nil, FileManager.default.fileExists(atPath: url.path) {
@@ -261,7 +266,15 @@ final class Store: ObservableObject {
         let s = State(projects: projects, conversations: conversations, selected: selected, selectedProject: selectedProject,
                       sessions: sessions, currentSession: currentSession, groups: groups, browserZoom: browserZoom,
                       closedWindows: Store.closed.compactMap { if case .window(let s, let i, let w, let p) = $0 { return ClosedWindow(session: s, index: i, window: w, placeholder: p) } else { return nil } })
-        guard !protectOriginal, let data = try? JSONEncoder().encode(s) else { return false }
+        guard !protectOriginal else {
+            // 保護模式：有改動要存的時候（不是只有啟動那一次）每 10 分鐘提醒一次「這次的改動不會存」，免得使用者忙了半天才發現
+            if lastProtectedWarn.map({ Date().timeIntervalSince($0) > 600 }) ?? true {
+                lastProtectedWarn = Date()
+                onSaveProblem?(L("codenv 的設定檔 state.json 這次讀不懂，為了不蓋掉它，這次執行不會存檔。剛才的改動（聊天室、分組、版面）關掉 codenv 就沒了。請先處理設定檔（原檔另存了「讀不到」副本），再重開 codenv。"))
+            }
+            return false
+        }
+        guard let data = try? JSONEncoder().encode(s) else { return false }
         // 備份：覆蓋前先把現在這份（讀得懂的才算）複製成 .bak，壞掉時開 App 會自動拿它還原
         if lastBackup.map({ Date().timeIntervalSince($0) > 3600 }) ?? true,
            let cur = try? Data(contentsOf: url), !cur.isEmpty, (try? JSONDecoder().decode(State.self, from: cur)) != nil {
@@ -431,5 +444,20 @@ final class Store: ObservableObject {
 
     static func claudeHasSession(_ session: UUID, path: String) -> Bool {
         FileManager.default.fileExists(atPath: claudeTranscript(session, path: path).path)
+    }
+}
+
+/// 設定類小檔讀不懂（壞了或新版格式）時，原檔另存一份「<檔名>.讀不到-MMdd-HHmmss」再照空的開起來：
+/// 不然下次存檔會把原檔蓋掉。空檔不算（沒東西可保護）。回傳另存成功沒有（沒有原檔可存＝true）
+enum UnreadableFile {
+    @discardableResult
+    static func setAside(_ url: URL, data: Data) -> Bool {
+        guard !data.isEmpty else { return true }
+        let f = DateFormatter(); f.dateFormat = "MMdd-HHmmss"
+        let bad = url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + ".讀不到-\(f.string(from: Date()))")
+        let ok = (try? data.write(to: bad)) != nil
+        NSLog("%@ 讀不到，已另存成 %@", url.lastPathComponent, bad.lastPathComponent)
+        EventLog.log("檔案", "\(url.lastPathComponent) 無法讀取，已備份為 \(bad.lastPathComponent)")
+        return ok
     }
 }

@@ -98,10 +98,13 @@ final class PrefixKeys {
             controller?.store.windowSelected = false
         }
         // F3：開關左側欄（同 ⌘ ⌃ S）；F4：開關右側欄（用量欄＋桌寵格）（F5、F6 改成 F3、F4）。聊天格、終端機格、瀏覽器格都有效，所以不排除終端機（監視器先於終端機看到按鍵）
-        // F5：只在嵌入的瀏覽器格（焦點在它的網頁或它裡面）重新載入；聊天格、終端機格不處理、不吃掉（照一般按鍵交出去）。F6 沒有功能
+        // F5：只在嵌入的瀏覽器格（焦點在它的網頁或它裡面）重新載入；聊天格、終端機格不處理、不吃掉（照一般按鍵交出去）。F6＝關聯圖面板
         // CodeLab 的 F9／F10 不受影響：這裡只吃 F3、F4、F5，沒有修飾鍵才算
         if !armed, mods.isEmpty, e.keyCode == 99 { controller?.toggleSidebar(); return true }
         if !armed, mods.isEmpty, e.keyCode == 118 { controller?.toggleRightPanel(); return true }
+        // F6：開關關聯圖面板；面板開著時 Esc 也收起（面板裡的資訊表單是 sheet，Esc 先給它）
+        if !armed, mods.isEmpty, e.keyCode == 97, !e.isARepeat { controller?.toggleGraphPanel(); return true }
+        if !armed, mods.isEmpty, e.keyCode == 53, controller?.graphPanel.isOpen == true, e.window?.attachedSheet == nil { controller?.graphPanel.hide(); return true }
         if !armed, mods.isEmpty, e.keyCode == 96, let bp = Self.browserPane(containing: e.window?.firstResponder) { bp.reloadPage(); return true }
         // F2：改名。選取整個 Window 時改 Window 的名字，不然改紫框那一格；焦點在終端機（含程式碼執行區）照常交給它
         if !armed, e.keyCode == 120, mods.isEmpty, !Self.inTerminal(e.window) { controller?.f2Rename(); return true }

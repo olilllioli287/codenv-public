@@ -50,5 +50,5 @@ cat <<EOM
   gh release create "$TAG" "$DMG" -R "$REPO" --title "codenv $VER" --notes "$NOTES
 
 ## 安裝
-下載 codenv-$VER.dmg，拖進「應用程式」。第一次打開對 codenv 按右鍵 →「打開」→「打開」（臨時簽章，沒有 Apple 開發者簽名）。更新後系統權限可能要重新給一次。"
+下載 codenv-$VER.dmg，拖進「應用程式」。第一次打開若被擋（臨時簽章，沒有 Apple 開發者簽名）：先試著開一次，再到「系統設定 → 隱私權與安全性」往下找到 codenv，按「強制打開」；或在終端機跑 xattr -cr /Applications/codenv.app。更新後系統權限可能要重新給一次。"
 EOM

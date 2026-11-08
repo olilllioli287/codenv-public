@@ -332,6 +332,32 @@ docs/exam-old-output-all.txt
 | 18 | 程序被主動關掉時沒確認的訊息放回 | — | C | 假 claude 不回送；送出後 terminate＋重開：unacked 清掉、寄件匣留 1 筆、原文回輸入框 | 可驗；`native.sh C18`（EXAM_APP=） |
 | 19 | 大訊息寫入不卡主執行緒 | — | C | 不讀 stdin 的假 claude＋120 KB 訊息：排在第 6 秒的動作 12 秒內跑；改前版本拖到假 claude 結束 | 可驗；`native.sh C19`（EXAM_APP=） |
 | 20 | 分支聊天室 MCP 精簡參數、不帶 --chrome | — | C | 假 claude 記下啟動參數：沒設＝帶 --chrome 無 MCP 參數；lite＝--strict-mcp-config＋只含 deja 的 --mcp-config、無 --chrome；none＝空 mcpServers；full 同沒設 | 可驗；`native.sh C20`（EXAM_APP=） |
+| 21 | 建區不刪別人的同名組、刪組清涵蓋清單 | — | C | 測試資料造兩個總指揮；c1 建 c2 底下的同名同父區：失敗且該組仍在；removeGroup 後涵蓋清單無失效 id | 可驗；`native.sh C21`（EXAM_APP=） |
+| 22 | send --wait 等到 timeout、不 15 秒就叫人重送 | — | C | 把 send 換成永遠不回；--wait --timeout 20：回應不早於 20 秒，且訊息含「不要重送」 | 可驗；`native.sh C22`（EXAM_APP=） |
+| 23 | 額度重置日期跨年選對年 | — | C | 假的「現在」：12/30 讀 Jan 1 → 明年；1/2 讀 Dec 31 → 去年；同年照舊 | 可驗；`native.sh C23`（EXAM_APP=） |
+| 24 | 看板壞一筆只跳過那筆 | — | C | collab.json 放 2 好 1 壞目標：讀到 2 個、原檔不動（舊版整個目標區變空） | 可驗；`native.sh C24`（EXAM_APP=） |
+| 25 | 開 Big5 檔不改就換檔，原檔不被改寫 | — | C | 開 Big5 檔、走下拉選檔路徑換到別的檔：Big5 檔位元組不變（舊版變 UTF-8、多出幾個 byte） | 可驗；`native.sh C25`（EXAM_APP=） |
+| 26 | 聊天網頁程序崩潰後自動重載 | — | C | 殺掉該格的 WebContent 程序：8 秒內 ready 重新成立（累計 2 次）；舊版不重載 | 可驗；`native.sh C26`（EXAM_APP=） |
+| 27 | 看板開著、資料很多時按 F4 一秒內收完、不卡頓 | — | C | 120 個很長的目標＋右欄看板；--right-stall-probe 按 F4：1 秒內收完、主執行緒最長停頓 < 100ms（修前 150～180ms） | 可驗；`native.sh` |
+| 28 | 公版匯出目的地防呆、刪太多檔停下 | — | 腳本 | 暫存資料夾＋假 HOME：非空非 repo／家目錄／別人的 repo 都拒絕且檔案還在；新資料夾與 codenv-public remote 可同步；要刪 40 個檔停下，調高門檻才放行 | 可驗；`export-guard.sh C28` |
+| 29 | 沙盒讀鑰匙圈卡住時逾時回 nil | — | C | security 換成睡 30 秒的假腳本：keychain() 逾時（2 秒）回 nil，整體 6 秒內回來 | 可驗；`native.sh C29`（EXAM_APP=） |
+| 30 | 更新檢查連到不回應的伺服器會逾時 | — | C | 本機假伺服器收連線不回；逾時縮成 3 秒，探測要回「連線逾時」（舊版永遠卡住） | 可驗；`native.sh C30`（EXAM_APP=） |
+| 32 | codenv-todo 很長的請求不被截斷 | — | C | 送 3 萬中文字（約 90 KB）的請求：伺服器正常處理（舊版 64 KB 截斷、回看不懂） | 可驗；`native.sh C32`（EXAM_APP=） |
+| 33 | 檔名以 - 開頭的程式檔不被當成編譯選項 | — | C | -Wall.cpp 做 F9 檢查通過，執行指令用 ./-Wall.cpp | 可驗；`native.sh C33`（EXAM_APP=） |
+| 34 | 排程防重送標記含年份 | — | C | 同排程 2026／2027 年 3/5 09:00 的標記不同（舊版相同） | 可驗；`native.sh C34`（EXAM_APP=） |
+| 35 | 闔蓋外接螢幕：防抖、上限、虛擬螢幕不算 | — | C | 假環境：外接掉 2 秒不撐著、掉久才撐；外接闔蓋撐到上限放掉預擋且不主動睡；虛擬／未知廠商／內建／睡眠螢幕不算實體外接 | 可驗；`native.sh C35`（EXAM_APP=） |
+| 36 | 桌寵進度通知極端數字不崩潰 | — | C | total／done／eta 塞 NaN、無限、1e30 並走到 items()：不崩潰（舊版 eta 1e30 在 items() trap） | 可驗；`native.sh C36`（EXAM_APP=） |
+| 37 | 網頁程序反覆崩潰時重載有次數上限 | — | C | 1 分鐘內連殺 5 次：只自動重載 3 次（ready 累計 4 次），之後不再重載 | 可驗；`native.sh C37`（EXAM_APP=） |
+| 38 | 闔蓋外接螢幕：睡醒寬限、重擋失敗放舊連線 | — | C | --lid-sim jump=40 模擬睡醒：有寬限記錄且在撐著之前；狀態確認後重擋失敗：送 off 並記舊連線已放掉 | 可驗；`native.sh C38`（EXAM_APP=） |
+| 39 | 拖放暫存清理不刪草稿還指著的檔 | — | C | 暫存資料夾：舊且沒引用→刪、舊但草稿 JSON 引用（斜線被轉義）→留、新→留 | 可驗；`native.sh C39`（EXAM_APP=） |
+| 40 | 背景 git 狀態讀對、逾時整群砍 | — | C | 大小相同內容不同的修改偵測到；CRLF＋eol=crlf 的 repo 無假變更；假 git 忽略 TERM 並留子程序：逾時後整群被砍、無殘留（filter 是否執行不斷言，已知限制） | 可驗；`native.sh C40`（EXAM_APP=） |
+| 41 | 每週排程 weekdays 含 0／8 不崩潰 | — | C | weekdays 含 0、負數、8、空：summary 不崩潰，超出範圍的濾掉（舊版 0 越界崩潰、8 顯示成「日」） | 可驗；`native.sh C41`（EXAM_APP=） |
+| 42 | 換模型交接遇大紀錄檔 | — | C | 約 70 MB 假紀錄：主執行緒只讀檔尾、交接有最後一段；全文檔先寫檔尾版，背景補成完整版（有最早的一句與讀過的檔） | 可驗；`native.sh C42`（EXAM_APP=） |
+| 43 | 看板陣列混壞元素 | — | C | goals／steps 混入字串、數字：新增／改狀態不丟光其他元素、寫回前留 .bak；goals 不是陣列時不寫；讀取時不崩潰（isValidJSONObject） | 可驗；`native.sh C43` |
+| 44 | state.json 與備份都解不開 | — | C | 原檔與 .bak 位元組不變、另存「讀不到」；對照：舊版最少欄位的檔讀得進來 | 可驗；`native.sh C44` |
+| 45 | 缺鍵 decode 快照＋sprint 另存 | — | C | WakeSchedule／SprintState 必填欄位清單快照（新增非 Optional 欄位會讓它變）；sprint.json 讀不懂另存一份 | 可驗；`native.sh C45` |
+| 46 | 預擋失敗背景重試 | — | C | 假環境：預擋失敗只記一次，小幫手恢復後背景重試成功 | 可驗；`native.sh C46` |
+| 47 | 測試實例隔離與 --test-screen | — | C | CODENV_STATE_DIR／COLLAB_FILE／BROWSER_DIR 指到測試資料夾；--state-dir 缺值 exit 2；--test-screen 擺進指定螢幕 | 可驗；`native.sh C47` |
 
 第 13～15 題雖比 A／B 貴，但能防住丟資料與核心操作回歸，適合留在規則減肥的最後一道驗證。
 

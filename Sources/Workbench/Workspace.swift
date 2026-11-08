@@ -301,6 +301,14 @@ final class Workspace {
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["AI_WORKBENCH"] = "1"
+        // 測試實例（--state-dir）：codenv-todo／codenv-browser 預設連到正式看板和正式 codenv，這裡明確指到測試資料夾（正式實例不設，維持原樣）
+        let a = CommandLine.arguments
+        if let i = a.firstIndex(of: "--state-dir"), i + 1 < a.count {
+            let d = URL(fileURLWithPath: a[i + 1], isDirectory: true)
+            env["CODENV_STATE_DIR"] = d.path
+            env["CODENV_COLLAB_FILE"] = d.appendingPathComponent("collab.json").path
+            env["CODENV_BROWSER_DIR"] = d.appendingPathComponent("browser").path
+        }
         return env.map { "\($0.key)=\($0.value)" }
     }
 

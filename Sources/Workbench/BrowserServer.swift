@@ -22,10 +22,15 @@ final class BrowserServer {
     /// codenv-todo team：這個總指揮底下有誰（參數：呼叫者的聊天室 id、或名稱）
     var renameChat: ((String?, String, String, @escaping ([String: Any]) -> Void) -> Void)?
     var setModelChat: ((String?, String, String, String?, @escaping ([String: Any]) -> Void) -> Void)?
+    var sprintCmd: (([String: Any], @escaping ([String: Any]) -> Void) -> Void)?
     var setMcpChat: ((String?, String, String, @escaping ([String: Any]) -> Void) -> Void)?
-    var newChat: ((String?, String, String?, String?, String?, String?, String?, String?, @escaping ([String: Any]) -> Void) -> Void)?
+    var areaCmd: (([String: Any], @escaping ([String: Any]) -> Void) -> Void)?
+    var newChat: ((String?, String, String?, String?, String?, String?, String?, String?, String?, @escaping ([String: Any]) -> Void) -> Void)?
     var setTopicChat: ((String?, String, String, @escaping ([String: Any]) -> Void) -> Void)?
     var team: ((String?, String?, @escaping ([String: Any]) -> Void) -> Void)?
+    var sendChat: ((String?, String, String, Bool, TimeInterval, @escaping ([String: Any]) -> Void) -> Void)?
+    var lastChat: ((String?, String, @escaping ([String: Any]) -> Void) -> Void)?
+    var newEngineChat: ((String?, String, String, String?, String?, String?, String?, String?, @escaping ([String: Any]) -> Void) -> Void)?
 
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
@@ -102,7 +107,7 @@ final class BrowserServer {
         var nosig: Int32 = 1
         setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
         var data = Data(), buf = [UInt8](repeating: 0, count: 4096)
-        while data.count < 65_536, !data.contains(0x0A) {
+        while data.count < 8_000_000, !data.contains(0x0A) {      // 長訊息（send、sprint done）可以很大；原本 64 KB 太小，中文被轉成 \uXXXX 後約 1 萬字就超過
             let n = read(c, &buf, buf.count)
             if n <= 0 { break }
             data.append(contentsOf: buf[0..<n])
@@ -123,8 +128,13 @@ final class BrowserServer {
         }
         let cmd = req["cmd"] as? String
         let isWake = cmd == "wake" || cmd == "new", isExport = cmd == "export"
-        DispatchQueue.global().asyncAfter(deadline: .now() + (isExport ? 280 : isWake ? 28 : 15)) {
-            finish(["ok": false, "error": isExport ? "匯出 280 秒都沒結果（對話太長或網頁卡住了）" : isWake ? "喚醒 28 秒都沒結果（codenv 可能卡住了）" : "網頁 15 秒都沒回應（可能卡住了），再試一次"])
+        // send --wait：等到呼叫端指定的 timeout（上限 1800 秒）再多留 8 秒給收尾；訊息一送出就不能叫呼叫端重試，不然會重複送
+        let isSend = cmd == "send"
+        let sendWait: TimeInterval? = isSend && (req["wait"] as? Bool) == true ? min(1800, max(1, (req["timeout"] as? Double) ?? 300)) + 8 : nil
+        DispatchQueue.global().asyncAfter(deadline: .now() + (isExport ? 280 : isWake ? 28 : sendWait ?? 15)) {
+            finish(["ok": false, "error": isExport ? "匯出 280 秒都沒結果（對話太長或網頁卡住了）" : isWake ? "喚醒 28 秒都沒結果（codenv 可能卡住了）"
+                    : isSend ? "send 沒在時限內回來；訊息可能已經送出，不要重送，用 codenv-todo last 查回答"
+                    : "網頁 15 秒都沒回應（可能卡住了），再試一次"])
         }
         DispatchQueue.main.async { self.handle(req, done: finish) }
     }
@@ -144,7 +154,7 @@ final class BrowserServer {
     private func handle(_ req: [String: Any], done: @escaping ([String: Any]) -> Void) {
         // socket 照常服務看板的 wake／show；只擋網頁指令，不能把整個 BrowserServer 關掉。
         let cmd = req["cmd"] as? String
-        if !Prefs.shared.webFeaturesEnabled, cmd != "wake", cmd != "show", cmd != "team", cmd != "rename", cmd != "new", cmd != "model", cmd != "mcp", cmd != "topic" {
+        if !Prefs.shared.webFeaturesEnabled, cmd != "wake", cmd != "show", cmd != "team", cmd != "rename", cmd != "new", cmd != "model", cmd != "mcp", cmd != "topic", cmd != "area", cmd != "send", cmd != "last", cmd != "new_engine", cmd != "sprint" {
             if cmd == "ls" { done(["ok": true, "panes": []]) }
             else { done(["ok": false, "error": L("網頁外掛功能已關閉（設定可打開）")]) }
             return
@@ -168,13 +178,28 @@ final class BrowserServer {
             renameChat(req["conv"] as? String, (req["target"] as? String) ?? "", (req["name"] as? String) ?? "", done)
         case "new":
             guard let newChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
-            newChat(req["conv"] as? String, (req["name"] as? String) ?? "", req["dir"] as? String, req["project"] as? String, req["model"] as? String, req["effort"] as? String, req["mcp"] as? String, req["topic"] as? String, done)
+            newChat(req["conv"] as? String, (req["name"] as? String) ?? "", req["dir"] as? String, req["project"] as? String, req["model"] as? String, req["effort"] as? String, req["mcp"] as? String, req["topic"] as? String, req["area"] as? String, done)
+        case "new_engine":
+            guard let newEngineChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            newEngineChat(req["conv"] as? String, (req["name"] as? String) ?? "", (req["engine"] as? String) ?? "claude", req["dir"] as? String, req["project"] as? String, req["model"] as? String, req["effort"] as? String, req["topic"] as? String, done)
+        case "send":
+            guard let sendChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            sendChat(req["conv"] as? String, (req["target"] as? String) ?? "", (req["text"] as? String) ?? "", (req["wait"] as? Bool) ?? false, (req["timeout"] as? TimeInterval) ?? 300, done)
+        case "last":
+            guard let lastChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            lastChat(req["conv"] as? String, (req["target"] as? String) ?? "", done)
         case "model":
             guard let setModelChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
             setModelChat(req["conv"] as? String, (req["target"] as? String) ?? "", (req["model"] as? String) ?? "", req["effort"] as? String, done)
         case "topic":
             guard let setTopicChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
             setTopicChat(req["conv"] as? String, (req["target"] as? String) ?? "", (req["topic"] as? String) ?? "", done)
+        case "area":
+            guard let areaCmd else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            areaCmd(req, done)
+        case "sprint":
+            guard let sprintCmd else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
+            sprintCmd(req, done)
         case "mcp":
             guard let setMcpChat else { return done(["ok": false, "error": "codenv 還沒準備好"]) }
             setMcpChat(req["conv"] as? String, (req["target"] as? String) ?? "", (req["mode"] as? String) ?? "", done)

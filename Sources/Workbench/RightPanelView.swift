@@ -53,6 +53,10 @@ final class RightPanelModel: ObservableObject {
     @Published var tab: RightTab {
         didSet { appDefaults.set(tab.rawValue, forKey: "rightPanelTab") }
     }
+    /// 「聊天室」那塊顯示成關聯圖（false＝列表），記住使用者的選擇
+    @Published var chatGraph: Bool {
+        didSet { appDefaults.set(chatGraph, forKey: "rightPanelChatGraph") }
+    }
     /// 最下面的桌寵空位要不要留（右欄本身的開關是 F4＝PetSlot.enabled）
     @Published var petSlotOn: Bool {
         didSet { appDefaults.set(petSlotOn, forKey: "rightPanelPet"); NotificationCenter.default.post(name: PetSlot.changed, object: nil) }
@@ -76,6 +80,7 @@ final class RightPanelModel: ObservableObject {
     private init() {
         tab = RightTab(rawValue: appDefaults.string(forKey: "rightPanelTab") ?? "") ?? .windows
         petSlotOn = appDefaults.object(forKey: "rightPanelPet") as? Bool ?? true
+        chatGraph = appDefaults.bool(forKey: "rightPanelChatGraph")
         panelObserver = NotificationCenter.default.addObserver(forName: PetSlot.changed, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             if self.panelOn != PetSlot.enabled { self.panelOn = PetSlot.enabled }
@@ -136,7 +141,12 @@ struct RPChatRow: Identifiable {
 struct RPChatSection: Identifiable {
     let name: String?
     let rows: [RPChatRow]
-    var id: String { name ?? "·" }
+    /// 區：group id（沒有＝沒分區的那一段）、第幾層（0＝第一層區）、上面每一層區的 id（收合用）、這個區含底下所有區的聊天室數
+    var key: String? = nil
+    var depth = 0
+    var ancestors: [String] = []
+    var total = 0
+    var id: String { key ?? name ?? "·" }
 }
 
 struct RPChats {
@@ -182,40 +192,34 @@ enum RPData {
         let list = store.conversations(inCommander: s).filter { !$0.isBrowser && !$0.isGadget && $0.draft != true }
         let live = list.filter { !store.isArchived($0) }
         out.archived = list.filter { store.isArchived($0) }.map(row)
-        // 總指揮置頂；組是這個總指揮涵蓋的頂層組本身的算「沒分組」，往下一層的子組各自一個小標題
-        let roots = Set(s.groups ?? [])
+        // 總指揮置頂；沒分區的（直接放在總指揮涵蓋的組裡）一段；每個區（任意層）一段，樹狀前序，可收合
+        let nodes = store.areaNodes(s)
         let multi = store.commanderIsMulti(s)
-        var buckets: [UUID?: [RPChatRow]] = [:]
-        var order: [UUID?] = [nil]
-        for c in live {
-            // single：不分小標題，整串；multi：按子專案（第一層子組）分組，更深的子組歸進它所屬的子專案
-            let sp = multi ? store.subProject(of: c, in: s) : nil
-            let key: UUID? = sp?.id
-            if buckets[key] == nil { buckets[key] = []; if key != nil { order.append(key) } }
-            buckets[key]!.append(row(c))
+        var byArea: [UUID?: [RPChatRow]] = [:]
+        for c in live { byArea[store.areaID(of: c, in: nodes), default: []].append(row(c)) }
+        let root = byArea[nil] ?? []
+        let chiefRows = root.filter { $0.chief } + nodes.flatMap { byArea[$0.group.id] ?? [] }.filter { $0.chief }
+        let rest = root.filter { !$0.chief }
+        if !chiefRows.isEmpty { out.sections.append(RPChatSection(name: nil, rows: chiefRows, key: "·chief")) }
+        if !rest.isEmpty {
+            // multi：直接掛在總指揮底下、不屬於任何子專案的放「未分子專案」，不漏掉；single 不加標題
+            out.sections.append(RPChatSection(name: multi && !nodes.isEmpty ? L("未分子專案") : nil, rows: rest, key: multi && !nodes.isEmpty ? "·unassigned" : "·root"))
         }
-        let groupIndex = { (g: UUID?) -> Int in store.groups.firstIndex { $0.id == g } ?? Int.max }
-        let named = order.dropFirst().sorted { groupIndex($0) < groupIndex($1) }
-        for key in [nil] + Array(named) {
-            guard var rows = buckets[key], !rows.isEmpty else { continue }
-            if key == nil, let i = rows.firstIndex(where: { $0.chief }) { rows.insert(rows.remove(at: i), at: 0) }
-            if key == nil, multi {
-                // multi：總指揮自己置頂；直接掛在總指揮組底下、不屬於任何子專案的放「未分子專案」（可收合），不漏掉
-                let chief = rows.filter { $0.chief }, rest = rows.filter { !$0.chief }
-                if !chief.isEmpty { out.sections.append(RPChatSection(name: nil, rows: chief)) }
-                if !rest.isEmpty { out.sections.append(RPChatSection(name: L("未分子專案"), rows: rest)) }
-                continue
-            }
-            out.sections.append(RPChatSection(name: key.flatMap { store.group($0)?.name }, rows: rows))
+        var parentOf: [UUID: UUID?] = [:]
+        for n in nodes { parentOf[n.group.id] = n.parent }
+        func ancestors(_ id: UUID) -> [String] {
+            var out: [String] = []
+            var cur = parentOf[id] ?? nil
+            while let c = cur { out.insert(c.uuidString, at: 0); cur = parentOf[c] ?? nil }
+            return out
         }
-        // 總指揮聊天室不在未分組裡（例如放在子組）：還是要置頂
-        if let ci = out.sections.firstIndex(where: { $0.rows.contains { $0.chief } }), ci != 0,
-           let ri = out.sections[ci].rows.firstIndex(where: { $0.chief }) {
-            var rows = out.sections[ci].rows
-            let chief = rows.remove(at: ri)
-            out.sections[ci] = RPChatSection(name: out.sections[ci].name, rows: rows)
-            out.sections.insert(RPChatSection(name: nil, rows: [chief]), at: 0)
-            out.sections.removeAll { $0.rows.isEmpty }
+        func subtreeCount(_ id: UUID) -> Int {
+            (byArea[id] ?? []).filter { !$0.chief }.count + nodes.filter { $0.parent == id }.reduce(0) { $0 + subtreeCount($1.group.id) }
+        }
+        for n in nodes {
+            let rows = (byArea[n.group.id] ?? []).filter { !$0.chief }
+            out.sections.append(RPChatSection(name: n.group.name, rows: rows, key: n.group.id.uuidString, depth: n.depth - 1,
+                                              ancestors: ancestors(n.group.id), total: subtreeCount(n.group.id)))
         }
         return out
     }
@@ -409,31 +413,48 @@ struct RPWindowsTab: View {
         let wins = RPData.windows(store)
         let chats = RPData.chats(store, workspace: workspace)
         VStack(spacing: 0) {
+            if panelModel.chatGraph && chats.isCommander {
+                // 關聯圖：Window 清單照舊放上面，聊天室那塊整個換成圖
+                VStack(alignment: .leading, spacing: 0) {
+                    header(L("Window (\(wins.count))"))
+                    ForEach(wins) { windowRow($0) }
+                    header(L("聊天室 (\(chats.count))"), trailing: AnyView(modeToggle(chats.isCommander)))
+                }
+                ChatGraphRepresentable(store: store, workspace: workspace,
+                                       onSummon: { id in if let sid = chats.sessionID { store.summonConversation(id, inSession: sid) } },
+                                       onInfo: { openInfo($0) })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     running
                     header(L("Window (\(wins.count))"))
                     ForEach(wins) { windowRow($0) }
-                    header(L("聊天室 (\(chats.count))"), trailing: chats.isCommander ? AnyView(columns) : nil)
+                    header(L("聊天室 (\(chats.count))"), trailing: chats.isCommander ? AnyView(HStack(spacing: 8) { columns; modeToggle(true) }) : nil)
                     if !chats.isCommander {
                         Text(L("這一區沒有總指揮")).font(.system(size: 11 * s)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.vertical, 4)
                     }
                     ForEach(chats.sections) { sec in
-                        if let name = sec.name {
-                            Button {
-                                if collapsedSections.contains(name) { collapsedSections.remove(name) } else { collapsedSections.insert(name) }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: collapsedSections.contains(name) ? "chevron.right" : "chevron.down").font(.system(size: 8 * s, weight: .semibold))
-                                    Text(collapsedSections.contains(name) ? "\(name) (\(sec.rows.count))" : name).font(.system(size: 10.5 * s, weight: .semibold))
-                                    Spacer()
+                        let hidden = sec.ancestors.contains { collapsedSections.contains($0) }
+                        let collapsed = sec.key.map { collapsedSections.contains($0) } ?? false
+                        if !hidden {
+                            if let name = sec.name {
+                                Button {
+                                    let k = sec.key ?? name
+                                    if collapsedSections.contains(k) { collapsedSections.remove(k) } else { collapsedSections.insert(k) }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: collapsed ? "chevron.right" : "chevron.down").font(.system(size: 8 * s, weight: .semibold))
+                                        Text(collapsed ? "\(name) (\(sec.rows.count + sec.total))" : name).font(.system(size: 10.5 * s, weight: .semibold))
+                                        Spacer()
+                                    }
+                                    .foregroundStyle(.secondary).padding(.leading, 10 + CGFloat(sec.depth) * 10).padding(.trailing, 10).padding(.top, 5).padding(.bottom, 1).contentShape(Rectangle())
                                 }
-                                .foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 5).padding(.bottom, 1).contentShape(Rectangle())
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
-                        }
-                        if sec.name == nil || !collapsedSections.contains(sec.name!) {
-                            ForEach(sec.rows) { chatRow($0, session: chats.sessionID) }
+                            if !collapsed {
+                                ForEach(sec.rows) { chatRow($0, session: chats.sessionID, indent: sec.name == nil ? 0 : CGFloat(sec.depth) * 10) }
+                            }
                         }
                     }
                     if !chats.archived.isEmpty {
@@ -446,7 +467,7 @@ struct RPWindowsTab: View {
                             .foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        if archivedOpen { ForEach(chats.archived) { chatRow($0, session: chats.sessionID).opacity(0.6) } }
+                        if archivedOpen { ForEach(chats.archived) { chatRow($0, session: chats.sessionID, indent: 0).opacity(0.6) } }
                     }
                 }
                 .padding(.bottom, 6)
@@ -454,6 +475,7 @@ struct RPWindowsTab: View {
                 .focusable()
                 .focused($listFocused)
                 .focusEffectDisabled()
+            }
             }
             Divider()
             portsBar
@@ -472,6 +494,23 @@ struct RPWindowsTab: View {
         ChatInfoCard.shared.cancel()
         panelModel.selectedChat = id
         panelModel.infoChat = id
+    }
+
+    /// 列表／關聯圖切換（記住選擇）
+    private func modeToggle(_ on: Bool) -> some View {
+        HStack(spacing: 2) {
+            ForEach([false, true], id: \.self) { g in
+                Button { panelModel.chatGraph = g } label: {
+                    Image(systemName: g ? "point.3.connected.trianglepath.dotted" : "list.bullet").font(.system(size: 10 * s))
+                        .foregroundStyle(panelModel.chatGraph == g ? Color.accentColor : Color.secondary)
+                        .frame(width: 20 * s, height: 16 * s)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(panelModel.chatGraph == g ? Color.accentColor.opacity(0.15) : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(g ? L("關聯圖") : L("列表"))
+            }
+        }
     }
 
     private var columns: some View {
@@ -532,7 +571,7 @@ struct RPWindowsTab: View {
         .help(w.subtitle)
     }
 
-    @ViewBuilder private func chatRow(_ r: RPChatRow, session: UUID?) -> some View {
+    @ViewBuilder private func chatRow(_ r: RPChatRow, session: UUID?, indent: CGFloat = 0) -> some View {
         HStack(spacing: 5) {
             Group {
                 if r.state == .working { PulseDot(color: r.state.color, size: 7 * s) }
@@ -552,7 +591,7 @@ struct RPWindowsTab: View {
             Text(r.context.map(ContextMonitor.text) ?? "—").frame(width: 36 * s, alignment: .trailing)
         }
         .font(.system(size: 10.5 * s)).monospacedDigit().foregroundStyle(.secondary)
-        .padding(.horizontal, 10).padding(.vertical, 2)
+        .padding(.leading, 10 + indent).padding(.trailing, 10).padding(.vertical, 2)
         .frame(minHeight: 20 * s)
         // 不要「叫出來」按鈕；滑鼠移到那一列整列淡底色、單擊選取（紫框保持）、雙擊叫出來（右鍵選單裡還有「叫出來」）；
         // 停 1.5 秒浮出資訊卡
@@ -575,6 +614,17 @@ struct RPWindowsTab: View {
             Button(L("叫出來")) { if let session { store.summonConversation(r.id, inSession: session) } }
             Button(L("聊天室資訊…")) { openInfo(r.id) }
             Button(L("重新命名…")) { renameText = r.title; renamingID = r.id }
+            if let c = store.conversation(r.id), !r.chief, let sess = store.currentSessionLayout, !store.areaNodes(sess).isEmpty {
+                Menu(L("移到區…")) {
+                    let nodes = store.areaNodes(sess)
+                    if let root = store.areaRoot(sess) {
+                        Button((store.areaID(of: c, in: nodes) == nil ? "✓ " : "") + L("（總指揮本身）")) { store.move(c.id, toGroup: root) }
+                    }
+                    ForEach(nodes, id: \.group.id) { n in
+                        Button((store.groupOf(c) == n.group.id ? "✓ " : "") + String(repeating: "　", count: n.depth - 1) + n.group.name) { store.move(c.id, toGroup: n.group.id) }
+                    }
+                }
+            }
             if let c = store.conversation(r.id), !store.groups.isEmpty {
                 Menu(L("移到…")) {
                     ForEach(store.groupTree(), id: \.group.id) { t in
@@ -1030,7 +1080,8 @@ extension RightPanelModel {
         switch tab {
         case .windows:
             o["windows"] = RPData.windows(store).map { ["title": $0.title, "subtitle": $0.subtitle, "status": $0.status] }
-            o["chats"] = chats.sections.map { ["group": $0.name ?? NSNull(), "rows": $0.rows.map(chat)] as [String: Any] }
+            o["chats"] = chats.sections.map { ["group": $0.name ?? NSNull(), "depth": $0.depth, "rows": $0.rows.map(chat)] as [String: Any] }
+            o["chatMode"] = RightPanelModel.shared.chatGraph ? "graph" : "list"
             o["archived"] = chats.archived.map(chat)
             o["ports"] = PortsMonitor.shared.entries.map { ["port": $0.port, "name": $0.name, "pid": Int($0.pid), "ours": $0.ours] as [String: Any] }
         case .files:

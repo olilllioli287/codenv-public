@@ -6,5 +6,6 @@ out=$(mktemp -d); trap 'rm -rf $out' EXIT
 mkdir -p "${TMPDIR}codenv-test-codex"
 swiftc -o $out/codex $here/stubs.swift $here/codex/main.swift $src/CodexBridge.swift $src/CopilotBridge.swift
 swiftc -o $out/agy $here/stubs.swift $here/agystub.swift $here/agy/main.swift $src/AgyBridge.swift
-$out/codex && $out/agy
+$out/codex
+$out/agy
 defaults delete codenv-bridge-unit 2>/dev/null || true

@@ -18,6 +18,8 @@ final class DailyHandoff {
     private var timer: Timer?
     private var queue: [UUID] = []
     private var running = false
+    private var setAsideDone = false
+    private var protectOriginal = false      // 讀不懂、又另存不了：不覆蓋原檔
     private var observers: [Any] = []
 
     static let contextTokenThreshold = 20_000
@@ -61,12 +63,19 @@ final class DailyHandoff {
 
     private func loadState(for boundary: Date) -> DayState {
         let key = Self.dayKey(boundary)
-        if let data = try? Data(contentsOf: stateURL), let s = try? JSONDecoder().decode(DayState.self, from: data), s.day == key { return s }
+        // 保護模式（原檔讀不懂又另存不了、不能寫檔）：用記憶體裡的當日計數，每日上限照樣生效，不要每輪都從 0 開始
+        if protectOriginal, let m = memState, m.day == key { return m }
+        if let data = try? Data(contentsOf: stateURL) {
+            if let s = try? JSONDecoder().decode(DayState.self, from: data) { if s.day == key { return s } }
+            else if !setAsideDone { setAsideDone = UnreadableFile.setAside(stateURL, data: data); if !setAsideDone { protectOriginal = true } }   // 讀不懂：另存一份（只存一次，不是每 10 分鐘一份）
+        }
         return DayState(day: key)
     }
 
+    private var memState: DayState?
     private func saveState(_ s: DayState) {
-        guard let data = try? JSONEncoder().encode(s) else { return }
+        memState = s
+        guard !protectOriginal, let data = try? JSONEncoder().encode(s) else { return }
         try? data.write(to: stateURL, options: .atomic)
     }
 

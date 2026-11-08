@@ -23,8 +23,8 @@ enum Transcripts {
     struct Turn { let time: Date?; let user: Bool; var text: String; let model: String }
 
     /// 一份 jsonl → 一則一則（同一邊連著的併起來）
-    static func turns(_ url: URL, model: String) -> [Turn] {
-        guard let data = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+    static func turns(_ url: URL, model: String, tail: Int? = nil) -> [Turn] {
+        guard let data = ModelCarry.readLines(url, tail: tail)?.text else { return [] }
         let plain = ISO8601DateFormatter()
         var out: [Turn] = []
         for line in data.split(separator: "\n") {

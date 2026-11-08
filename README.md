@@ -2,96 +2,26 @@
 
 English · [繁體中文](README.zh-TW.md)
 
-<p align="center"><img src="docs/images/hero-en.webp" alt="codenv: a macOS workbench for Claude Code" width="100%"></p>
-
-A macOS app that puts Claude Code in a window that feels like a chat app and can be split up like a terminal. The sidebar manages projects and conversations; on the right, you can split chats, terminals, and web pages into multiple panes so several AIs can work at once.
-
-Claude Code is the main focus, with optional support for Codex, GitHub Copilot, Apple’s built-in models, and local MLX models.
+Five Claude Code terminal tabs open at once, and an hour later you can’t tell which one is working, which one is waiting for your answer, or how much quota is left. codenv is a native macOS app that puts them in one window: every chat is a real Claude Code conversation, and you can split panes side by side like a terminal.
 
 > codenv is a personal project and is not affiliated with Anthropic, OpenAI, GitHub, or Google.
 
-## Highlights
+<img src="docs/img/commander-layout.png" alt="codenv commander layout: switch projects on the left, split chats in the middle, see every chat in the right panel" width="100%">
 
-<table>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/images/card-commander.webp" alt="Commander layout with the purple tab">
-<br><b>Commanders</b>
-<br>One commander per project. Click one in the left sidebar; the right panel (Windows / Files / Git / History / Board) shows every chat underneath it. The commander’s own chat is pinned as the purple square at the far left of the tab bar (⌘ 1).
-</td>
-<td width="50%" valign="top">
-<img src="docs/images/card-topic.webp" alt="Chat description card">
-<br><b>Chat descriptions</b>
-<br>Write a short description for each chat (select it in the right panel and press <code>i</code>). It tells that chat’s Claude what it is responsible for, and it shows up in the commander’s roster and in <code>codenv-todo team</code>. Hover for 1.5 seconds to see an info card.
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/images/card-search.webp" alt="Full-text history search">
-<br><b>History search</b>
-<br>Search every conversation under a commander from the right panel, backed by a local full-text index. Also available as <code>codenv-todo search</code>.
-</td>
-<td width="50%" valign="top">
-<img src="docs/images/card-usage.webp" alt="Usage rows">
-<br><b>Usage at a glance</b>
-<br>Remaining 5-hour and weekly quota for Claude and Codex appears under every input box and, one line per provider, at the bottom of the sidebar. Colab compute units show up too if the Colab CLI is installed.
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/images/card-terminal.webp" alt="Floating terminal">
-<br><b>Floating terminal (F5)</b>
-<br>A terminal that floats over the chat and follows the current chat’s folder. Drag it, resize it, open several tabs; hide it and your programs keep running.
-</td>
-<td width="50%" valign="top">
-<img src="docs/images/card-memory.webp" alt="Memory per chat">
-<br><b>Lighter on memory</b>
-<br>Per-chat memory and context sizes are listed in the right panel. Right-click a chat to load full, lite, or no MCP servers; chats left off-screen for 15 minutes have their Claude process shut down.
-</td>
-</tr>
-</table>
+<img src="docs/img/relation-graph.png" alt="Relationship graph in the right panel" width="340">
 
-### Turning on commanders
+## What it solves
 
-The sidebar starts as the classic tree. Go to Settings (⌘ ,) → Appearance (外觀) → Interface → Sidebar (左欄) and choose “Commanders (總指揮)”, then click ＋ next to “Commanders” (or the “New commander” button on the empty state). Fill in a name, pick the groups it covers (or create a new group tied to a folder), and choose a single-project or multi-project type. The `codenv-todo` commands (`new`, `rename`, `model`, `mcp`, `topic`, `team`) are built into the app, so commanders can open, rename, and re-model chats under them without any extra install.
+- **One “commander” per project**: click to switch in the sidebar; the right panel (Windows / Files / Git / History / Board) shows every chat under that project, with full-text search across past conversations.
+- **Commanders can delegate**: they open chats, rename them, switch models, and message other chats then read the reply (`codenv-todo new / rename / model / send / last …`, built in, no extra install). They can also open Codex or Copilot chats that don’t use your Claude quota (`--engine`).
+- **Usage you can see**: remaining 5-hour and weekly quota for Claude and Codex under the input box and in the sidebar footer, plus a “usage sprint” card that nudges you to spend leftover quota before it resets.
+- **Relationship graph and “areas”**: group chats into nested areas and see how they relate in the right panel or the large F6 graph.
+- **Floating terminal (F5)**: run commands without leaving the chat; closing it keeps the process running.
+- **Light on memory, careful with data**: per-chat MCP full / lite / none, idle chats shut down automatically; drafts, the outbox, and model-switch handoffs are protected, and on failure the old chat is left untouched.
 
-## What’s here now
+## Turning on commanders
 
-**Commanders and the right panel**
-- Commander sidebar, a pinned commander tab (⌘ 1), a right panel with Windows / Files / Git / History / Board tabs, and full-text search across a commander’s conversations.
-- Commanders delegate work with `codenv-todo` (`new`, `rename`, `model`, `mcp`, `topic`, `team`); each chat can carry a short description of what it is responsible for.
-- Usage rows under each input box and in the sidebar footer, a floating terminal (F5), and lighter memory use (per-chat MCP lite/none, idle chats shut down after 15 minutes).
-
-**Chat and conversations**
-- Each chat is a real Claude Code conversation (the `claude -p` stream-json mode), displayed in a chat interface with Markdown, syntax-highlighted code, tool steps, and permission and multiple-choice cards.
-- The input box supports pasted images and dragged files. Images and files appear as cards above the input box (files show their extensions; folders show a folder icon). Paths in the text can be deleted or skipped as a whole.
-- File paths in conversations are clickable; clicking one reveals it in Finder. Chinese filenames and paths without backticks are recognized. Local images are displayed inline; images that can’t be loaded are shown as text instead of broken images.
-- When you switch models, the previous conversation is automatically handed off to the new model. Long conversations are automatically compacted, with a configurable threshold.
-- When the input box is empty, a gray suggestion predicts what you might say next. Press Tab to accept it.
-
-**Layout and windows**
-- The sidebar lets you group conversations, create subgroups, drag to reorder, and archive conversations that haven’t been used for a week.
-- Split panes horizontally or vertically within a Window, drag to adjust their proportions, and restore the same layout after ⌘ Q.
-- Keyboard controls follow tmux conventions (Ctrl + A prefix), with Mac shortcuts too: ⌘ W closes the current pane; ⌘ ⇧ T restores the last closed pane or entire Window exactly as it was.
-
-**Browser panes and gadgets**
-- Built-in browser pane (WebKit) supports signing in to websites and uploading files. Use ⌘ + / ⌘ − to zoom; zoom levels are remembered per website.
-- “Bundle”: group chats in the sidebar inside a purple frame, then attach gadgets beneath them — Gemini, NotebookLM, or any web page. Press ⌘ ⇧ B to slide the gadget out from the right, then press it again to hide it. Hiding it only makes it invisible; the web page doesn’t reload.
-- AIs can use the `codenv-browser` command to read text or take screenshots from browser panes, but they can only read, not interact.
-
-**Multiple AIs working together**
-- Collaboration board: create goals, break them into steps, and assign owners. Goals created by Claude require your approval before work begins; only you can check off the final “User acceptance” step.
-- Two Claude chats can message each other and divide up work, such as one writing code while the other reviews and publishes it.
-- Scheduling: automatically send a message to a conversation at a specified time.
-- The right sidebar shows each provider’s remaining usage, which model each pane is using, and the length of each conversation.
-
-**Coding practice area**
-- Built-in Monaco Editor lets you write and run C/C++/Python practice programs without creating a separate folder.
-
-**Other**
-- Update reminder: the sidebar reminds you when a new version is available, with options to read the release notes, download it, or skip this version.
-- Reporting a problem: send an email or open a GitHub issue, with version information filled in for you.
-- When offline, tools that require sign-in won’t be invoked, preventing repeated sign-in prompts.
+The sidebar starts as the classic tree. Go to Settings (⌘ ,) → Appearance (外觀) → Interface → Sidebar (左欄) and choose “Commanders (總指揮)”, then click ＋ next to “Commanders” (or the “New commander” button on the empty state). Fill in a name, pick the groups it covers (or create a new group tied to a folder), and choose a single-project or multi-project type.
 
 ## Open-source projects used and referenced
 
@@ -105,13 +35,6 @@ The sidebar starts as the classic tree. Go to Settings (⌘ ,) → Appearance (�
 - [codenv_old](https://github.com/olilllioli287/codenv_old): predecessor to this app, a work environment assembled with vim and tmux.
 - [claude-code-image-shelf](https://github.com/olilllioli287/claude-code-image-shelf): image annotation tool used for image editing in chats.
 
-## What’s next
-
-- **Claude Code is the main focus**: first, make the Claude experience solid; other models remain optional as before.
-- **Coding practice area**: expand it with features such as chapter-based exercises, learning from a textbook with an AI tutor, and better run and debug screens.
-- **New features**: keep adding useful everyday features. Suggestions are welcome in issues.
-- **What’s next for bundles**: gadgets can currently host Gemini, NotebookLM, and web pages. The plan is to make gadgets interact more with the chats they’re attached to, and to evaluate a Chromium-based browser pane.
-
 ## Requirements
 
 - macOS 14 or later, Apple Silicon
@@ -121,7 +44,7 @@ The sidebar starts as the classic tree. Go to Settings (⌘ ,) → Appearance (�
 ## Installation
 
 1. Download `codenv-<version>.dmg` from [Releases](https://github.com/olilllioli287/codenv-public/releases/latest), then drag codenv into “Applications.”
-2. The app uses a temporary (ad-hoc) signature and is not signed by an Apple Developer. The first time you open it, right-click codenv → “Open” → “Open.” If it still won’t open, go to “System Settings → Privacy & Security” and click “Open Anyway.”
+2. The app uses a temporary (ad-hoc) signature and is not signed by an Apple Developer. On macOS 15 and later, right-click → “Open” no longer bypasses Gatekeeper. Try to open it once (it will be blocked), then go to “System Settings → Privacy & Security,” scroll down to codenv and click “Open Anyway”; or run `xattr -cr /Applications/codenv.app` in Terminal.
 3. Because it uses a temporary signature, **macOS treats it as a different app each time you install a new version**. Permissions you’ve granted (such as Full Disk Access) may need to be granted again after updating.
 
 ## Update reminder
@@ -144,7 +67,7 @@ Gemini chats, gray next-message suggestions, usage checks, and the Board feature
 
    > Antigravity CLI headless mode (`agy -p`) is intended for direct scripting and CI workflows. Wrapping `agy` inside third-party coding agents or applications, or automating account rotation, is not supported under consumer plans.
 
-This feature is **on by default**, and codenv shows a reminder once before first use. To turn it off: Settings → 對話 (Chat) → agy. Please verify the actual situation yourself in related articles and Google’s latest statements; codenv does not guarantee your account will be safe, you accept the risk, and codenv does not attempt to hide itself.
+This feature is **on by default**. If codenv finds `agy` installed on your Mac, it shows a one-time reminder card (buttons “Got it” and “Go to Settings”) that says what codenv uses agy for, that Google’s consumer plans do not support this use, and where to turn it off. To turn it off at any time: Settings (⌘ ,) → Chat (對話) → agy. Please verify the actual situation yourself in related articles and Google’s latest statements; codenv does not guarantee your account will be safe, you accept the risk, and codenv does not attempt to hide itself.
 
 ## Building from source
 

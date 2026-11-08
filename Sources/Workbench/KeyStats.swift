@@ -14,6 +14,7 @@ final class KeyStats {
 
     private var file = File(since: Date(), keys: [:])
     private var dir: URL?
+    private var protectOriginal = false     // 讀不懂、又另存不了：不覆蓋原檔
     private var prefixAt: TimeInterval = 0     // 剛按 ⌃ A 的時間：下一鍵記成「⌃ A → x」
     private var saveWork: DispatchWorkItem?
     private var last: (time: TimeInterval, code: UInt16) = (0, 0)   // 聊天畫面沒處理的鍵會被送回來再走一次，同一個事件只算一次
@@ -21,7 +22,9 @@ final class KeyStats {
     func start(in directory: URL) {
         guard dir == nil else { return }
         dir = directory
-        if let d = try? Data(contentsOf: jsonURL), let f = try? Self.decoder.decode(File.self, from: d) { file = f }
+        if let d = try? Data(contentsOf: jsonURL) {
+            if let f = try? Self.decoder.decode(File.self, from: d) { file = f } else if !UnreadableFile.setAside(jsonURL, data: d) { protectOriginal = true }
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { [weak self] _ in self?.saveNow() }
     }
 
@@ -70,7 +73,7 @@ final class KeyStats {
     func saveNow() {
         saveWork?.cancel(); saveWork = nil
         guard dir != nil, let d = try? Self.encoder.encode(file) else { return }
-        try? d.write(to: jsonURL, options: .atomic)
+        if !protectOriginal { try? d.write(to: jsonURL, options: .atomic) }
         try? report().write(to: textURL, atomically: true, encoding: .utf8)
     }
 

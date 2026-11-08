@@ -320,17 +320,20 @@ final class SessionActivity: ObservableObject {
         }
     }
 
-    private static func readGit(_ dir: String) -> GitInfo? {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        p.arguments = ["-C", dir, "--no-optional-locks", "status", "--porcelain=v2", "--branch"]
+    static var gitTimeout: TimeInterval = 15
+    static func readGit(_ dir: String) -> GitInfo? {
+        // 不執行專案設定檔指定的指令（fsmonitor、filter、textconv）；逾時整群砍掉
+        let p = GitProcess.makeProcess(["-C", dir] + GitProcess.safeOptions + ["--no-optional-locks", "status", "--porcelain=v2", "--branch"])
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
+        // 卡住（iCloud 未下載的資料夾、斷線的網路磁碟）最多等 15 秒；不然 gitLoading 一直擋著、這個資料夾的分支永遠不更新
+        let watchdog = GitProcess.arm(p, after: gitTimeout)
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        guard p.terminationStatus == 0, let s = String(data: data, encoding: .utf8) else { return nil }
+        watchdog.cancel()
+        guard p.terminationStatus == 0, let s = String(data: data, encoding: .utf8), s.contains("# branch.") else { return nil }      // 沒有 branch 標頭＝git 根本沒跑起來
         var g = GitInfo(branch: "")
         for line in s.split(separator: "\n") {
             if line.hasPrefix("# branch.head ") { g.branch = String(line.dropFirst(14)) }

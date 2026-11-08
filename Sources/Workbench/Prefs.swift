@@ -120,13 +120,9 @@ final class Prefs: ObservableObject {
 
     /// 看板的背景執行器（scripts/codenv-todo，Python）看不到 UserDefaults：關著時在看板資料夾放一個 agy-disabled 檔，它看到就不叫 agy
     static func syncAgyMarker(_ on: Bool) {
-        // 開著但還沒看過提醒：放 agy-notice-pending，執行器看到就不領 @agy 步驟、請桌寵提醒一次
+        // 提醒只是告知、不擋功能（不再放 agy-notice-pending）；舊版留下的標記檔順手清掉
         let dir = CollabBoardModel.todoFile.deletingLastPathComponent()
-        let pending = dir.appendingPathComponent("agy-notice-pending")
-        if on && !(appDefaults.object(forKey: "agyNoticeSeen") as? Bool ?? !Edition.isPublic) {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            FileManager.default.createFile(atPath: pending.path, contents: Data("agy 的提醒還沒在 codenv 裡看過\n".utf8))
-        } else { try? FileManager.default.removeItem(at: pending) }
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("agy-notice-pending"))
         let url = dir.appendingPathComponent("agy-disabled")
         if on { try? FileManager.default.removeItem(at: url) }
         else {
@@ -135,9 +131,9 @@ final class Prefs: ObservableObject {
         }
     }
 
-    /// 看過 agy 提醒了沒：私人版使用者已經知情（預設當成看過），公版第一次用前要看一次（docs/agy-warning-spec.md）
+    /// 看過 agy 預設開啟的提醒了沒（私人版、公版都一樣：新版第一次、而且本機有 agy 時顯示一次）
     var agyNoticeSeen: Bool {
-        get { appDefaults.object(forKey: "agyNoticeSeen") as? Bool ?? !Edition.isPublic }
+        get { appDefaults.object(forKey: "agyNoticeSeen") as? Bool ?? false }
         set { appDefaults.set(newValue, forKey: "agyNoticeSeen"); Self.syncAgyMarker(agyEnabled) }
     }
 
@@ -176,35 +172,28 @@ final class Prefs: ObservableObject {
         }
     }
 
-    /// 預設開著但還沒看過提醒：第一次要呼叫 agy 前先跳一次（App 開啟、回到前景時檢查；沒看過之前 AgyBridge.enabled 是 false，
-    /// 所以 Gemini 聊天室、灰字建議、用量、看板都不會先叫 agy）。測試 App 用 --agy-notice-answer 知道｜關掉 代按
+    /// 預設開著、本機有 agy、還沒看過提醒：App 開啟、回到前景時顯示一次浮動卡片（AgyNoticePanel，不搶焦點）；只告知，不擋功能。
+    /// 測試 App（有 --state-dir）沒指定 --agy-notice-answer 知道了｜前往設定 就不顯示（不要出現在使用者的螢幕上）
     private var noticeShowing = false
     func checkAgyNotice() {
-        guard agyEnabled, !agyNoticeSeen, !noticeShowing else { return }
-        noticeShowing = true
-        defer { noticeShowing = false }
+        guard agyEnabled, !agyNoticeSeen, AgyBridge.installed, !noticeShowing else { return }
         let a = CommandLine.arguments
-        var choice = 0      // 1＝我知道了、2＝關掉 agy 功能
-        if a.contains("--state-dir"), let i = a.firstIndex(of: "--agy-notice-answer"), i + 1 < a.count { choice = a[i + 1] == "關掉" ? 2 : 1 }
-        // 測試實例沒指定答案就不跳 runModal（會卡住主執行緒，還可能出現在使用者的螢幕上）
-        if choice == 0, a.contains("--state-dir") { return }
-        while choice == 0 {
-            let al = NSAlert()
-            al.alertStyle = .warning
-            al.messageText = L("agy 功能：使用前請先知道這件事")
-            al.informativeText = Self.agyNoticeBody
-            al.addButton(withTitle: L("我知道了"))
-            al.addButton(withTitle: L("關掉 agy 功能"))
-            al.addButton(withTitle: L("看 FAQ 原文"))
-            switch al.runModal() {
-            case .alertFirstButtonReturn: choice = 1
-            case .alertSecondButtonReturn: choice = 2
-            case .alertThirdButtonReturn: if let u = URL(string: "https://antigravity.google/docs/faq/") { NSWorkspace.shared.open(u) }
-            default: return
-            }
+        if a.contains("--state-dir") {
+            guard let i = a.firstIndex(of: "--agy-notice-answer"), i + 1 < a.count else { return }
+            agyNoticeSeen = true
+            if a[i + 1] == "前往設定" { Self.openChatSettings() }
+            return
         }
-        if choice == 2 { agyEnabled = false }
-        agyNoticeSeen = true
+        noticeShowing = true
+        AgyNoticePanel.show(
+            onKnow: { [weak self] in self?.agyNoticeSeen = true; self?.noticeShowing = false },
+            onSettings: { [weak self] in self?.agyNoticeSeen = true; self?.noticeShowing = false; Self.openChatSettings() })
+    }
+
+    /// 開設定視窗的「對話」頁（agy 開關在那裡）
+    static func openChatSettings() {
+        appDefaults.set("chat", forKey: "settingsTab")
+        (NSApp.delegate as? AppDelegate)?.showChatSettings()
     }
 
     func applyAppearance() {

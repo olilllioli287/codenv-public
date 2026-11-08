@@ -21,9 +21,7 @@ enum RPShell {
 
     /// 同步跑一個外部指令（呼叫的人要在背景）。逾時就結束它；輸出超過 maxBytes 也結束（避免 diff 太大）
     static func run(_ exe: String, _ args: [String], cwd: String? = nil, timeout: TimeInterval = 8, maxBytes: Int = 600_000) -> Result {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: exe)
-        p.arguments = args
+        let p = GitProcess.wrap(exe, args)      // 自己一個 process group：逾時／輸出太大時整群結束（子程序不會握著管線不放）
         if let cwd { p.currentDirectoryURL = URL(fileURLWithPath: cwd) }
         var env = ProcessInfo.processInfo.environment
         env["GIT_OPTIONAL_LOCKS"] = "0"      // 讀狀態不要去搶 index.lock，免得擋住使用者自己的 git
@@ -36,15 +34,14 @@ enum RPShell {
         p.standardInput = FileHandle.nullDevice
         do { try p.run() } catch { return Result(out: "", status: -1, timedOut: false) }
         var timedOut = false
-        let kill = DispatchWorkItem { timedOut = true; if p.isRunning { p.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: kill)
+        let kill = GitProcess.arm(p, after: timeout) { timedOut = true }
         var data = Data()
         let h = pipe.fileHandleForReading
         while true {
             let chunk = h.availableData
             if chunk.isEmpty { break }
             data.append(chunk)
-            if data.count > maxBytes { if p.isRunning { p.terminate() }; break }
+            if data.count > maxBytes { GitProcess.terminateGroup(p); break }
         }
         p.waitUntilExit()
         kill.cancel()
@@ -52,7 +49,8 @@ enum RPShell {
     }
 
     static func git(_ args: [String], cwd: String, timeout: TimeInterval = 8, maxBytes: Int = 600_000) -> Result {
-        run("/usr/bin/git", ["-c", "core.quotepath=false"] + args, cwd: cwd, timeout: timeout, maxBytes: maxBytes)
+        // 專案資料夾裡的 .git/config、.gitattributes 可能是被注入的 Claude 寫的：背景自動跑的 git 不執行 fsmonitor、外部 diff、textconv 指定的指令
+        run("/usr/bin/git", ["-c", "core.quotepath=false"] + GitProcess.safeOptions + args, cwd: cwd, timeout: timeout, maxBytes: maxBytes)
     }
 }
 
@@ -362,14 +360,14 @@ final class GitPanelModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let r: RPShell.Result
             switch c.kind {
-            case .staged: r = RPShell.git(["diff", "--cached", "--no-color", "--", c.path], cwd: top, maxBytes: 300_000)
-            case .unstaged: r = RPShell.git(["diff", "--no-color", "--", c.path], cwd: top, maxBytes: 300_000)
+            case .staged: r = RPShell.git(["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "--", c.path], cwd: top, maxBytes: 300_000)
+            case .unstaged: r = RPShell.git(["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--", c.path], cwd: top, maxBytes: 300_000)
             case .untracked:
                 var d: ObjCBool = false
                 if FileManager.default.fileExists(atPath: (top as NSString).appendingPathComponent(c.path), isDirectory: &d), d.boolValue {
                     r = RPShell.Result(out: "", status: 0, timedOut: false)
                 } else {
-                    r = RPShell.git(["diff", "--no-color", "--no-index", "--", "/dev/null", c.path], cwd: top, maxBytes: 300_000)
+                    r = RPShell.git(["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-index", "--", "/dev/null", c.path], cwd: top, maxBytes: 300_000)
                 }
             }
             DispatchQueue.main.async {

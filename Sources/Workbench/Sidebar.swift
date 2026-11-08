@@ -188,7 +188,7 @@ struct SidebarView: View {
             }
             Button(L("取消"), role: .cancel) { deletingCommander = nil }
         } message: {
-            Text(L("只會移除「\(deletingCommander?.name ?? "")」這個總指揮。底下的聊天室和分組都不會刪，切回原本的樹狀清單照樣看得到。"))
+            Text(L("只會移除「\(deletingCommander?.name ?? "")」這個總指揮。底下的聊天室和分組都不會刪，切回原本的樹狀清單照樣看得到；它涵蓋的分組之後歸到「\(store.commanderFallbackName(excluding: deletingCommander?.id))」總指揮。"))
         }
         .alert(L("重新命名總指揮"), isPresented: Binding(get: { renamingCommander != nil }, set: { if !$0 { renamingCommander = nil } })) {
             TextField(L("名稱"), text: $commanderRenameText)

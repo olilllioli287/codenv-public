@@ -432,6 +432,8 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             ChatTextView.dropLog("按了停止（⌃ C 或停止鍵）\(self.conversationTitleForLog)", nil)
             self.session.interrupt()
         }
+        inputBar.quotesProvider = { [weak self] in self?.quotes ?? [] }
+        inputBar.onRestoreQuotes = { [weak self] q in self?.setQuotes(q, syncWeb: true) }
         inputBar.onSendQueuedNow = { [weak self] in self?.js("wb.sendQueuedNow()") }
         inputBar.onBang = { [weak self] cmd in self?.runBang(cmd) ?? false }
         inputBar.onStopBang = { [weak self] in self?.stopBang() }
@@ -587,6 +589,77 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         }
     }
 
+    /// 網頁的 WebContent 程序崩潰（記憶體壓力、WebKit 自己的 bug）：畫面會變白，ready 還是 true，之後送進去的 JS 全丟進死網頁、權限卡也看不到。
+    /// 標成還沒好（之後的指令先排隊）、重新載入，網頁再送一次 ready，會從紀錄重畫並放行排隊的東西
+    private var webCrashTimes: [Date] = []
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard web === webView else { return }
+        // 崩潰若是某段歷史內容造成，重載→ready→載歷史→又崩潰會無限循環：1 分鐘內最多重載 3 次，之後停手並告知
+        let now = Date()
+        webCrashTimes = webCrashTimes.filter { now.timeIntervalSince($0) < 60 } + [now]
+        guard webCrashTimes.count <= 3 else {
+            NSLog("AI 工作台：聊天網頁 1 分鐘內崩潰超過 3 次，不再自動重載")
+            ready = false
+            showCrashOverlay()      // 網頁已經是白的，提示要用原生元件顯示（lastNotices 要等網頁 ready 才會播，永遠看不到）
+            return
+        }
+        NSLog("AI 工作台：聊天網頁的 WebContent 程序結束了，重新載入")
+        ready = false
+        older = nil
+        webEditing = false
+        lastPetInset = .zero
+        webView.reload()
+    }
+
+    private var crashOverlay: NSView?
+    /// 網頁一直崩潰、不再自動重載時，蓋在網頁位置上的原生提示和「重新載入」按鈕
+    private func showCrashOverlay() {
+        guard crashOverlay == nil, let w = web else { return }
+        let box = NSView(frame: w.frame)
+        let label = NSTextField(wrappingLabelWithString: L("聊天畫面一直崩潰（1 分鐘內超過 3 次），沒有再自動重新載入。你的對話紀錄都還在。"))
+        label.alignment = .center
+        label.textColor = .secondaryLabelColor
+        let button = NSButton(title: L("重新載入"), target: self, action: #selector(reloadAfterCrash))
+        button.bezelStyle = .rounded
+        let stack = NSStackView(views: [label, button])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualTo: box.widthAnchor, constant: -48),
+            label.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
+        ])
+        addSubview(box, positioned: .above, relativeTo: w)
+        crashOverlay = box
+    }
+
+    @objc private func reloadAfterCrash() {
+        crashOverlay?.removeFromSuperview(); crashOverlay = nil
+        webCrashTimes = []
+        ready = false
+        web?.reload()
+    }
+
+    var crashOverlayShownForTest: Bool { crashOverlay != nil }
+    func pressReloadAfterCrashForTest() { reloadAfterCrash() }
+
+    /// 測試用（--web-crash-probe）：網頁現在算不算已好、把它的 WebContent 程序殺掉
+    var webReadyForTest: Bool { ready }
+    private(set) var readyCountForTest = 0      // 網頁「ready」成立過幾次（崩潰後重載回來會再加一次）
+    func killWebProcessForTest() {
+        // 用 WKWebView 的 _webProcessIdentifier 找到這個網頁自己的 WebContent 程序，SIGKILL（只殺這一個）
+        guard let pid = (web?.value(forKey: "_webProcessIdentifier") as? NSNumber)?.int32Value, pid > 1 else { return }
+        kill(pid, SIGKILL)
+    }
+    func webTextLengthForTest(_ done: @escaping (Int) -> Void) {
+        guard let web else { return done(-1) }
+        web.evaluateJavaScript("document.body ? document.body.innerText.length : -1") { r, _ in done((r as? Int) ?? -1) }
+    }
+
     func ensureWeb() {
         // 背景建回（代送、轉忙）：隱藏時間重新起算，閒下來不會馬上又被卸載（agy Sonnet 11/6）
         if web == nil, window == nil { hiddenSince = Date() }
@@ -641,6 +714,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         w.onDrop = nil
         w.stopLoading()
         w.removeFromSuperview()
+        crashOverlay?.removeFromSuperview(); crashOverlay = nil
         web = nil
         ready = false
         queued.removeAll()
@@ -678,6 +752,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         let h = inputBar.fittingHeight(width: cw - (codeLab == nil ? r.width : 0))
         inputBar.frame = NSRect(x: 0, y: 0, width: cw - (codeLab == nil ? r.width : 0), height: h)
         web?.frame = NSRect(x: 0, y: h, width: cw, height: max(0, bounds.height - h))
+        crashOverlay?.frame = web?.frame ?? .zero
         let inset = r == .zero ? NSSize.zero : NSSize(width: r.width, height: max(0, r.height - h))
         if inset != lastPetInset {
             lastPetInset = inset
@@ -1127,8 +1202,10 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         // 網頁卸載中被程式代送：先建回網頁，排隊泡泡與之後的串流先排進 queued，loadHistory 後再畫（跟第一次打開同一條路）。
         // 放在「別處進行中」「沒網路」這些會擋下的檢查之後，擋下時不白建（agy Sonnet 11/6）
         if web == nil, codeLab?.mode != .noAI { ensureWeb() }
-        let selectedQuotes = restore ? quotes : []
-        let bang = takeBangAttachment()
+        // 斜線指令（/compact…）整則要以「/」開頭 Claude 才認得：不附任何額外內容（引用也不附，輸入框裡的引用留著給下一則），也不消耗要附一次的東西
+        let isSlash = text.hasPrefix("/")
+        let selectedQuotes = restore && !isSlash ? quotes : []
+        let bang = isSlash ? nil : takeBangAttachment()
         let dataURLs = images.map { "data:\($0.mediaType);base64,\($0.data.base64EncodedString())" }
         let uuid = UUID().uuidString.lowercased()
         // Claude 還在做：先排在下面，等它真的讀進去（回送）再移進對話
@@ -1141,14 +1218,14 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         // 程式碼區開著：附一行告訴 Claude 你在看哪個檔案哪一行（畫面上的泡泡只顯示你打的字）
         // 使用者自己打的字裡若有〔codenv 開頭的字樣，先中和：不然重載歷史時會被當成附加區塊的開頭，從那裡截掉
         var full = QuoteText.append(to: QuoteText.neutralize(text), quotes: selectedQuotes)
-        if let line = codeLab?.contextLine() { full += "\n\n" + line }
+        if !isSlash, let line = codeLab?.contextLine() { full += "\n\n" + line }
         // 看板上使用者終止了這個聊天室開的目標裡的 agy 步驟：附一行提示在最前面（CollabBoard.swift；畫面上的泡泡還是只顯示你打的字）
-        if let id = conversationID, let n = CollabBoardModel.takeNotices(for: id) { full = n + "\n\n" + full }
+        if !isSlash, let id = conversationID, let n = CollabBoardModel.takeNotices(for: id) { full = n + "\n\n" + full }
         if let b = bang { full = b.text + full }      // 前面用 ! 跑的指令結果（只附這一次；畫面上泡泡不顯示，旁邊有小標）
         // 剛換到另一家的模型：附上交接（最近的對話＋精簡全文檔，ModelCarry.swift）。又換回原本那個就不用附。
         // 換到 Apple 模型不附（它做不了事，不用交接）
         let carried = carryFrom
-        if let from = carryFrom {
+        if !isSlash, let from = carryFrom {
             carryFrom = nil
             if from != session.transcriptURL, session.appleModel == nil,
                let note = ModelCarry.note(from: from, session: session.claudeSession, model: carryName, limit: 6000, canRead: true) {
@@ -1175,8 +1252,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
                 recoveredOutboxDraft = nil
             } catch { notice(L("寄件匣更新失敗，已保留原檔；重開時會再對照對話紀錄。")) }
             inputBar.clearAttempt()
-            setQuotes([])
-            js("wb.clearQuotes()")
+            if !isSlash { setQuotes([]); js("wb.clearQuotes()") }
             draftPersistence?.remove()
         }
         scrollAnchor = nil
@@ -1410,6 +1486,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             loadHistory { [weak self, weak web] in
                 guard let self, let web, self.web === web else { return }
                 self.ready = true
+                self.readyCountForTest += 1
                 let q = self.queued; self.queued = []
                 q.forEach(self.js)
                 self.setQuotes(self.quotes, syncWeb: true)

@@ -97,11 +97,11 @@ final class SourceUpdate: ObservableObject {
         }
     }
 
-    nonisolated private static func latestCommit(in root: URL) -> Result<(String, String), CheckError> {
+    nonisolated private static func latestCommit(in root: URL, url urlOverride: String? = nil) -> Result<(String, String), CheckError> {
         guard FileManager.default.isExecutableFile(atPath: "/usr/bin/git") else { return .failure(.gitMissing) }
         let local = runGit(["-C", root.path, "rev-parse", "HEAD"])
         guard case .success(let localText) = local else { return .failure(.commandFailed("讀取本機 commit 失敗")) }
-        let url = ProcessInfo.processInfo.environment["CODENV_UPSTREAM_URL"] ?? "https://github.com/olilllioli287/codenv-public.git"
+        let url = urlOverride ?? ProcessInfo.processInfo.environment["CODENV_UPSTREAM_URL"] ?? "https://github.com/olilllioli287/codenv-public.git"
         let remote = runGit(["ls-remote", "--", url, "refs/heads/main"])
         guard case .success(let output) = remote else {
             if case .failure(let e) = remote { return .failure(e) }
@@ -122,20 +122,36 @@ final class SourceUpdate: ObservableObject {
         return .success((current, latest))
     }
 
+    /// 測試用（--update-check-probe）：對指定網址查一次，回「ok」或失敗說明
+    nonisolated static func probeLatest(in root: URL, url: String) -> String {
+        switch latestCommit(in: root, url: url) {
+        case .success: return "ok"
+        case .failure(let e): return "fail: " + (e.errorDescription ?? "")
+        }
+    }
+
+    /// git 卡住（半開的 TCP、captive portal）最多等這麼久就砍掉，不然 busy 會一直是 true、更新鈕被擋到重開 App
+    nonisolated(unsafe) static var gitTimeout: TimeInterval = 20
+
     nonisolated private static func runGit(_ args: [String]) -> Result<String, CheckError> {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        p.arguments = args
+        let p = GitProcess.makeProcess(args)
         // 私人／不存在的 repo：git 不要停下來問帳號密碼（背景執行緒會一直卡著）
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"
         env["GIT_ASKPASS"] = "/usr/bin/true"
+        env["GIT_HTTP_LOW_SPEED_LIMIT"] = "1000"      // 連續 15 秒每秒不到 1 KB 就放棄
+        env["GIT_HTTP_LOW_SPEED_TIME"] = "15"
         p.environment = env
         let out = Pipe(), err = Pipe()
         p.standardOutput = out; p.standardError = err
         p.standardInput = FileHandle.nullDevice
         do {
             try p.run()
+            var timedOut = false
+            let lock = NSLock()
+            // 逾時：整個 process group 先 TERM、2 秒後 KILL（子程序握著管線時才不會一直卡住）
+            let watchdog = GitProcess.arm(p, after: gitTimeout) { lock.lock(); timedOut = true; lock.unlock() }
+            defer { watchdog.cancel() }
             // 先讀完再等結束：輸出塞滿管線時 git 會卡住等人讀，先等結束就互等
             var errData = Data()
             let g = DispatchGroup(); g.enter()
@@ -144,6 +160,8 @@ final class SourceUpdate: ObservableObject {
             g.wait(); p.waitUntilExit()
             let stdout = String(data: outData, encoding: .utf8) ?? ""
             let stderr = String(data: errData, encoding: .utf8) ?? ""
+            lock.lock(); let didTimeOut = timedOut; lock.unlock()
+            if didTimeOut { return .failure(.commandFailed(L("連線逾時（\(Int(gitTimeout)) 秒沒有回應）"))) }
             guard p.terminationStatus == 0 else { return .failure(.commandFailed(stderr.trimmingCharacters(in: .whitespacesAndNewlines))) }
             return .success(stdout)
         } catch { return .failure(.commandFailed(error.localizedDescription)) }

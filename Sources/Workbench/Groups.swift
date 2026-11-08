@@ -67,7 +67,9 @@ extension Store {
         if let best { return best.id }
         if let lab = groups.first(where: { $0.name == Store.codeLabGroupName && $0.parentID == nil }), isGroup(g, within: lab.id) { return nil }
         let other = groups.first { $0.name == Store.otherGroupName && $0.parentID == nil }?.id
-        return sessions.first { s in s.area == nil && other != nil && (s.groups ?? []).contains(other!) }?.id
+        if let o = sessions.first(where: { s in s.area == nil && other != nil && (s.groups ?? []).contains(other!) })?.id { return o }
+        // 沒有涵蓋「其他」的總指揮（公版、或使用者刪掉了）：歸第一個總指揮，不然這組的聊天室不屬於任何總指揮、team／派工找不到
+        return sessions.first { $0.area == nil && $0.groups != nil }?.id
     }
 
     private func groupDepth(_ id: UUID) -> Int {
@@ -260,6 +262,8 @@ extension Store {
         let up = group(g)?.parentID
         for i in groups.indices where groups[i].parentID == g { groups[i].parentID = up }
         groups.removeAll { $0.id == g }
+        // 總指揮涵蓋清單裡的失效 id 一併清掉
+        for i in sessions.indices where sessions[i].groups?.contains(g) == true { sessions[i].groups?.removeAll { $0 == g } }
         // 這組的對話、資料夾回到上一層的組（最上層的組就回「其他」）
         for i in conversations.indices where conversations[i].groupID == g { conversations[i].groupID = fallback }
         for i in projects.indices where projects[i].groupID == g { projects[i].groupID = fallback }
@@ -312,6 +316,13 @@ extension Store {
         let done = dir.appendingPathComponent("classification-\(f.string(from: Date())).json.applied")
         // 先確定套用的結果存好，才把分類檔收起來；存不了就留著原檔，下次啟動再套一次（不要為了「不重套」把檔案刪掉）
         guard saveNow() else { return }
-        do { try FileManager.default.moveItem(at: url, to: done) } catch { try? FileManager.default.removeItem(at: url) }   // 結果已存好，改名不成才刪，免得每次啟動都重套
+        // 改名不成就換個固定名字再試；都不成就留著原檔（重套一次無害），不要刪掉使用者放的檔案
+        do { try FileManager.default.moveItem(at: url, to: done) } catch {
+            // 換一個帶亂數的名字，不去刪任何已有的檔（舊的 .applied 是使用者可能想留的歷史）
+            let fallback = dir.appendingPathComponent("classification-\(f.string(from: Date()))-\(UUID().uuidString.prefix(6).lowercased()).json.applied")
+            if (try? FileManager.default.moveItem(at: url, to: fallback)) == nil {
+                EventLog.log("分類檔", "套用後改名失敗，原檔留著：\(error.localizedDescription)")
+            }
+        }
     }
 }

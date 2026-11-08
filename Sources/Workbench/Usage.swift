@@ -15,6 +15,7 @@ struct UsageBucket: Identifiable, Equatable {
     let label: String        // 顯示的名字：5 小時、每週、Fable 每週…
     let used: Int            // 用掉的百分比
     let resets: String       // 什麼時候重置（已經轉成「今天 22:00」「10/24 01:00」）
+    var resetAt: Date? = nil // 重置時間的原始日期（額度衝刺偵測重置用；查不到就 nil）
     var remaining: Int { max(0, 100 - used) }
 }
 
@@ -72,6 +73,10 @@ final class UsageMonitor: ObservableObject {
         sink = Prefs.shared.$usageMinutes.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.restartTimer() }
     }
 
+    static let fakeSprintReset: Date? = {
+        guard CommandLine.arguments.contains("--state-dir"), let s = Double(ProcessInfo.processInfo.environment["CODENV_SPRINT_FAKE_RESET_AFTER"] ?? "") else { return nil }
+        return Date().addingTimeInterval(s)
+    }()
     private var sink: AnyCancellable?
     private func restartTimer() {
         timer?.invalidate()
@@ -98,7 +103,14 @@ final class UsageMonitor: ObservableObject {
                 }
                 // 假資料的重置時間一律相對現在（寫死日期會被當成明年，倒數變成「356d」）
                 func h(_ hours: Int, _ minutes: Int) -> String { Self.when(Date().addingTimeInterval(TimeInterval(hours * 3600 + minutes * 60))) }
-                self.buckets = [UsageBucket(label: "5 小時", used: 34, resets: h(2, 13)), UsageBucket(label: "每週", used: 61, resets: h(4*24+6, 0)), UsageBucket(label: "Opus 每週", used: 12, resets: h(4*24+6, 0))]
+                // 測試用（要有 --state-dir）：CODENV_SPRINT_FAKE_RESET_AFTER=<秒>：開機後這麼久「5 小時」額度重置（用量掉到 2、下次重置延後 5 小時）
+                var five = UsageBucket(label: "5 小時", used: 34, resets: h(2, 13), resetAt: Date().addingTimeInterval(2 * 3600 + 13 * 60))
+                if let at = Self.fakeSprintReset {
+                    let done = Date() >= at
+                    let next = done ? at.addingTimeInterval(5 * 3600) : at
+                    five = UsageBucket(label: "5 小時", used: done ? 2 : 34, resets: Self.when(next), resetAt: next)
+                }
+                self.buckets = [five, UsageBucket(label: "每週", used: 61, resets: h(4*24+6, 0)), UsageBucket(label: "Opus 每週", used: 12, resets: h(4*24+6, 0))]
                 // 跟真的 parseAgy 結果同一種標籤（11/7 實際：Gemini 5 小時／每週、Claude 5 小時／每週、Argon 只有每週）
                 self.agyBuckets = [UsageBucket(label: "Gemini 5 小時", used: 6, resets: h(3, 41)), UsageBucket(label: "Gemini 每週", used: 2, resets: h(6*24+21, 5)),
                                    UsageBucket(label: "Claude 5 小時", used: 0, resets: h(3, 41)), UsageBucket(label: "Claude 每週", used: 55, resets: h(4*24+18, 30)),
@@ -165,9 +177,10 @@ final class UsageMonitor: ObservableObject {
                 if parsed.isEmpty && !gotNew {
                     self.error = L("查不到用量")
                 } else {
-                    if !parsed.isEmpty { self.buckets = parsed }
+                    // Claude 這次沒讀到、只有別的來源讀到：Claude 那組留著舊數字，要標出來，不能顯示成剛更新
+                    if !parsed.isEmpty { self.buckets = parsed; self.error = nil }
+                    else { self.error = L("Claude 用量這次查不到") }
                     self.updated = Date()
-                    self.error = nil
                 }
             }
         }
@@ -589,8 +602,9 @@ final class UsageMonitor: ObservableObject {
                 guard let w = l[key] as? [String: Any], let used = (w["usedPercent"] as? NSNumber)?.doubleValue else { continue }
                 let mins = (w["windowDurationMins"] as? NSNumber)?.intValue ?? 0
                 let span = mins == 300 ? L("5 小時") : mins == 10080 ? L("每週") : mins >= 1440 ? L("\(mins / 1440) 天") : mins > 0 ? L("\(mins / 60) 小時") : key
-                let resets = (w["resetsAt"] as? NSNumber).map { when(Date(timeIntervalSince1970: $0.doubleValue)) } ?? ""
-                out.append(UsageBucket(label: [name, span].compactMap { $0 }.joined(separator: " "), used: Int(used.rounded()), resets: resets))
+                let resetDate = (w["resetsAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
+                let resets = resetDate.map(when) ?? ""
+                out.append(UsageBucket(label: [name, span].compactMap { $0 }.joined(separator: " "), used: Int(used.rounded()), resets: resets, resetAt: resetDate))
             }
         }
         let credits = r["rateLimitResetCredits"] as? [String: Any]
@@ -642,7 +656,7 @@ final class UsageMonitor: ObservableObject {
             else if what.hasPrefix("week ("), let name = what.split(separator: "(").last?.dropLast() { label = L("\(name) 每週") }
             else { label = what }
             if hidden.contains(where: { label.hasPrefix($0) }) { continue }
-            out.append(UsageBucket(label: label, used: used, resets: g(3).map { friendly($0, zone: g(4)) } ?? ""))
+            out.append(UsageBucket(label: label, used: used, resets: g(3).map { friendly($0, zone: g(4)) } ?? "", resetAt: g(3).flatMap { friendlyDate($0, zone: g(4)) }))
         }
         return out
     }
@@ -659,8 +673,9 @@ final class UsageMonitor: ObservableObject {
             let group = f[0] == "Gemini Models" ? "Gemini" : f[0] == "Claude and GPT models" ? "Claude" : f[0].replacingOccurrences(of: "Gemini 4 ", with: "")
             let span = f[1].contains("Five Hour") ? L("5 小時") : f[1].contains("Weekly") ? L("每週") : f[1]
             var resets = ""
-            if f.count >= 4, let d = iso.date(from: f[3]) { resets = when(d) }
-            out.append(UsageBucket(label: "\(group) \(span)", used: 100 - left, resets: resets))
+            var resetDate: Date?
+            if f.count >= 4, let d = iso.date(from: f[3]) { resets = when(d); resetDate = d }
+            out.append(UsageBucket(label: "\(group) \(span)", used: 100 - left, resets: resets, resetAt: resetDate))
         }
         // 跟上面 Claude Code 那組一樣：同一組 5 小時在前、每週在後
         let rank = { (b: UsageBucket) -> Int in (b.label.hasPrefix("Gemini") ? 0 : b.label.hasPrefix("Claude") ? 10 : 20) + (b.label.hasSuffix("5 小時") ? 0 : 1) }
@@ -669,15 +684,21 @@ final class UsageMonitor: ObservableObject {
 
     /// 「Oct 22 at 10pm」→「今天 22:00」；「Oct 24 at 1am」→「10/24 01:00」
     static func friendly(_ s: String, zone: String?) -> String {
+        friendlyDate(s, zone: zone).map(when) ?? s
+    }
+
+    static func friendlyDate(_ s: String, zone: String?, now: Date = Date()) -> Date? {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = zone.flatMap(TimeZone.init(identifier:)) ?? .current
-        let year = Calendar.current.component(.year, from: Date())
+        let year = Calendar.current.component(.year, from: now)
+        // 字串沒有年份：今年、明年、去年都試，取離現在最近的（12 月底讀到「Jan 1」要算明年，1 月初讀到「Dec 31」要算去年）
         for fmt in ["MMM d 'at' h:mma yyyy", "MMM d 'at' ha yyyy"] {
             f.dateFormat = fmt
-            if let d = f.date(from: s + " \(year)") { return when(d) }
+            let hits = [year, year + 1, year - 1].compactMap { f.date(from: s + " \($0)") }
+            if let d = hits.min(by: { abs($0.timeIntervalSince(now)) < abs($1.timeIntervalSince(now)) }) { return d }
         }
-        return s
+        return nil
     }
 }
 
@@ -696,6 +717,11 @@ enum UsagePool: String, CaseIterable {
     }
     /// 名字左邊的圖示（跟模型清單分頁同一套）
     var icon: ModelTab { switch self { case .cc, .claudeAgy: .claude; case .gemini: .gemini; case .codex: .chatgpt; case .copilot: .copilot; case .local: .local } }
+    /// 實際畫的圖示：Gemini（agy）那組用 Antigravity 去背的「A」（App 沒裝才退回 Gemini 星芒），其他照 icon
+    var glyph: AppIcons.Glyph? {
+        if self == .gemini, let g = AppIcons.glyph(for: "agy") { return g }
+        return icon.image.map { AppIcons.Glyph(image: $0, template: icon.monochrome) }
+    }
 
     /// 對話存的模型代號 → 顯示名稱（agy:gemini-3.8-flash-medium → Gemini 3.8 Flash）；nil＝Claude Code 的預設
     static func modelName(_ model: String?) -> String {
@@ -806,8 +832,8 @@ struct UsageRowView: View {
         let b = row.bucket
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 6) {
-                if let img = row.pool.icon.image {
-                    Image(nsImage: img).resizable().renderingMode(row.pool.icon.monochrome ? .template : .original)
+                if let gl = row.pool.glyph {
+                    Image(nsImage: gl.image).resizable().renderingMode(gl.template ? .template : .original)
                         .aspectRatio(contentMode: .fit).frame(width: 13 * s, height: 13 * s).foregroundStyle(.secondary)
                 }
                 Text(row.label).font(.system(size: 12 * s)).lineLimit(1)
@@ -881,6 +907,7 @@ struct UsagePanel: View {
             if m.buckets.isEmpty && !m.loading {
                 Text(m.error ?? L("查詢中…")).font(.system(size: 12 * s)).foregroundStyle(.tertiary)
             }
+            SprintCard()
             ContextBlock(store: store, compact: compact)
             ActivityBlock(store: store)
             Spacer(minLength: 0)
@@ -978,8 +1005,8 @@ struct UsageFullPage: View {
     private func card(_ p: UsagePool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                if let img = p.icon.image {
-                    Image(nsImage: img).resizable().renderingMode(p.icon.monochrome ? .template : .original)
+                if let gl = p.glyph {
+                    Image(nsImage: gl.image).resizable().renderingMode(gl.template ? .template : .original)
                         .aspectRatio(contentMode: .fit).frame(width: 15 * s, height: 15 * s)
                 }
                 Text(p.title).font(.system(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)

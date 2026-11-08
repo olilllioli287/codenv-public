@@ -69,6 +69,12 @@ struct PetProgressModel {
         return tasks.count != before
     }
 
+    /// 秒 → 分鐘（進位）。先 clamp 再轉 Int：極大的預計時間（1e30）直接轉 Int 會 trap
+    static func minutes(_ seconds: TimeInterval) -> Int {
+        guard seconds.isFinite else { return 0 }
+        return Int((min(max(seconds, 0), 7 * 86400 * 10) / 60).rounded(.up))
+    }
+
     func items(now: Date = Date()) -> [TimerItem] {
         tasks.sorted { $0.value.order < $1.value.order }.map { id, t in
             if t.finishedAt != nil {
@@ -90,7 +96,7 @@ struct PetProgressModel {
             let overdue = t.done == nil && (t.eta.map { elapsed > $0 } ?? false)
             fraction = min(max(fraction, 0), 0.99)
             return TimerItem(id: id, fraction: fraction, percent: Int(fraction * 100),
-                            minutesLeft: left.map { Int(($0 / 60).rounded(.up)) },
+                            minutesLeft: left.map { Self.minutes($0) },
                             state: overdue ? .overdue : .running)
         }
     }
@@ -118,12 +124,18 @@ final class PetTimers: ObservableObject {
     }
 
     private func num(_ v: Any?) -> Double? { (v as? NSNumber)?.doubleValue }
+    /// Int(Double) 遇到 NaN／無限／超大會崩潰：限在合理範圍內
+    private func int(_ d: Double?) -> Int? {
+        guard let d, d.isFinite else { return nil }
+        return Int(max(-1e9, min(1e9, d)))
+    }
 
     func handle(_ u: [AnyHashable: Any]) {
         guard let cmd = u["cmd"] as? String, let id = u["id"] as? String else { return }
         switch cmd {
-        case "start": model.start(id: id, label: (u["label"] as? String) ?? id, eta: num(u["eta"]), total: num(u["total"]).map(Int.init))
-        case "update": model.update(id: id, done: Int(num(u["done"]) ?? 0), total: num(u["total"]).map(Int.init))
+        // eta 限在 0～7 天
+        case "start": model.start(id: id, label: (u["label"] as? String) ?? id, eta: num(u["eta"]).flatMap { $0.isFinite ? min(max($0, 0), 7 * 86400) : nil }, total: int(num(u["total"])))
+        case "update": model.update(id: id, done: int(num(u["done"])) ?? 0, total: int(num(u["total"])))
         case "done": model.finish(id: id)
         case "cancel": model.cancel(id: id)
         default: return

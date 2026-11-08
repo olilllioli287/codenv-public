@@ -185,7 +185,7 @@ final class ImageShelfOverlay: NSView {
             badge.drawsBackground = true
             badge.backgroundColor = NSColor.black.withAlphaComponent(0.7)
             badge.sizeToFit()
-            badge.frame.origin = NSPoint(x: x + 2, y: 4)
+            badge.frame.origin = NSPoint(x: 2, y: 4)   // 標籤是 tile 的子視圖，用 tile 內座標（原本多加 x 讓第 2 張起被裁掉）
             tile.addSubview(badge)
         }
         // 新貼的圖捲到看得見

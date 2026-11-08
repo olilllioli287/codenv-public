@@ -98,9 +98,9 @@ struct ContextBlock: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 // 用哪家的模型（跟用量那邊同一套圖示）
-                let icon = UsagePool.of(model: c?.terminal == true ? nil : c?.model).pool.icon
-                if let img = icon.image {
-                    Image(nsImage: img).resizable().renderingMode(icon.monochrome ? .template : .original)
+                let glyph = UsagePool.of(model: c?.terminal == true ? nil : c?.model).pool.glyph
+                if let gl = glyph {
+                    Image(nsImage: gl.image).resizable().renderingMode(gl.template ? .template : .original)
                         .aspectRatio(contentMode: .fit).frame(width: 12 * s, height: 12 * s).foregroundStyle(.secondary)
                 }
                 Text(c?.title ?? "").font(.system(size: 12 * s, weight: focused ? .semibold : .regular)).lineLimit(1).truncationMode(.tail)

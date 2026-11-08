@@ -415,12 +415,24 @@ final class CollabBoardModel: ObservableObject {
 
     static func loadTodos() -> ([CollabTodo], [CollabGoal]) {
         guard let d = try? Data(contentsOf: todoFile), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return ([], []) }
+        // 一筆壞掉的跳過、記一行 log，不要害整串（整個目標區）變空的
         func decode<T: Decodable>(_ key: String) -> [T] {
-            guard let v = o[key], let j = try? JSONSerialization.data(withJSONObject: v) else { return [] }
-            return (try? JSONDecoder().decode([T].self, from: j)) ?? []
+            guard let arr = o[key] as? [Any] else { return [] }
+            var bad = 0
+            let out: [T] = arr.compactMap { item in
+                // 單獨的字串／數字不是合法的頂層 JSON：data(withJSONObject:) 會丟 ObjC 例外（try? 接不住、整個 App 崩潰），先擋掉
+                guard JSONSerialization.isValidJSONObject(item), let j = try? JSONSerialization.data(withJSONObject: item), let v = try? JSONDecoder().decode(T.self, from: j) else { bad += 1; return nil }
+                return v
+            }
+            if bad != badCounts[key, default: 0] {
+                badCounts[key] = bad
+                if bad > 0 { EventLog.log("看板", "collab.json 的 \(key) 有 \(bad) 筆格式壞掉，已跳過（原檔沒動）") }
+            }
+            return out
         }
         return (decode("items"), decode("goals"))
     }
+    private static var badCounts: [String: Int] = [:]
 
     /// 一筆壞掉的不要害整串讀不出來：逐筆讀、缺 id 或內容的跳過
     static func loadFindings() -> [CollabFinding] {
@@ -436,7 +448,8 @@ final class CollabBoardModel: ObservableObject {
     /// 使用者在看板上刪（可以刪任何一筆；codenv-todo find rm 只能刪自己寫的）
     func deleteFinding(_ id: String) {
         edit { o in
-            guard var arr = o["findings"] as? [[String: Any]], let i = arr.firstIndex(where: { $0["id"] as? String == id }) else { return false }
+            guard var arr = Self.rawArray(o["findings"]) else { Self.warnBad("findings"); return false }
+            guard let i = arr.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == id }) else { return false }
             arr.remove(at: i)
             o["findings"] = arr
             return true
@@ -494,6 +507,15 @@ final class CollabBoardModel: ObservableObject {
                 o = parsed
             }
             guard fn(&o), let out = try? JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted, .sortedKeys]) else { return }
+            // 覆蓋前留一份上一版（collab.json.bak）：萬一哪裡又把資料改丟，還救得回來。
+            // 元素（登記、目標、步驟…）變少的那次不換掉 .bak：不然緊接著的下一次寫入就把還好的那版洗掉（跟 codenv-todo 同一個規則）。先複製成暫存檔再改名，中途崩潰也不會沒有 .bak
+            // 規則：新內容的元素數不少於現有 .bak 才換（刪掉東西之後，再來一次元素數相等的寫入也洗不掉較完整的備份）
+            let bakCount = (try? Data(contentsOf: URL(fileURLWithPath: url.path + ".bak"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.map(Self.elementCount)
+            if FileManager.default.fileExists(atPath: url.path), bakCount == nil || Self.elementCount(o) >= bakCount! {
+                let bak = url.path + ".bak", btmp = url.path + ".bak.tmp"
+                try? FileManager.default.removeItem(atPath: btmp)
+                if (try? FileManager.default.copyItem(atPath: url.path, toPath: btmp)) != nil { _ = rename(btmp, bak) }
+            }
             let tmp = url.deletingLastPathComponent().appendingPathComponent(".collab.\(getpid()).tmp")
             guard FileManager.default.createFile(atPath: tmp.path, contents: out, attributes: [.posixPermissions: 0o600]), rename(tmp.path, url.path) == 0 else {
                 try? FileManager.default.removeItem(at: tmp)
@@ -506,16 +528,41 @@ final class CollabBoardModel: ObservableObject {
     /// 改一筆登記（勾完成、換欄、刪掉）
     func editTodo(_ id: String, col: String?) {
         edit { o in
-            guard var items = o["items"] as? [[String: Any]], let i = items.firstIndex(where: { $0["id"] as? String == id }) else { return false }
+            guard var items = Self.rawArray(o["items"]) else { Self.warnBad("items"); return false }
+            guard let i = items.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == id }), var it = items[i] as? [String: Any] else { return false }
             if let col {
-                items[i]["col"] = col
-                if col == "done" { items[i]["doneAt"] = Self.iso.string(from: Date()) }
+                it["col"] = col
+                if col == "done" { it["doneAt"] = Self.iso.string(from: Date()) }
+                items[i] = it
             } else {
                 items.remove(at: i)
             }
             o["items"] = items
             return true
         }
+    }
+
+    /// 看板檔裡的元素總數（頂層每個陣列的長度，加上每個目標底下的步驟數）：.bak 輪替用，變少就不換
+    static func elementCount(_ o: [String: Any]) -> Int {
+        var n = 0
+        for (_, v) in o {
+            guard let arr = v as? [Any] else { continue }
+            n += arr.count
+            for case let d as [String: Any] in arr { n += (d["steps"] as? [Any])?.count ?? 0 }
+        }
+        return n
+    }
+
+    /// 欄位格式不對（不是陣列）：這次操作沒有寫入。記進事件紀錄並在看板上提示，不要無聲失效
+    static func warnBad(_ key: String) {
+        EventLog.log("看板", "collab.json 的 \(key) 格式不對，這次操作沒有寫入（原檔沒動）")
+        DispatchQueue.main.async { shared.notice = L("看板檔的 \(key) 格式不對，這次操作沒有寫入（原檔沒動）") }
+    }
+
+    /// 欄位是陣列就整串原樣拿出來（元素不管是不是字典）；沒有這個欄位＝空陣列；有但不是陣列＝nil（呼叫端不寫回）
+    static func rawArray(_ v: Any?) -> [Any]? {
+        if v == nil || v is NSNull { return [] }
+        return v as? [Any]
     }
 
     private static func newID() -> String { String(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "").prefix(6)) }
@@ -540,7 +587,12 @@ final class CollabBoardModel: ObservableObject {
                                 "steps": steps.split(separator: "\n").compactMap { Self.parseStep(String($0)) }
                                     + [["id": Self.newID(), "text": Self.verify, "owner": Self.user, "state": "todo", "at": now]]]
         if !done.isEmpty { g["done"] = done }
-        edit { o in o["goals"] = (o["goals"] as? [[String: Any]] ?? []) + [g]; return true }
+        edit { o in
+            // goals 裡混了不是字典的元素也照原樣留著（轉型失敗就當空會把整串蓋掉）；goals 根本不是陣列就不寫
+            guard let all = Self.rawArray(o["goals"]) else { return false }
+            o["goals"] = all + [g]
+            return true
+        }
         Self.kickAgy()   // 新目標直接生效、可能有 @agy 步驟：叫醒背景執行器（其他新增／同意都有叫，這裡漏了；agy Argon 11/6）
     }
 
@@ -552,11 +604,12 @@ final class CollabBoardModel: ObservableObject {
                                 "steps": [["id": Self.newID(), "text": step, "owner": Self.user, "state": "todo", "at": now],
                                           ["id": Self.newID(), "text": Self.verify, "owner": Self.user, "state": "todo", "at": now]]]
         edit { o in
-            var goals = o["goals"] as? [[String: Any]] ?? []
+            guard var raw = Self.rawArray(o["goals"]) else { return false }
+            let goals = raw.compactMap { $0 as? [String: Any] }
             if goals.contains(where: { $0["title"] as? String == title && $0["status"] as? String != "done" }) { return false }
             if goals.filter({ $0["by"] as? String == by && $0["status"] as? String == "proposed" }).count >= limit { return false }
-            goals.append(g)
-            o["goals"] = goals
+            raw.append(g)
+            o["goals"] = raw
             return true
         }
     }
@@ -564,12 +617,16 @@ final class CollabBoardModel: ObservableObject {
     /// 改一個目標（fn 改那一筆；回傳 nil＝刪掉）。所有步驟都完成就標成完成，反過來又有沒完成的就回到進行中
     func editGoal(_ id: String, _ fn: @escaping ([String: Any]) -> [String: Any]?) {
         edit { o in
-            guard var goals = o["goals"] as? [[String: Any]], let i = goals.firstIndex(where: { $0["id"] as? String == id }) else { return false }
-            guard var g = fn(goals[i]) else { goals.remove(at: i); o["goals"] = goals; return true }
-            let steps = g["steps"] as? [[String: Any]] ?? []
-            let allDone = !steps.isEmpty && steps.allSatisfy { $0["state"] as? String == "done" }
-            if allDone, g["status"] as? String == "active" { g["status"] = "done"; g["doneAt"] = Self.iso.string(from: Date()) }
-            if !allDone, g["status"] as? String == "done" { g["status"] = "active"; g["doneAt"] = nil }
+            guard var goals = Self.rawArray(o["goals"]) else { Self.warnBad("goals"); return false }
+            guard let i = goals.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == id }),
+                  let cur = goals[i] as? [String: Any] else { return false }
+            guard var g = fn(cur) else { goals.remove(at: i); o["goals"] = goals; return true }
+            // steps 讀不懂（混了非字典元素）就不動狀態：當成空會把已完成的目標誤改回進行中
+            if let steps = g["steps"] as? [[String: Any]] {
+                let allDone = !steps.isEmpty && steps.allSatisfy { $0["state"] as? String == "done" }
+                if allDone, g["status"] as? String == "active" { g["status"] = "done"; g["doneAt"] = Self.iso.string(from: Date()) }
+                if !allDone, g["status"] as? String == "done" { g["status"] = "active"; g["doneAt"] = nil }
+            }
             goals[i] = g
             o["goals"] = goals
             return true
@@ -592,9 +649,11 @@ final class CollabBoardModel: ObservableObject {
     func editStep(goal: String, step: String, _ fn: @escaping ([String: Any]) -> [String: Any]?) {
         editGoal(goal) { g in
             var g = g
-            var steps = g["steps"] as? [[String: Any]] ?? []
-            guard let i = steps.firstIndex(where: { $0["id"] as? String == step }) else { return g }
-            if var st = fn(steps[i]) { st["at"] = Self.iso.string(from: Date()); steps[i] = st } else { steps.remove(at: i) }
+            // steps 裡混了不是字典的元素也原樣留著；steps 不是陣列就不動這個目標
+            guard var steps = Self.rawArray(g["steps"]),
+                  let i = steps.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == step }),
+                  let cur = steps[i] as? [String: Any] else { return g }
+            if var st = fn(cur) { st["at"] = Self.iso.string(from: Date()); steps[i] = st } else { steps.remove(at: i) }
             g["steps"] = steps
             return g
         }
@@ -615,10 +674,19 @@ final class CollabBoardModel: ObservableObject {
         guard let st = Self.parseStep(line) else { return }
         editGoal(goal) { g in
             var g = g
-            var steps = g["steps"] as? [[String: Any]] ?? []
-            let at = steps.firstIndex { $0["text"] as? String == Self.verify && $0["owner"] as? String == Self.user } ?? steps.count
-            steps.insert(st, at: at)
-            g["steps"] = steps
+            guard var raw = Self.rawArray(g["steps"]) else { return g }
+            let at = raw.firstIndex { ($0 as? [String: Any])?["text"] as? String == Self.verify && ($0 as? [String: Any])?["owner"] as? String == Self.user } ?? raw.count
+            raw.insert(st, at: at)
+            // 目標原本已完成：加了新步驟就該重新驗收，勾過的「使用者驗收」重設成還沒做（跟 codenv-todo step add 一致）
+            if g["status"] as? String == "done" {
+                for k in raw.indices {
+                    guard var d = raw[k] as? [String: Any] else { continue }
+                    if d["text"] as? String == Self.verify && d["owner"] as? String == Self.user && d["state"] as? String == "done" {
+                        d["state"] = "todo"; raw[k] = d
+                    }
+                }
+            }
+            g["steps"] = raw
             return g
         }
         if Self.agyOwners.contains(st["owner"] as? String ?? "") { Self.kickAgy() }
@@ -632,11 +700,15 @@ final class CollabBoardModel: ObservableObject {
         guard let g = goals.first(where: { $0.id == goal }), let st = g.steps.first(where: { $0.id == step }),
               st.state == "doing", Self.agyOwners.contains(st.owner ?? "") else { return }
         edit { o in
-            guard var goals = o["goals"] as? [[String: Any]], let gi = goals.firstIndex(where: { $0["id"] as? String == goal }),
-                  var steps = goals[gi]["steps"] as? [[String: Any]], let si = steps.firstIndex(where: { $0["id"] as? String == step }),
-                  steps[si]["state"] as? String == "doing" else { return false }
-            steps[si]["cancel"] = true
-            goals[gi]["steps"] = steps
+            guard var goals = Self.rawArray(o["goals"]) else { Self.warnBad("goals"); return false }
+            guard let gi = goals.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == goal }), var g = goals[gi] as? [String: Any] else { return false }
+            guard var steps = Self.rawArray(g["steps"]) else { Self.warnBad("steps"); return false }
+            guard let si = steps.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == step }), var st = steps[si] as? [String: Any],
+                  st["state"] as? String == "doing" else { return false }
+            st["cancel"] = true
+            steps[si] = st
+            g["steps"] = steps
+            goals[gi] = g
             o["goals"] = goals
             return true
         }
@@ -1003,7 +1075,8 @@ struct CollabBoardView: View {
     private var goalList: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            // Lazy：目標很多時只建看得到的卡片。普通 VStack 會把全部目標的全部步驟一次排版，右欄收合展開的每一幀都重排（實測 120 個目標停頓 100ms 以上）
+            LazyVStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Button { editing = GoalDraft() } label: { Label(L("新目標"), systemImage: "plus") }.controlSize(.small)
                     Spacer()

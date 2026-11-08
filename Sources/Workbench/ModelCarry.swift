@@ -20,9 +20,37 @@ enum ModelCarry {
     /// 程式碼區開著時，訊息後面附的那行開頭（CodeLab.contextLine；藏泡泡、交接、md 紀錄都靠它）
     static let codeLabMarker = "〔codenv 程式碼區〕"
 
-    /// 紀錄檔 → 一則一則（誰、說了什麼）
-    static func turns(_ url: URL) -> [(user: Bool, text: String)] {
-        guard let data = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+    /// 同步（主執行緒）交接只讀紀錄檔的最後這麼多位元組：最大的紀錄檔有三百多 MB，整份讀進來逐行解析會卡住送出。
+    /// 更早的部分由背景補進全文檔（note 裡的 fullInBackground）
+    static let tailBytes = 8 * 1024 * 1024
+    private static let fullDocQueue = DispatchQueue(label: "codenv.carry.fulldoc", qos: .utility)
+
+    /// 讀紀錄檔的文字：tail 有給且檔案更大時只讀最後 tail 位元組，並丟掉被切在中間的第一行殘片。
+    /// 回傳 (內容, 是否被截短)；讀不到 nil
+    static func readLines(_ url: URL, tail: Int?) -> (text: String, truncated: Bool)? {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? h.close() }
+        guard let size = try? h.seekToEnd() else { return nil }
+        var start: UInt64 = 0
+        if let tail, size > UInt64(tail) { start = size - UInt64(tail) }
+        do { try h.seek(toOffset: start) } catch { return nil }
+        guard let data = try? h.readToEnd() else { return nil }
+        var text = String(decoding: data, as: UTF8.self)
+        if start > 0 {
+            // 切在行中間：第一個換行之前是殘片（也可能切在多位元組字元中間），整段丟掉
+            guard let nl = text.firstIndex(of: "\n") else { return ("", true) }
+            text = String(text[text.index(after: nl)...])
+        }
+        return (text, start > 0)
+    }
+
+    /// 紀錄檔 → 一則一則（誰、說了什麼）。tail 有給時只看檔尾（主執行緒用）
+    static func turns(_ url: URL, tail: Int? = nil) -> [(user: Bool, text: String)] {
+        guard let data = readLines(url, tail: tail)?.text else { return [] }
+        return turns(text: data)
+    }
+
+    static func turns(text data: String) -> [(user: Bool, text: String)] {
         var out: [(Bool, String)] = []
         for line in data.split(separator: "\n") {
             guard let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
@@ -52,8 +80,12 @@ enum ModelCarry {
 
     /// 前一個模型讀過／改過的檔案（工具的內容不交接，至少告訴新模型有哪些檔、要用自己再讀）：照最後一次碰的順序，同一個檔只列一次。
     /// 各家翻譯層都把工具記成 Claude 的 tool_use（Read／Edit／Write…，路徑在 file_path；少數用 path／notebook_path）
-    static func files(_ url: URL, max: Int = 40) -> [(path: String, edited: Bool)] {
-        guard let data = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+    static func files(_ url: URL, max: Int = 40, tail: Int? = nil) -> [(path: String, edited: Bool)] {
+        guard let data = readLines(url, tail: tail)?.text else { return [] }
+        return files(text: data, max: max)
+    }
+
+    static func files(text data: String, max: Int = 40) -> [(path: String, edited: Bool)] {
         var order: [String] = [], edited: Set<String> = []
         for line in data.split(separator: "\n") where line.contains("\"tool_use\"") {
             guard let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
@@ -74,6 +106,32 @@ enum ModelCarry {
         fs.map { "- \($0.path)（\($0.edited ? "改過" : "讀過")）" }.joined(separator: "\n")
     }
 
+    private static let genLock = NSLock()
+    nonisolated(unsafe) private static var generations: [UUID: Int] = [:]
+    /// 換代和同步寫檔在同一把鎖裡：背景那邊「比對代數＋寫檔」也在這把鎖，所以不會有舊一代的內容在新一代寫完之後才落地
+    private static func bumpAndWrite(_ s: UUID, name: String, turns: [(user: Bool, text: String)], files: [(path: String, edited: Bool)], to f: URL, partial: Bool) -> (Int, Bool) {
+        genLock.lock(); defer { genLock.unlock() }
+        let g = (generations[s] ?? 0) + 1; generations[s] = g
+        return (g, writeDoc(name: name, turns: turns, files: files, to: f, partial: partial))
+    }
+    private static func isLatestGeneration(_ s: UUID, _ g: Int) -> Bool { genLock.lock(); defer { genLock.unlock() }; return generations[s] == g }
+    /// 比對代數和寫檔在同一把鎖裡：比對完到寫完之間，新的交接進不來
+    private static func writeDocIfLatest(_ s: UUID, _ g: Int, name: String, turns: [(user: Bool, text: String)], files: [(path: String, edited: Bool)], to f: URL) {
+        genLock.lock(); defer { genLock.unlock() }
+        guard generations[s] == g else { return }
+        _ = writeDoc(name: name, turns: turns, files: files, to: f, partial: false)
+    }
+
+    /// 全文檔（atomically：讀的人只會看到舊版或新版）。partial＝只有檔尾那一段，背景補完整前先這樣
+    static func writeDoc(name: String, turns: [(user: Bool, text: String)], files: [(path: String, edited: Bool)], to f: URL, partial: Bool) -> Bool {
+        try? FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var doc = "# 換模型前的對話（\(name)，精簡版：只留雙方說的話）\n\n"
+        if partial { doc += "（這是先寫的檔尾版，只有最近的一段；完整版幾秒內會蓋過這個檔，更早的內容晚點再讀一次。）\n\n" }
+        doc += render(turns, model: name) + "\n"
+        if !files.isEmpty { doc += "\n# \(name) 讀過／改過的檔案（最近的在最後）\n\n" + renderFiles(files) + "\n" }
+        return (try? doc.write(to: f, atomically: true, encoding: .utf8)) != nil
+    }
+
     /// 不是 Claude 的紀錄：看放在哪個資料夾（AI 工作台/agy、codex…）
     static func family(_ url: URL) -> String {
         ["agy": "Gemini", "codex": "Codex", "copilot": "Copilot", "local": "本機模型", "apple": "Apple 模型"][url.deletingLastPathComponent().lastPathComponent] ?? "前一個模型"
@@ -86,19 +144,37 @@ enum ModelCarry {
     /// 交接那段（附在訊息後面）：最近的對話（最多 limit 個字）＋全文檔的位置；前面沒聊過什麼就 nil。
     /// canRead＝新模型有讀檔工具（Apple 模型沒有，就不提檔案）
     static func note(from url: URL, session: UUID, model: String? = nil, limit: Int, canRead: Bool) -> String? {
-        let all = turns(url)
+        // 主執行緒：只讀檔尾（大檔不卡）。窗內解不出任何對話（最後一行超過窗、或只有工具往返）就放大再試，到整份為止
+        var all: [(user: Bool, text: String)] = []
+        var fs: [(path: String, edited: Bool)] = []
+        var truncated = false
+        for window in [tailBytes, tailBytes * 4, tailBytes * 16, nil] as [Int?] {
+            guard let r = readLines(url, tail: window) else { return nil }
+            truncated = r.truncated
+            all = turns(text: r.text)
+            if !all.isEmpty || !r.truncated {
+                // 讀過／改過的檔（Apple 模型讀不了檔，列了也沒用）；跟對話同一份文字，不再讀第二次
+                if canRead { fs = files(text: r.text) }
+                break
+            }
+        }
         guard !all.isEmpty else { return nil }
         let name = model.flatMap { $0.isEmpty ? nil : $0 } ?? ChatSession.claudeModelName(url) ?? family(url)
-        let full = render(all, model: name)
-        // 讀過／改過的檔（Apple 模型讀不了檔，列了也沒用）
-        let fs = canRead ? files(url) : []
         var file: URL?
         if canRead {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let f = dir.appendingPathComponent(session.uuidString.lowercased() + ".md")
-            var doc = "# 換模型前的對話（\(name)，精簡版：只留雙方說的話）\n\n" + full + "\n"
-            if !fs.isEmpty { doc += "\n# \(name) 讀過／改過的檔案（最近的在最後）\n\n" + renderFiles(fs) + "\n" }
-            if (try? doc.write(to: f, atomically: true, encoding: .utf8)) != nil { file = f }
+            // 每次交接（同步寫）都換一代：背景補全文的工作寫之前要確認自己還是最新一代，不然會把較新的內容蓋回舊的
+            let (gen, wrote) = bumpAndWrite(session, name: name, turns: all, files: fs, to: f, partial: truncated)
+            if wrote { file = f }
+            if truncated {
+                let d = dir
+                fullDocQueue.async {      // 序列佇列：同一個聊天室連換好幾次模型時，一件一件跑
+                    guard isLatestGeneration(session, gen) else { return }      // 已經有更新的交接了：不用白解析整份
+                    let allTurns = turns(url), allFiles = files(url)
+                    guard !allTurns.isEmpty else { return }
+                    writeDocIfLatest(session, gen, name: name, turns: allTurns, files: allFiles, to: d.appendingPathComponent(session.uuidString.lowercased() + ".md"))
+                }
+            }
         }
         // 從最後一則往前收，收到 limit 為止；太長的單則從後面留
         var recent: [String] = []

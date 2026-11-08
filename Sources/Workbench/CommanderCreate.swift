@@ -68,6 +68,14 @@ extension Store {
     static let commanderMigrationDoneKey = "commandersManaged.1"
 
     /// 只移除這個總指揮（Session）：聊天室、分組、資料夾都不動，回到一般樹狀照樣看得到
+    /// 刪掉一個總指揮後，沒人涵蓋的分組歸誰：有涵蓋「其他」的總指揮就歸它，沒有就歸第一個總指揮（Groups.commanderSessionID 的兜底）。回名字給刪除確認對話框
+    func commanderFallbackName(excluding id: UUID?) -> String {
+        let other = groups.first { $0.name == Store.otherGroupName && $0.parentID == nil }?.id
+        let rest = sessions.filter { $0.area == nil && $0.groups != nil && $0.id != id }
+        let pick = rest.first { s in other != nil && (s.groups ?? []).contains(other!) } ?? rest.first
+        return pick?.name ?? L("（沒有其他總指揮）")
+    }
+
     func deleteCommander(_ id: UUID) {
         guard sessions.contains(where: { $0.id == id && $0.area == nil && $0.groups != nil }) else { return }
         appDefaults.set(true, forKey: Store.commanderMigrationDoneKey)

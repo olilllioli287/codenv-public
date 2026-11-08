@@ -40,8 +40,7 @@ extension MainWindowController {
         // 同名的有封存的（舊的交接過、改過名又撞名）：只看沒封存的；剩一段就是它（使用者的「discord」有兩段，11/7）
         if hits.count > 1 { let live = hits.filter { !store.isArchived($0) }; if !live.isEmpty { hits = live } }
         // 還是同名：優先叫跟呼叫者同一個總指揮的那段（A 總指揮叫「x」＝A 底下那段，不是 B 底下那段）
-        if hits.count > 1, let cv = caller?.lowercased(), !cv.isEmpty,
-           let me = store.conversations.first(where: { $0.id.uuidString.lowercased().hasPrefix(cv) }),
+        if hits.count > 1, let me = store.conversation(callerPrefix: caller),
            let mine = store.commander(of: me.id)?.id {
             let same = hits.filter { store.commander(of: $0.id)?.id == mine }
             if same.count == 1 { hits = same }
@@ -54,6 +53,9 @@ extension MainWindowController {
         guard Store.isChat(c) else { return done(["ok": false, "error": "「\(name)」是終端機、瀏覽器或草稿，不喚醒"]) }
         guard !store.isArchived(c) else { return done(["ok": false, "error": "「\(name)」已經封存，不喚醒"]) }
         guard let p = workspace.pane(for: c) as? ChatPane else { return done(["ok": false, "error": "開不出這格"]) }
+        if let model = c.model, model.contains(":"), let engine = model.split(separator: ":", maxSplits: 1).first {
+            return done(["ok": true, "name": c.title, "id": String(c.id.uuidString.prefix(8)).lowercased(), "engine": String(engine), "note": "非 Claude 聊天室不需要喚醒，用 codenv-todo send"])
+        }
         workspace.woken.insert(c.id)
         if let why = p.wakeStart() { workspace.woken.remove(c.id); return done(["ok": false, "error": why]) }
         let deadline = Date().addingTimeInterval(20)

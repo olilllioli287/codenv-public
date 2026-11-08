@@ -1015,7 +1015,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
         hasCleanRun = false
         problem = nil
         appDefaults.set(path, forKey: fileKey)
-        dirty = !note.isEmpty
+        dirty = false      // Big5 檔只是打開沒改：不算已修改，不然換檔／關格會悄悄用 UTF-8 覆蓋原檔；真的改了編輯器會送 dirty 過來（存檔才轉 UTF-8，開檔時狀態列有說明）
         loadEditor(text, path: path)
         cursorLine = 1; selection = ""
         reloadFiles()
@@ -1526,6 +1526,11 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
 
     /// 測試用（main.swift 的 --codelab）：按檢查／執行，等狀態列有結果再回報；context＝給 Claude 的那行
     func testAction(_ act: String, _ done: @escaping (String) -> Void) {
+        // switch=<路徑>：走跟下拉選檔一樣的路（改過的先存再換），給 Big5 考題用
+        if act.hasPrefix("switch=") {
+            let target = String(act.dropFirst("switch=".count))
+            return saveIfDirty { [weak self] in self?.open(target); done("switched") }
+        }
         switch act {
         case "dirty": dirty = true; done("dirty")
         case "edit":   // 改編輯器內容（跟打字一樣會回報「改過了」）

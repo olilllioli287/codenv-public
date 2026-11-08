@@ -40,6 +40,12 @@ c.outgoing(["type": "user", "uuid": "U4", "message": ["role": "user", "content":
 c.steer("U4"); c.incoming(["id": lastID("turn/steer"), "result": [:]])
 let l2 = (try? String(contentsOf: c.transcriptURL, encoding: .utf8)) ?? ""
 check(l2.components(separatedBy: "成功插話").count - 1 == 1, "codex 插話成功記一次")
+// ---- MCP 工具結果是 JSON null：以前 JSONSerialization 丟 ObjC 例外整個 App 崩潰（exit 134）；現在要照常收尾
+emitted = []
+c.incoming(["method": "item/started", "params": ["item": ["type": "mcpToolCall", "id": "M1", "server": "s", "tool": "t", "arguments": [String: Any]()]]])
+c.incoming(["method": "item/completed", "params": ["item": ["type": "mcpToolCall", "id": "M1", "status": "completed", "result": NSNull()]]])
+let nullRes = emitted.compactMap { String(data: try! JSONSerialization.data(withJSONObject: $0), encoding: .utf8) }.joined()
+check(nullRes.contains("tool_result") && nullRes.contains("M1"), "codex MCP 結果為 null 不崩潰且有收尾")
 // ---- Copilot 5
 let cpID = UUID()
 let cp = CopilotBridge(session: cpID, directory: "/tmp", model: "m")

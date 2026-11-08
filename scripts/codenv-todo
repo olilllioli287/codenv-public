@@ -37,13 +37,20 @@
       測試：CODENV_STATE_DIR（放索引與讀 transcripts、state.json 的資料夾）、CODENV_CLAUDE_HOME（取代 ~/.claude）
 
 喚醒聊天室（傳訊息給別的聊天室之前用）：
+  codenv-todo send "<名字或 id 前綴|self>" "<訊息>" [--wait] [--timeout 秒]   傳給非 Claude 聊天室；等待回答時預設 300 秒、上限 1800 秒
+  codenv-todo sprint [status|start ["<聊天室>"]|stop|goal "<目標>"|note "<進度>"|done "<總結>"]   額度衝刺（右欄「額度衝刺」卡片也能開始／收尾）
+  codenv-todo last "<名字或 id|self>"   讀非 Claude 聊天室最後回答與狀態
   codenv-todo rename "<名字或 id>" "<新名字>"   總指揮改底下聊天室的名字（不能改使用者自己取的）
   codenv-todo topic "<名字或 id|self>" "<說明>"   改聊天室說明（這個聊天室負責什麼，上限 1024 字，空字串清掉；權限同 rename，使用者寫的說明不能改）
-  codenv-todo new "<名字>" [--topic "<說明>"] [--dir <資料夾>] [--project <子專案>] [--model sonnet|opus|haiku|<完整 id>] [--effort low|medium|high] [--mcp lite|none|full]
+  codenv-todo new "<名字>" [--engine claude|codex|copilot|agy] [--topic "<說明>"] [--dir <資料夾>] [--project <子專案>] [--model …] [--effort low|medium|high] [--mcp lite|none|full]
       總指揮在自己底下新增聊天室（多子專案型要指定子專案）；沒給 --model 就是 Sonnet；Fable 一律拒絕；
       --mcp 決定載哪些 MCP：lite（預設，只載 deja）、none（都不載）、full（照使用者設定全載）
   codenv-todo model "<名字或 id>" <sonnet|opus|haiku|完整 id> [--effort low|medium|high]
       改已存在聊天室的模型（權限同 rename；工作中的會被拒絕，等閒下來再換；對話接續不丟）
+  codenv-todo area add "<區名>" [--parent "<上層區>"]   總指揮建一個「區」（把聊天室分類，可一層套一層，例如 研究區 › Hermes研究）
+  codenv-todo area move "<聊天室名字或 id>" "<區名>"   把聊天室搬進區（區名寫 root＝放回總指揮本身；只有總指揮能用）
+  codenv-todo area ls   列出區的樹與每個區底下的聊天室（右欄「視窗」的列表與關聯圖都照區分組）
+  codenv-todo new ... [--area "<區名>"]   開新聊天室時直接放進某個區
   codenv-todo team [--by <總指揮名稱>]   列出自己這個總指揮底下的聊天室與狀態（在 codenv 聊天室裡跑會自動認出自己）
   codenv-todo wake "<聊天室名字>"   叫 codenv 把那段聊天室的 claude 開起來（不送任何訊息、不花模型回合），等到 ListAgents 找得到才回；最多等 20 秒
       名字要跟側欄一樣；找不到或名字重複會明確報錯；不在版面上的也能喚醒（不會擺進版面）；終端機、瀏覽器、草稿、封存的不開
@@ -192,7 +199,7 @@ def goal_cmd(rest, by):
         data = load()
         status_name = {"proposed": "提議中", "active": "進行中", "done": "完成"}
         mark = {"todo": "○", "doing": "●", "done": "✓", "blocked": "✗"}
-        for g in data.get("goals", []):
+        for g in good_goals(data):
             if g.get("status") == "done":
                 continue
             print("%s  %s［%s］" % (g["id"], g["title"], status_name.get(g.get("status"), g.get("status"))))
@@ -231,6 +238,13 @@ def step_cmd(rest, by=None):
                     steps = g.setdefault("steps", [])
                     at = next((i for i, x in enumerate(steps) if x.get("text") == VERIFY and x.get("owner") == USER), len(steps))
                     steps.insert(at, st)
+                    if g.get("status") == "done":      # 加到已完成的目標：新步驟不會被做、wait 等到逾時。跟 App 端一樣，有未完成步驟就回到進行中；
+                        g["status"] = "active"; g.pop("doneAt", None)      # 加了新步驟就該重新驗收，原本勾過的「使用者驗收」也重設
+                        for x in steps:
+                            if x.get("text") == VERIFY and x.get("owner") == USER and x.get("state") == "done":
+                                x["state"] = "todo"
+                                for k in ("doneAt", "heartbeat"): x.pop(k, None)
+                        print("提醒：這個目標原本已完成，加了新步驟後回到進行中", file=sys.stderr)
                     return
             die("找不到目標 %s" % rest[1])
         edit(f, whole=True)
@@ -413,7 +427,7 @@ def next_cmd(by):
     """有空時看：輪到我的、可以領的、等使用者同意的"""
     if not by:
         die("用法：codenv-todo next --by 你的名字")
-    goals = load().get("goals", [])
+    goals = good_goals(load())
     active = [g for g in goals if g.get("status") == "active"]
     mine = [(g, st) for g in active for st in g.get("steps", []) if st.get("owner") == by and st.get("state") != "done"]
     free = [(g, st) for g in active for st in g.get("steps", []) if not st.get("owner") and st.get("state") != "done"]
@@ -655,7 +669,7 @@ def wait_cmd(rest):
     if not m:
         die("--timeout 寫成 90s、30m、2h")
     limit = int(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[m.group(2)]
-    sid, start = rest[0], time.time()
+    sid, start = rest[0], time.monotonic()      # wait 逾時用單調時鐘：Mac 睡眠醒來不會立刻逾時
     while True:
         g, st = find_step_in(load(), sid)
         if st is None:
@@ -677,7 +691,7 @@ def wait_cmd(rest):
         elif state not in ("todo", "doing"):
             print(step_line(g, st))
             return
-        if time.time() - start > limit:
+        if time.monotonic() - start > limit:
             print("還沒好：" + step_line(g, st))
             sys.exit(2)
         time.sleep(3)
@@ -891,7 +905,7 @@ class AgyRunner:
                 self.finish()
                 return
             # agy 自己的 --print-timeout 失效（卡住不退出）：超過時限再加 120 秒就整群停掉，步驟標成卡住
-            if t - self.started > PRINT_TIMEOUT + 120:
+            if time.monotonic() - self.started > PRINT_TIMEOUT + 120:      # 單調時鐘（不含睡眠）：Mac 睡過去 agy 也凍結，牆鐘會讓醒來後誤殺
                 self.log("%s 超過 %d 秒還沒結束，強制停掉 agy" % (self.sid, PRINT_TIMEOUT + 120))
                 self.timed_out = True
                 self.kill()
@@ -1051,7 +1065,7 @@ class AgyRunner:
             self.update_step(sid, lambda g2, s2: s2.update(state="blocked", note="開不了 agy：%s" % e, heartbeat=None, at=now()))
             say("%s 開不了 agy" % NICK[owner])
             return
-        self.sid, self.owner, self.started, self.stopped = sid, owner, time.time(), False
+        self.sid, self.owner, self.started, self.stopped = sid, owner, time.monotonic(), False
         self.files = (out, err, agy_log, base + ".md", base + ".log")
         self.last_heartbeat = time.time()
         # 記下 agy 的 pid：執行器被 SIGKILL 時，下一個執行器靠它停掉留下的 agy
@@ -1062,7 +1076,7 @@ class AgyRunner:
         self.final_owner = owner     # set_final 用：負責人已經換掉就不寫回
         out_p, err_p, log_p, result_p, runlog_p = self.files
         code = self.proc.returncode
-        elapsed = time.time() - self.started
+        elapsed = time.monotonic() - self.started      # 實際跑的時間（睡眠不算），不然睡一覺醒來正常做完的也被標「被切斷」
         self.proc, self.sid, self.owner, self.files = None, None, None, None
         self.idle_since = time.time()
         out, err, agy_log = read_text(out_p), read_text(err_p), read_text(log_p)
@@ -1297,6 +1311,20 @@ def last_lines(s, n):
     return " / ".join([l for l in s.split("\n") if l.strip()][-n:])[:400]
 
 
+def _element_count(d):
+    """看板檔的元素總數（頂層每個陣列的長度，加每個目標底下的步驟數）：.bak 輪替用"""
+    n = 0
+    if not isinstance(d, dict):
+        return 0
+    for v in d.values():
+        if isinstance(v, list):
+            n += len(v)
+            for g in v:
+                if isinstance(g, dict) and isinstance(g.get("steps"), list):
+                    n += len(g["steps"])
+    return n
+
+
 class CollabFileError(Exception):
     """collab.json 讀不了：指令印出原因就結束，不要印一大段 traceback；執行器的 tick 會當成一般錯誤記下來"""
 
@@ -1312,6 +1340,27 @@ def load():
     if not isinstance(data, dict):
         raise CollabFileError("collab.json 的內容不是物件：%s" % FILE)
     return data
+
+
+def good_goals(data, warn=True):
+    """只給 goal ls／next 這類唯讀顯示用：跳過格式壞掉的目標（不是物件、缺 id 或 title、steps 不是 list）和壞步驟（缺 id 或 text），
+    其他照常列出；有跳過就在 stderr 印一行警告。不改檔（原檔的壞筆留著，使用者可以自己修）"""
+    raw = data.get("goals", [])
+    out, bad_goals, bad_steps = [], 0, 0
+    for g in raw if isinstance(raw, list) else []:
+        if not (isinstance(g, dict) and isinstance(g.get("id"), str) and isinstance(g.get("title"), str) and isinstance(g.get("steps", []), list)
+                and isinstance(g.get("status", ""), str) and isinstance(g.get("by", ""), (str, type(None)))):
+            bad_goals += 1
+            continue
+        steps = [st for st in g.get("steps", []) if isinstance(st, dict) and isinstance(st.get("id"), str) and isinstance(st.get("text"), str)
+                 and isinstance(st.get("state", ""), str) and isinstance(st.get("owner") or "", str)]      # state、owner 是 list／dict 會讓 .get(...)／字串比對出 TypeError
+        bad_steps += len(g.get("steps", [])) - len(steps)
+        out.append(dict(g, steps=steps))
+    if warn and (bad_goals or bad_steps or not isinstance(raw, list)):
+        print("警告：看板有格式壞掉的資料，已跳過（%s%s；原檔沒動）" % (
+            "%d 筆目標" % bad_goals if bad_goals else "goals 不是清單" if not isinstance(raw, list) else "",
+            "、%d 個步驟" % bad_steps if bad_steps and bad_goals else "%d 個步驟" % bad_steps if bad_steps else ""), file=sys.stderr)
+    return out
 
 
 def now():
@@ -1357,8 +1406,17 @@ def edit(fn, whole=False):
             f.flush()
             os.fsync(f.fileno())        # 資料真的寫到磁碟才改名：當機或斷電時不會留下半個檔
         try:
-            shutil.copyfile(FILE, FILE + ".bak")     # 改名前把舊的留一份備份
-        except OSError:
+            # 改名前把舊的留一份備份；元素（items／goals／steps…）變少的那次不換掉 .bak，不然緊接著的下一次寫入就把還好的那版洗掉
+            bak_n = None
+            try:
+                with open(FILE + ".bak", encoding="utf-8") as bf:
+                    bak_n = _element_count(json.load(bf))
+            except (OSError, ValueError):
+                pass
+            # 新內容的元素數不少於現有 .bak 才換（刪掉東西之後，元素數相等的下一次寫入也洗不掉較完整的備份）
+            if bak_n is None or _element_count(data) >= bak_n:
+                shutil.copyfile(FILE, FILE + ".bak")
+        except (OSError, ValueError):
             pass
         os.rename(tmp, FILE)
         return result
@@ -1381,6 +1439,9 @@ def cmd_wake(rest):
     r = app_call({"cmd": "wake", "name": rest[0], "conv": os.environ.get("CODENV_CONVERSATION", "")}, "wake")
     if not r.get("ok"):
         die("喚醒失敗：" + str(r.get("error") or "不明原因"))
+    if r.get("note"):
+        print("%s：%s" % (r.get("name") or rest[0], r["note"]))
+        return
     print("已喚醒：%s（程序 %s%s）" % (r.get("name"), r.get("pid"), "" if r.get("placed") else "，不在版面上"))
 
 
@@ -1396,10 +1457,72 @@ def cmd_team(rest, by):
     for m in r.get("members") or []:
         mark = "★ " if m.get("chief") else "  "
         proj = ("【%s】" % (m.get("project") or "總指揮本身")) if "project" in m else ""
-        print("%s%s%s　%s%s" % (mark, proj, m.get("name"), m.get("state"), "" if m.get("placed") else "，不在版面上"))
+        if m.get("area"):
+            proj += "〔區：%s〕" % m["area"]
+        engine = "【%s】" % m.get("engine") if m.get("engine") and m.get("engine") != "claude" else ""
+        print("%s%s%s%s　%s%s" % (mark, proj, engine, m.get("name"), m.get("state"), "" if m.get("placed") else "，不在版面上"))
         if m.get("topic"):
             print("      負責：%s" % " ".join(str(m["topic"]).split())[:200])
-    print("派工：codenv-todo wake \"<名字>\" 叫醒，再用 SendMessage 傳訊息。")
+    print("派工：非 Claude 用 codenv-todo send \"<名字>\" \"<訊息>\" [--wait]；Claude 用 SendMessage。")
+
+
+def cmd_sprint(rest):
+    """額度衝刺：status／start [聊天室]／stop／goal／note／done（goal、note、done 只有衝刺的聊天室能用）"""
+    sub = rest[0] if rest else "status"
+    text = " ".join(rest[1:]).strip()      # done 也把所有詞接起來（原本只收第一個詞，多的被丟掉）
+    if sub not in ("status", "start", "stop", "goal", "note", "done"):
+        die("用法：codenv-todo sprint [status|start [\"<聊天室>\"]|stop|goal \"<目標>\"|note \"<進度>\"|done \"<總結>\"]")
+    if sub in ("goal", "note", "done") and not text.strip():
+        die("用法：codenv-todo sprint %s \"<內容>\"" % sub)
+    r = app_call({"cmd": "sprint", "sub": sub, "text": text, "conv": os.environ.get("CODENV_CONVERSATION", "")}, "sprint")
+    if not r.get("ok"):
+        die(str(r.get("error") or "失敗"))
+    if sub == "status":
+        names = {"idle": "沒有衝刺", "running": "衝刺中", "winding": "已通知重置、等總結", "done": "已結束"}
+        print("狀態：%s%s" % (names.get(r.get("phase"), r.get("phase")), "（%s）" % r["chat"] if r.get("chat") else ""))
+        if r.get("reset"):
+            print("預計重置：%s（約剩 %s 分鐘）" % (r["reset"], r.get("minutesLeft")))
+        if r.get("goal"):
+            print("目標：%s" % r["goal"])
+        for n in r.get("notes") or []:
+            print("  · %s" % n)
+        if r.get("summary"):
+            print("最後總結：\n%s" % r["summary"])
+    else:
+        print("好了。")
+
+
+def cmd_send(rest):
+    """對總指揮底下的非 Claude 聊天室送訊息。"""
+    wait = "--wait" in rest
+    timeout = 300
+    rest = [x for x in rest if x != "--wait"]
+    timeout, rest = pop_flag(rest, "--timeout")
+    timeout = int(timeout or 300)
+    if timeout < 1 or timeout > 1800:
+        die("--timeout 需在 1 到 1800 秒之間")
+    if len(rest) != 2 or not rest[1].strip():
+        die("用法：codenv-todo send \"<名字或 id 前綴|self>\" \"<訊息>\" [--wait] [--timeout 秒]")
+    req = {"cmd": "send", "conv": os.environ.get("CODENV_CONVERSATION", ""), "target": rest[0], "text": rest[1], "wait": wait, "timeout": timeout}
+    r = app_call(req, "send", timeout=(timeout + 10 if wait else 35))
+    if not r.get("ok"):
+        die(str(r.get("error") or "傳送失敗") + (("\n目前回答：" + r["partial"]) if r.get("partial") else "")
+            + ("\n（若訊息已送出，不要重送：用 codenv-todo last \"%s\" 查回答）" % rest[0] if wait else ""))
+    print("已送出：%s（id %s，引擎 %s）" % (r.get("name"), r.get("id"), r.get("engine")))
+    if r.get("waiting"):
+        print("聊天室正在等權限或選擇題回覆；稍後用 codenv-todo last \"%s\" 查看。" % r.get("name"))
+    elif r.get("reply"):
+        print("回答：\n%s" % r["reply"])
+
+
+def cmd_last(rest):
+    if len(rest) != 1:
+        die("用法：codenv-todo last \"<名字或 id|self>\"")
+    r = app_call({"cmd": "last", "conv": os.environ.get("CODENV_CONVERSATION", ""), "target": rest[0]}, "last")
+    if not r.get("ok"):
+        die(str(r.get("error") or "讀取失敗"))
+    print("%s（id %s，引擎 %s，狀態：%s）" % (r.get("name"), r.get("id"), r.get("engine"), r.get("state")))
+    print(r.get("reply") or "（目前沒有回答）")
 
 
 def cmd_rename(rest):
@@ -1478,12 +1601,22 @@ def cmd_new(rest):
     d = None
     proj = None
     model, rest = pop_flag(rest, "--model")
+    engine, rest = pop_flag(rest, "--engine")
     effort, rest = pop_flag(rest, "--effort")
     mcp, rest = pop_flag(rest, "--mcp")
     topic, rest = pop_flag(rest, "--topic")
+    area, rest = pop_flag(rest, "--area")
+    engine = (engine or "claude").lower()
+    if engine not in ("claude", "codex", "copilot", "agy"):
+        die("--engine 只接受 claude、codex、copilot、agy")
     if topic is not None and len(topic.strip()) > 1024:
         die("--topic 太長（%d 字，上限 1024 字）" % len(topic.strip()))
-    check_model_args(model, effort)
+    if engine == "claude":
+        check_model_args(model, effort)
+    elif model and "fable" in model.lower():
+        die("不能用 Fable（使用者嚴禁）")
+    if engine != "claude" and mcp is not None:
+        die("非 Claude 引擎不支援 --mcp")
     if mcp is not None and mcp.lower() not in ("full", "lite", "none"):
         die("--mcp 只接受 full、lite、none（預設 lite＝只載 deja，省記憶體；full＝全部）")
     if "--project" in rest:
@@ -1496,15 +1629,64 @@ def cmd_new(rest):
         i = rest.index("--dir")
         if i + 1 >= len(rest):
             die("--dir 後面要接資料夾")
-        d = rest[i + 1]
+        d = os.path.abspath(os.path.expanduser(rest[i + 1]))      # 相對路徑以呼叫端的資料夾為準（App 行程的 cwd 不是呼叫端的）
         rest = rest[:i] + rest[i + 2:]
     if len(rest) != 1 or not rest[0].strip():
-        die("用法：codenv-todo new \"<名字>\" [--dir <工作資料夾>] [--project <子專案名>]（多子專案型一定要 --project）")
-    r = app_call({"cmd": "new", "conv": os.environ.get("CODENV_CONVERSATION", ""), "name": rest[0], "dir": d or "", "project": proj or "", "model": model or "", "effort": effort or "", "mcp": mcp or "", "topic": topic or ""}, "new")
+        die("用法：codenv-todo new \"<名字>\" [--engine claude|codex|copilot|agy] [--dir <工作資料夾>] [--project <子專案名>]（多子專案型一定要 --project）")
+    cmd_name = "new" if engine == "claude" else "new_engine"
+    payload = {"cmd": cmd_name, "conv": os.environ.get("CODENV_CONVERSATION", ""), "name": rest[0], "engine": engine, "dir": d or "", "project": proj or "", "model": model or "", "effort": effort or "", "mcp": mcp or "", "topic": topic or "", "area": area or ""}
+    timeout = 35
+    r = app_call(payload, "new", timeout=timeout)
     if not r.get("ok"):
         die("開不了：" + str(r.get("error") or "不明原因"))
-    print("已新增：%s（id %s，模型 %s，MCP %s）%s" % (r.get("name"), r.get("id"), r.get("model"), r.get("mcp"), ("　注意：" + r["warn"]) if r.get("warn") else ""))
-    print("派工：SendMessage 傳訊息給「%s」。" % r.get("name"))
+    if engine == "claude":
+        print("已新增：%s（id %s，模型 %s，MCP %s）%s" % (r.get("name"), r.get("id"), r.get("model"), r.get("mcp"), ("　注意：" + r["warn"]) if r.get("warn") else ""))
+        print("派工：SendMessage 傳訊息給「%s」。" % r.get("name"))
+    else:
+        print("已新增：%s（id %s，引擎 %s，模型 %s）" % (r.get("name"), r.get("id"), r.get("engine"), r.get("model")))
+        print("派工：codenv-todo send \"%s\" \"<訊息>\" [--wait]" % r.get("name"))
+
+
+def cmd_area(rest, by):
+    """codenv-todo area add|move|ls：總指揮把底下的聊天室分「區」（區＝總指揮涵蓋的組底下的子組，可多層）"""
+    conv = os.environ.get("CODENV_CONVERSATION", "")
+    usage = "用法：codenv-todo area add \"<區名>\" [--parent \"<上層區>\"]｜area move \"<聊天室名字或 id>\" \"<區名|root>\"｜area ls"
+    if not rest:
+        die(usage)
+    op, rest = rest[0], rest[1:]
+    if op == "add":
+        parent, rest = pop_flag(rest, "--parent")
+        if len(rest) != 1 or not rest[0].strip():
+            die(usage)
+        r = app_call({"cmd": "area", "op": "add", "conv": conv, "name": rest[0], "parent": parent or ""}, "area")
+        if not r.get("ok"):
+            die("建不了區：" + str(r.get("error") or "不明原因"))
+        print("已建區：%s（id %s）" % (r.get("path"), r.get("id")))
+    elif op == "move":
+        if len(rest) != 2:
+            die(usage)
+        r = app_call({"cmd": "area", "op": "move", "conv": conv, "target": rest[0], "area": rest[1]}, "area")
+        if not r.get("ok"):
+            die("搬不了：" + str(r.get("error") or "不明原因"))
+        print("已搬動：「%s」（id %s）→ %s" % (r.get("name"), r.get("id"), r.get("area")))
+    elif op == "ls":
+        r = app_call({"cmd": "area", "op": "ls", "conv": conv, "name": rest[0] if rest else (by or "")}, "area")
+        if not r.get("ok"):
+            die("查不到：" + str(r.get("error") or "不明原因"))
+        def line(c, pad):
+            print("%s%s%s　%s" % (pad, "★ " if c.get("chief") else "", c.get("name"), c.get("state")))
+        print("總指揮：%s" % r.get("commander"))
+        for c in r.get("rootChats") or []:
+            line(c, "  ")
+        for a in r.get("areas") or []:
+            pad = "  " * int(a.get("depth") or 1)
+            print("%s▸ %s（%d）" % (pad, a.get("name"), len(a.get("chats") or [])))
+            for c in a.get("chats") or []:
+                line(c, pad + "  ")
+        if not r.get("areas"):
+            print("（還沒有區：codenv-todo area add \"<區名>\" 建一個）")
+    else:
+        die(usage)
 
 
 def cmd_show(rest):
@@ -1518,7 +1700,7 @@ def cmd_show(rest):
     print("已打開看板：%s %s" % (r.get("goal"), r.get("title")))
 
 
-def app_call(req, feature):
+def app_call(req, feature, timeout=35):
     """經 codenv 的 Unix socket（跟 codenv-browser 同一個，要 token）送一個指令，回 dict"""
     import socket as _socket
     d = os.environ.get("CODENV_BROWSER_DIR") or os.path.expanduser("~/Library/Application Support/codenv/browser")
@@ -1528,13 +1710,17 @@ def app_call(req, feature):
     except OSError:
         die("找不到 codenv 的通道：codenv 沒開，或還沒更新到有 %s 的版本" % feature)
     s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-    s.settimeout(35)
+    s.settimeout(timeout)
     try:
         s.connect(path)
     except OSError:
         die("連不上 codenv（可能剛關掉）：重開 codenv 再試")
     req = dict(req); req["token"] = token
-    s.sendall((json.dumps(req) + "\n").encode())
+    try:
+        # ensure_ascii=False：中文照原樣送（轉成 \uXXXX 每字 6 位元組，長訊息會超過伺服器上限）
+        s.sendall((json.dumps(req, ensure_ascii=False) + "\n").encode())
+    except OSError:
+        die("送出給 codenv 失敗（訊息太大或 codenv 剛關掉）")
     data = b""
     try:
         while True:
@@ -1608,6 +1794,20 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, content='msgs', content_
 """
 
 
+def _search_perms(state, path):
+    """索引內容是對話全文：資料夾 0700、索引檔（含 -wal／-shm）0600，已存在的也改回來（只改自己的，失敗不影響搜尋）"""
+    try:
+        if os.stat(state).st_uid == os.getuid():
+            os.chmod(state, 0o700)
+    except OSError:
+        pass
+    for suf in ("", "-wal", "-shm"):
+        try:
+            os.chmod(path + suf, 0o600)
+        except OSError:
+            pass
+
+
 def search_open(state, reset=False):
     import sqlite3
     os.makedirs(state, exist_ok=True)
@@ -1624,6 +1824,7 @@ def search_open(state, reset=False):
         con.execute("PRAGMA journal_mode=WAL")
         con.execute("PRAGMA synchronous=NORMAL")
         con.executescript(SEARCH_DDL)
+        _search_perms(state, path)
         ver = con.execute("SELECT v FROM meta WHERE k='schema'").fetchone()
         if ver is None:
             con.execute("INSERT OR REPLACE INTO meta VALUES('schema',?)", (str(SEARCH_SCHEMA),))
@@ -1852,15 +2053,20 @@ def drop_file(con, fid):
 
 
 def split_terms(q):
-    import shlex
-    try:
-        return [t for t in shlex.split(q) if t]
-    except ValueError:
-        return [t for t in q.split() if t]
+    # 只有成對的雙引號（或整個詞前後的單引號）算片語，其他字元照原樣留著：
+    # 原本用 shlex，撇號（it's the user's → its the users）和反斜線（C:\\Users → C:Users）會被吃掉，搜不到又不報錯
+    out = []
+    for m in re.finditer(r"\"([^\"]*)\"|(?<!\S)'([^']*)'(?!\S)|(\S+)", q):
+        t = m.group(1) if m.group(1) is not None else m.group(2) if m.group(2) is not None else m.group(3)
+        if t and t.strip():
+            out.append(t)
+    return out
 
 
 def run_search(con, q, chat=None, since=None, limit=20, convs=None, context=0):
     terms = split_terms(q)
+    if not terms:      # 搜尋詞濾完是空的（例如只有空白的引號片語）：沒東西可搜，不要組出沒有條件的 SQL
+        return []
     long_t = [t for t in terms if len(t) >= 3]
     short_t = [t for t in terms if len(t) < 3]
     where, args = [], []
@@ -2020,12 +2226,20 @@ def main(argv):
         cmd_rename(rest)
     elif cmd == "new":
         cmd_new(rest)
+    elif cmd == "send":
+        cmd_send(rest)
+    elif cmd == "sprint":
+        cmd_sprint(rest)
+    elif cmd == "last":
+        cmd_last(rest)
     elif cmd == "model":
         cmd_model(rest)
     elif cmd == "mcp":
         cmd_mcp(rest)
     elif cmd == "topic":
         cmd_topic(rest)
+    elif cmd == "area":
+        cmd_area(rest, by)
     elif cmd == "agy-start":
         agy_start()
     elif cmd == "agy-status":
@@ -2076,4 +2290,8 @@ if __name__ == "__main__":
         main(sys.argv[1:])
     except CollabFileError as e:
         print(str(e), file=sys.stderr)
+        sys.exit(1)
+    except (AttributeError, TypeError, KeyError) as e:
+        # 看板檔裡混了不是物件的元素（goals／steps／items 其中一筆是字串、數字、null）：寫入前就會走到這裡，原檔沒動
+        print("collab.json 裡有格式不對的元素（goals／steps／items 其中混了不是物件的資料），這次沒有改任何東西（原檔沒動）：%s: %s" % (type(e).__name__, e), file=sys.stderr)
         sys.exit(1)

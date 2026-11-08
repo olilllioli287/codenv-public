@@ -8,5 +8,10 @@
   {"id":"A01","name":"圓與格子等比例","runner":"logic.mjs","before":"a657704^","files":["Resources/chat/plot.js"],"extraBefore":["9457591^"]},
   {"id":"B01","name":"完成前串流即排版數學式","runner":"browser.mjs","before":"8cd5f38^","files":["Resources/chat/chat.js"]},
   {"id":"B10","name":"未讀排隊訊息標沒送到","runner":"browser.mjs","before":"066d226^","files":["Resources/chat/chat.js"]},
-  {"id":"B04","name":"內容縮短不解除貼底、真捲動才解除","runner":"browser.mjs","before":"a70357d^","files":["Resources/chat/chat.js"]}
+  {"id":"B04","name":"內容縮短不解除貼底、真捲動才解除","runner":"browser.mjs","before":"a70357d^","files":["Resources/chat/chat.js"]},
+  {"id":"A13","name":"加步驟到已完成目標會回到進行中","runner":"todo.py"},
+  {"id":"A14","name":"搜尋詞的撇號和反斜線不被吃掉","runner":"todo.py"},
+  {"id":"A15","name":"牆鐘跳時 agy 步驟不被誤判被切斷","runner":"todo.py"},
+  {"id":"A16","name":"只有空白的搜尋詞不組出壞 SQL","runner":"todo.py"},
+  {"id":"A17","name":"看板壞一筆目標只跳過那筆、其他照列","runner":"todo.py"}
 ]

@@ -17,7 +17,9 @@ extension Store {
         派工或接手新分支時，用 `codenv-todo rename "<原名字或 id>" "<新名字>"` 把底下聊天室改成看得出在做什麼的短名（約 4～10 字，例如「浮動終端機」）；不要改使用者自己取的名字（會被拒絕），也不要改總指揮自己的名字。
         開分支預設用 Sonnet（`codenv-todo new` 沒給 --model 就是 Sonnet）；難題才加 `--model opus`，簡單的跑腿用 `--model haiku`。已存在的聊天室要換模型：`codenv-todo model "<名字或 id>" <sonnet|opus|haiku> [--effort low|medium|high]`（工作中的會被拒絕，等它閒下來再換）。不能用 Fable。
         聊天室載入哪些 MCP（外部工具）：`codenv-todo mcp "<名字或 id|self>" lite|none|full`（lite 只留 deja、none 全不載，下次啟動才生效，工作中的也可以改）。需要瀏覽器工具（chrome-devtools、claude-in-chrome）時用 `codenv-todo mcp self full`，再請使用者或總指揮重啟你。
-        派工：先 `codenv-todo wake "<聊天室名字>"`（名字照名單），成功後用 SendMessage 傳訊息給它。名單、各自在不在跑：`codenv-todo team`（會隨新增、搬動更新，以它為準）。
+        聊天室多了就分區：`codenv-todo area add "<區名>" [--parent "<上層區>"]` 建區（可以一層一層套，例如 研究區 › Hermes研究），`codenv-todo area move "<聊天室名字或 id>" "<區名>"` 搬進去（區名寫 root 放回總指揮本身），`codenv-todo area ls` 看目前的區。開分支時用 `codenv-todo new "<名字>" --area "<區名>"` 直接放進對的區；使用者在 codenv 右欄看得到區的分組與關聯圖。
+        讀程式／審查／量大批次優先開 codex 或 copilot 聊天室（不花 Claude 額度）：`codenv-todo new "<名字>" --engine codex`（copilot 同；agy 預設 Flash，Argon 很耗額度留給難題）。非 Claude 聊天室用 `codenv-todo send "<名字>" "<訊息>" --wait` 派工並讀回答；SendMessage 只通 Claude 聊天室。它們不能用 codenv-todo 指令，結果靠 `send --wait` 或 `last` 讀。
+        派給 Claude 聊天室時先 `codenv-todo wake "<名字>"` 再用 SendMessage；派給非 Claude 聊天室直接用 `codenv-todo send`。名單、狀態用 `codenv-todo team` 查。
         只在使用者要你派工時才派；別的聊天室的工作交給它們自己做，不要替它們做完。
         """
     }
@@ -41,7 +43,7 @@ extension Store {
     func teamInfo(conversation: String?, name: String?, running: (UUID) -> Bool) -> [String: Any] {
         var session: SessionLayout?
         if let conv = conversation?.lowercased(), !conv.isEmpty,
-           let c = conversations.first(where: { $0.id.uuidString.lowercased().hasPrefix(conv) }),
+           let c = self.conversation(callerPrefix: conv),
            let g = groupOf(c), let sid = commanderSessionID(forGroup: g) {
             session = sessions.first { $0.id == sid }
         }
@@ -57,10 +59,14 @@ extension Store {
         let multi = commanderIsMulti(s)
         let members: [[String: Any]] = commanderMembers(s).map { c in
             let st = status[c.id]
-            let state = st == .working ? "工作中" : st == .waiting ? "等你回答" : running(c.id) ? "待命（程序開著）" : "休眠"
+            let isClaude = c.model == nil || !c.model!.contains(":")
+            let isRunning = running(c.id)
+            let state = st == .working ? "工作中" : st == .waiting ? "等你回答" : isRunning ? "待命（程序開著）" : "休眠"
             var m: [String: Any] = ["name": c.title, "chief": c.id == s.chief, "state": state, "placed": locate(c.id) != nil,
-                                    "id": String(c.id.uuidString.prefix(8)).lowercased()]
+                                    "id": String(c.id.uuidString.prefix(8)).lowercased(), "engine": isClaude ? "claude" : String(c.model!.prefix(while: { $0 != ":" }))]
             if let t = Store.cleanTopic(c.topic ?? "") { m["topic"] = t }
+            let nodes = areaNodes(s)
+            m["area"] = areaID(of: c, in: nodes).map { areaPath($0, in: s) } ?? ""
             if multi { m["project"] = subProject(of: c, in: s)?.name ?? (c.id == s.chief ? "" : "未分子專案") }
             return m
         }
@@ -72,7 +78,7 @@ extension Store {
 extension Store {
     private func callerInfo(_ conv: String?) -> (caller: Conversation, session: SessionLayout, chief: Bool)? {
         guard let cv = conv?.lowercased(), !cv.isEmpty,
-              let c = conversations.first(where: { $0.id.uuidString.lowercased().hasPrefix(cv) }),
+              let c = conversation(callerPrefix: cv),
               let s = commander(of: c.id) else { return nil }
         return (c, s, s.chief == c.id)
     }
@@ -251,7 +257,7 @@ extension Store {
     }
 
     /// 建一個聊天室放進呼叫者（要是總指揮聊天室）的總指揮底下，名字算總指揮取的；不擺進版面。回傳 ok 時帶 conversation
-    func commanderCreate(caller: String?, name raw: String, dir: String?, project: String? = nil, model rawModel: String? = nil, effort rawEffort: String? = nil, mcp rawMcp: String? = nil, topic rawTopic: String? = nil) -> (reply: [String: Any], conversation: Conversation?) {
+    func commanderCreate(caller: String?, name raw: String, dir: String?, project: String? = nil, model rawModel: String? = nil, effort rawEffort: String? = nil, mcp rawMcp: String? = nil, topic rawTopic: String? = nil, area rawArea: String? = nil) -> (reply: [String: Any], conversation: Conversation?) {
         func fail(_ m: String) -> ([String: Any], Conversation?) { (["ok": false, "error": m], nil) }
         guard let me = callerInfo(caller) else { return fail("找不到你屬於哪個總指揮（要在 codenv 的聊天室裡跑）") }
         guard me.chief else { return fail("只有總指揮聊天室能開新聊天室") }
@@ -273,9 +279,22 @@ extension Store {
         }
         if nameTaken(name, in: me.session, except: nil) { return fail("這個總指揮底下已經有叫「\(name)」的聊天室，換一個名字") }
         guard var g = groupOf(me.caller) else { return fail("找不到總指揮聊天室所在的組") }
+        // 這次呼叫新建的資料夾與子群組：後面任何一步失敗都要全部回復，不留孤兒
+        var madeGroup: UUID?, madeProject: UUID?
+        func rollback() {
+            if let m = madeProject { removeProject(m) }
+            if let m = madeGroup { removeGroup(m) }
+        }
         // multi：一定要指定子專案，放進那個子群組、資料夾預設用子專案的；single 忽略 --project
         var subFolder: String?
-        if commanderIsMulti(me.session) {
+        // --area：直接指定區（multi 的子專案也是區）；有給就不再要求 --project
+        let areaWant = rawArea?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !areaWant.isEmpty {
+            let r = findArea(areaWant, in: me.session)
+            guard let a = r.area else { return fail(r.error ?? "找不到區") }
+            g = a.id
+            if commanderIsMulti(me.session) { subFolder = folder(ofGroup: a.id) }
+        } else if commanderIsMulti(me.session) {
             let subs = subProjects(me.session)
             let want = project?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let list = subs.map { "「\($0.name)」" }.joined(separator: "、")
@@ -294,9 +313,13 @@ extension Store {
                 guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return fail("資料夾不存在：\(path)") }
                 let roots = me.session.groups ?? []
                 let root = roots.first(where: { isGroup(g, within: $0) }) ?? roots.first ?? g
+                let sgExisted = groups.contains { $0.name == want && $0.parentID == root }
                 let sg = addGroup(named: want, parent: root)
+                if !sgExisted { madeGroup = sg.id }
                 let keepSel = selectedProject
+                let pExisted = projects.contains { $0.path == path }
                 let p = addProject(path: path)
+                if !pExisted { madeProject = p.id }
                 selectedProject = keepSel
                 if let pi = projects.firstIndex(where: { $0.id == p.id }), projects[pi].groupID == nil { projects[pi].groupID = sg.id }
                 g = sg.id
@@ -307,16 +330,18 @@ extension Store {
         if let d = dir?.trimmingCharacters(in: .whitespacesAndNewlines), !d.isEmpty {
             let path = ((d as NSString).expandingTildeInPath as NSString).standardizingPath
             var isDir: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return fail("資料夾不存在：\(path)") }
-            pid = projects.first(where: { $0.path == path })?.id ?? addProject(path: path).id
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { rollback(); return fail("資料夾不存在：\(path)") }
+            if let ex = projects.first(where: { $0.path == path }) { pid = ex.id }
+            else { let np = addProject(path: path); pid = np.id; if madeProject == nil { madeProject = np.id } }
         } else if let sf = subFolder {
-            pid = projects.first(where: { $0.path == sf })?.id ?? addProject(path: sf).id
+            if let ex = projects.first(where: { $0.path == sf }) { pid = ex.id }
+            else { let np = addProject(path: sf); pid = np.id; if madeProject == nil { madeProject = np.id } }
         } else { pid = me.caller.projectID }
         let keepSelected = selectedProject
         var c = createConversation(in: pid)
         selectedProject = keepSelected               // 新建不要順手改掉使用者目前選的資料夾
         move(c.id, toGroup: g)
-        guard let i = conversations.firstIndex(where: { $0.id == c.id }) else { return fail("建立失敗") }
+        guard let i = conversations.firstIndex(where: { $0.id == c.id }) else { rollback(); return fail("建立失敗") }
         conversations[i].title = name
         conversations[i].renamed = true
         conversations[i].namedByCommander = true
@@ -327,6 +352,8 @@ extension Store {
         c = conversations[i]
         guard belongsToCommander(c, session: me.session) else {
             conversations.removeAll { $0.id == c.id }
+            selectedProject = keepSelected
+            rollback()          // 新建的資料夾與子群組也一併收掉
             return fail("新聊天室沒有落在你的總指揮底下（資料夾所在的組不對），已取消")
         }
         return (["ok": true, "name": name, "id": String(c.id.uuidString.prefix(8)).lowercased(), "model": newModel, "mcp": newMcp.rawValue], c)
@@ -335,8 +362,8 @@ extension Store {
 
 extension MainWindowController {
     /// codenv-todo new：建好之後在背景把 claude 開起來（wake），這樣 team 看得到、SendMessage 找得到
-    func commanderNewChat(caller: String?, name: String, dir: String?, project: String? = nil, model: String? = nil, effort: String? = nil, mcp: String? = nil, topic: String? = nil, done: @escaping ([String: Any]) -> Void) {
-        let r = store.commanderCreate(caller: caller, name: name, dir: dir, project: project, model: model, effort: effort, mcp: mcp, topic: topic)
+    func commanderNewChat(caller: String?, name: String, dir: String?, project: String? = nil, model: String? = nil, effort: String? = nil, mcp: String? = nil, topic: String? = nil, area: String? = nil, done: @escaping ([String: Any]) -> Void) {
+        let r = store.commanderCreate(caller: caller, name: name, dir: dir, project: project, model: model, effort: effort, mcp: mcp, topic: topic, area: area)
         guard let c = r.conversation else { return done(r.reply) }
         wake(name: c.title, caller: caller) { w in
             var out = r.reply

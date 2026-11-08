@@ -72,7 +72,9 @@ struct WakeSchedule: Codable, Identifiable, Equatable {
         switch frequency {
         case "weekly":
             let names = [L("日"), L("一"), L("二"), L("三"), L("四"), L("五"), L("六")]
-            let days = weekdays.sorted().map { names[($0 - 1) % 7] }.joined(separator: sep)
+            // 壞掉的 schedules.json 或編輯畫面可能帶進 0、負數、8 以上：只留 1...7（原本 names[($0-1)%7] 對 0 越界崩潰、8 顯示成「日」）
+            let valid = weekdays.filter { (1...7).contains($0) }.sorted()
+            let days = valid.isEmpty ? L("（沒有選日子）") : valid.map { names[$0 - 1] }.joined(separator: sep)
             return L("每週\(days) \(t)")
         case "monthly":
             let days = monthDays.sorted().map { L("\($0) 號") }.joined(separator: sep)
@@ -207,8 +209,16 @@ final class ScheduleStore: ObservableObject {
         // 只有這次真的讀懂了才更新備份：壞檔、空檔不能蓋掉原本好的 .備份（agy Argon 11/6）
         guard !protectOriginal, loadedOK, fm.fileExists(atPath: src.path) else { return }
         let dst = src.appendingPathExtension("備份")
-        try? fm.removeItem(at: dst)
-        try? fm.copyItem(at: src, to: dst)
+        // 先複製到暫存檔再替換：複製失敗時，上一份好的備份還在（原本先刪再複製，複製失敗就一份都沒了）
+        let tmp = src.appendingPathExtension("備份-\(ProcessInfo.processInfo.processIdentifier).tmp")
+        try? fm.removeItem(at: tmp)
+        do {
+            try fm.copyItem(at: src, to: tmp)
+            if fm.fileExists(atPath: dst.path) { _ = try fm.replaceItemAt(dst, withItemAt: tmp) } else { try fm.moveItem(at: tmp, to: dst) }
+        } catch {
+            try? fm.removeItem(at: tmp)
+            EventLog.log("排程", "更新備份失敗，沿用上一份：\(error.localizedDescription)")
+        }
     }
 
     /// 對話被刪掉時，它的排程一起拿掉
@@ -253,8 +263,13 @@ final class ScheduleStore: ObservableObject {
 
     /// 時間＋排程編號：同一個聊天室同一分鐘有兩個排程到期，標記不能一樣，不然當掉重開會把沒送的那則當成已經送過
     static func marker(_ s: WakeSchedule, _ due: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "M/d HH:mm"
+        let f = DateFormatter(); f.dateFormat = "yyyy/M/d HH:mm"      // 要有年份：每月／每週的排程隔年同一天同一時間，標記不能一樣（不然去年那則還在紀錄檔尾端 512 KB 內，這次會被當成已送出）
         return "〔codenv 排程 \(f.string(from: due)) #\(s.id.uuidString.prefix(8).lowercased())〕"
+    }
+
+    /// 舊格式（沒有年份）的標記：升版當下紀錄檔裡可能還留著舊格式、剛好當掉沒清 pendingRun 的那一則，防重送要認得，不然重送一次
+    static func legacyMarker(_ marker: String) -> String {
+        marker.replacingOccurrences(of: #"排程 \d{4}/"#, with: "排程 ", options: .regularExpression)
     }
 
     static func message(_ s: WakeSchedule, due: Date) -> String {
@@ -519,7 +534,7 @@ struct ScheduleRowView: View {
     }
 
     static func fmt(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = Calendar.current.isDateInToday(d) ? "今天 HH:mm" : "M/d HH:mm"
+        let f = DateFormatter(); f.dateFormat = Calendar.current.isDateInToday(d) ? "今天 HH:mm" : "yyyy/M/d HH:mm"
         return f.string(from: d)
     }
 }

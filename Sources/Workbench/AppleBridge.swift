@@ -61,7 +61,7 @@ final class AppleBridge {
     /// 工作台要寫給 claude 的東西：只認使用者訊息（沒有工具，也就沒有權限卡）
     func outgoing(_ obj: [String: Any]) {
         guard obj["type"] as? String == "user", let msg = obj["message"] as? [String: Any] else { return }
-        if let s = msg["content"] as? String, s.hasPrefix("/") { return }   // /effort 之類是給 Claude 的
+        if obj["uuid"] == nil, let s = msg["content"] as? String, s.hasPrefix("/") { return }   // /effort 之類是給 Claude 的
         let uuid = (obj["uuid"] as? String)?.lowercased() ?? UUID().uuidString.lowercased()
         queue.append((uuid, Self.text(msg), msg))
         next()

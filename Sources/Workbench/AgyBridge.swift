@@ -27,8 +27,14 @@ final class AgyBridge {
         return base(model) + "-" + e
     }
 
-    /// agy 功能有沒有打開（設定頁；預設開）而且提醒看過了（公版第一次用前要先看，Prefs.checkAgyNotice）。沒打開或沒看過時：模型清單不列 agy、不查 agy 用量、不用 agy 猜下一句、看板不自動叫 agy
-    static var enabled: Bool { Prefs.shared.agyEnabled && Prefs.shared.agyNoticeSeen }
+    /// agy 功能有沒有打開（設定頁；預設開）（提醒只告知、不擋功能，見 AgyNotice.swift）。沒打開時：模型清單不列 agy、不查 agy 用量、不用 agy 猜下一句、看板不自動叫 agy
+    static var enabled: Bool { Prefs.shared.agyEnabled }
+
+    /// 本機有沒有裝 agy（~/.local/bin 是官方安裝位置，也找 Homebrew 與 /usr/local）
+    static var installed: Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return ["\(home)/.local/bin/agy", "/opt/homebrew/bin/agy", "/usr/local/bin/agy"].contains { FileManager.default.isExecutableFile(atPath: $0) }
+    }
 
     /// agy 的位置：裝在 ~/.local/bin（官方安裝方式），登入 shell 的 PATH 不一定有
     static var executable: String {

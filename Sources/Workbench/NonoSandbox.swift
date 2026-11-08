@@ -49,18 +49,33 @@ enum NonoSandbox {
         var description: String { if case .text(let s) = self { return s }; return "" }
     }
 
+    static var keychainTimeout: TimeInterval = 3
+
     /// `security find-generic-password -s <service> -w`（只讀，不跳視窗；項目不在就回 nil）
-    private static func keychain(service: String) -> String? {
+    static var securityPath = "/usr/bin/security"      // 測試用：換成會卡住的假 security
+    static func keychain(service: String) -> String? {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.executableURL = URL(fileURLWithPath: securityPath)
         p.arguments = ["find-generic-password", "-s", service, "-w"]
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return nil }
-        let d = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        // 鑰匙圈鎖住、或要跳授權視窗等使用者按時，security 會一直等：prepare 是在啟動聊天室時同步呼叫的，不加逾時整個畫面會卡死。
+        // 在背景讀輸出，最多等 3 秒；逾時就砍掉它、當作拿不到（呼叫端會給「拿不到登入權杖」的說明）
+        var data = Data()
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            data = out.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            done.signal()
+        }
+        if done.wait(timeout: .now() + keychainTimeout) == .timedOut {
+            p.terminate()
+            if done.wait(timeout: .now() + 1) == .timedOut { kill(p.processIdentifier, SIGKILL) }
+            return nil
+        }
         guard p.terminationStatus == 0 else { return nil }
-        return String(data: d, encoding: .utf8)
+        return String(data: data, encoding: .utf8)
     }
 }

@@ -100,21 +100,22 @@ enum CodeRunner {
     static func check(file: String, _ done: @escaping (CheckStatus, [CodeDiagnostic], String) -> Void) {
         let dir = (file as NSString).deletingLastPathComponent
         let name = (file as NSString).lastPathComponent
+        let arg = name.hasPrefix("-") ? "./" + name : name      // 檔名以 - 開頭（-o.cpp）會被 gcc／python 當成選項
         DispatchQueue.global(qos: .userInitiated).async {
             var status: CheckStatus = .ok
             var diags: [CodeDiagnostic] = []
             var text: String
             if isPython(file) {
                 // .pyc 放暫存資料夾，作業資料夾不會多出 __pycache__
-                let (code, out) = shell(["python3", "-m", "py_compile", name], dir: dir, env: ["PYTHONPYCACHEPREFIX": NSTemporaryDirectory()])
+                let (code, out) = shell(["python3", "-m", "py_compile", arg], dir: dir, env: ["PYTHONPYCACHEPREFIX": NSTemporaryDirectory()])
                 status = code == 0 ? .ok : .failed
                 (diags, text) = code == 0 ? ([], "") : parsePython(out)
             } else if isC(file) {
-                let (code, out) = shell(["gcc"] + gccFlags + ["-fsyntax-only", name], dir: dir)
+                let (code, out) = shell(["gcc"] + gccFlags + ["-fsyntax-only", arg], dir: dir)
                 status = code == 0 ? .ok : .failed
                 (diags, text) = parseGcc(out, file: name, failed: code != 0)
             } else if isCppSource(file) || isHeader(file) {
-                let (code, out) = shell(["g++"] + gppFlags + ["-fsyntax-only", name], dir: dir)
+                let (code, out) = shell(["g++"] + gppFlags + ["-fsyntax-only", arg], dir: dir)
                 status = code == 0 ? .ok : .failed
                 (diags, text) = parseGcc(out, file: name, failed: code != 0)
             } else {
@@ -164,7 +165,7 @@ enum CodeRunner {
             if let m = head.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)) {
                 let f = ns.substring(with: m.range(at: 1)), kind = ns.substring(with: m.range(at: 4))
                 let ln = Int(ns.substring(with: m.range(at: 2))) ?? 0, col = Int(ns.substring(with: m.range(at: 3))) ?? 0
-                keep = f == file
+                keep = f == file || f == "./" + file      // 檔名以 - 開頭時編譯器看到的是 ./檔名（見 check／runCommand 的 arg）
                 if failed && kind == "warning" {
                     // 有 error 時先不列 warning（常常是 error 連帶的），連它後面的 note 一起藏
                     if keep { hidden += 1 }
@@ -353,6 +354,7 @@ enum CodeRunner {
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let dir = (file as NSString).deletingLastPathComponent
         let name = (file as NSString).lastPathComponent
+        let arg = name.hasPrefix("-") ? "./" + name : name      // 同上：不讓檔名被當成選項
         let base = (name as NSString).deletingPathExtension
         let logRel = "bin/.\(name).last-run.txt"
         // 執行時：compat/bin 與偵測到的 toolchain 資料夾放 PATH 最前面（system("pause")、system("cls")、python.org 或 Homebrew 工具）；除以 0 等錯誤用代碼 86 結束；Python 不等換行就顯示
@@ -365,13 +367,13 @@ enum CodeRunner {
         let banner = input.map { "printf '\\033[2m%s\\033[0m\\n' " + q(L("（這次用 \(($0 as NSString).lastPathComponent) 當輸入）")) + " && " } ?? ""
         let body: String
         if isPython(file) {
-            body = "\(banner)\(runEnv) python3 \(q(name))\(redirect)"
+            body = "\(banner)\(runEnv) python3 \(q(arg))\(redirect)"
         } else if isC(file) {
             let flags = (gccFlags + sanitize).map(q).joined(separator: " ")
-            body = "gcc \(flags) \(q(name)) -o \(q("bin/" + base)) && \(banner)\(runEnv) \(q("./bin/" + base))\(redirect)"
+            body = "gcc \(flags) \(q(arg)) -o \(q("bin/" + base)) && \(banner)\(runEnv) \(q("./bin/" + base))\(redirect)"
         } else if isCppSource(file) {
             let flags = (gppFlags + sanitize).map(q).joined(separator: " ")
-            body = "g++ \(flags) \(q(name)) -o \(q("bin/" + base)) && \(banner)\(runEnv) \(q("./bin/" + base))\(redirect)"
+            body = "g++ \(flags) \(q(arg)) -o \(q("bin/" + base)) && \(banner)\(runEnv) \(q("./bin/" + base))\(redirect)"
         } else {
             body = "printf '%s\\n' \(q(L("只支援執行 C、C++ 和 Python 程式檔"))); exit 1"
         }

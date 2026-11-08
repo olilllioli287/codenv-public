@@ -41,7 +41,7 @@ function skip(c, reason) {
   console.log(`${mandatory ? '失敗' : '略過'} ${c.id} ${c.name}（${mandatory ? '必跑案例被略過：' : ''}${reason}）`);
 }
 async function check(c, args) {
-  const r = await run(args, c.id === 'R04' || c.runner === 'native.sh' ? 120000 : 45000);
+  const r = await run(args, c.id === 'R04' || c.runner === 'native.sh' ? 120000 : c.runner === 'export-guard.sh' ? 180000 : 45000);
   console.log(`${r.code === 0 ? '通過' : '失敗'} ${c.id} ${c.name}`);
   if (r.code === 0) passed++; else failed++;
   if (r.output.trim()) console.log(r.output.trim().split('\n').map(line => '  ' + line).join('\n'));

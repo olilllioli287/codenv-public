@@ -1026,7 +1026,14 @@ final class WindowHost: NSViewController {
     static let barHeight: CGFloat = 36
     private let petView = PetSlotView()
     var petEmbed: PetEmbedView { petView.embed }
-    var petColumnWidth: CGFloat { petColumn.superview == nil ? 0 : petColumn.frame.width }
+    var petColumnWidth: CGFloat { petColumnVisible ? petColumn.frame.width : 0 }
+    /// 右欄有沒有在畫面上。收起來只是隱藏、不從視窗拿掉：SwiftUI 的看板／清單一進出視窗就同步重建整張圖（實測 250ms 一次停頓），按 F4 會卡頓
+    private var petColumnVisible: Bool { petColumn.superview != nil && !petColumn.isHidden }
+    private func mountPetColumn() {
+        if petColumn.superview !== view { view.addSubview(petColumn) }
+        petColumn.isHidden = false
+    }
+    private func retirePetColumn() { if petColumn.superview != nil { petColumn.isHidden = true } }
     /// 中間聊天欄在螢幕上的範圍
     var chatScreenRect: NSRect? { body.window.map { $0.convertToScreen(body.convert(body.bounds, to: nil)) } }
     private lazy var timersHost = PetTimersHost(rootView: PetTimersView())
@@ -1274,7 +1281,7 @@ final class WindowHost: NSViewController {
         body.frame = NSRect(x: 0, y: 0, width: b.width - colW, height: h)
         body.subviews.first { $0 !== placeholder && !($0 is DropOverlay) }?.frame = body.bounds
         if show {
-            if petColumn.superview !== view { view.addSubview(petColumn) }
+            mountPetColumn()
             if petView.superview !== petColumn { petColumn.addSubview(petView) }
             attachTopColumn()
             petColumn.frame = NSRect(x: b.width - colW, y: 0, width: colW, height: h)
@@ -1284,12 +1291,12 @@ final class WindowHost: NSViewController {
             // 計時器：桌寵空位左半（桌寵在右邊，不去蓋它）
             if timersHost.superview !== petView { petView.addSubview(timersHost) }
             PetTimers.shared.start()
-            timersHost.frame = NSRect(x: 0, y: 0, width: floor(colW / 2), height: max(0, slotH - 6 - (slotH >= PetSlotView.termSize + 14 ? PetSlotView.termSize + 6 : 0)))
+            timersHost.frame = NSRect(x: 0, y: 0, width: floor(colW / 2), height: max(0, slotH - 6 - (slotH >= PetSlotView.termSize * 2 + 6 + 14 ? PetSlotView.termSize * 2 + 16 : slotH >= PetSlotView.termSize + 14 ? PetSlotView.termSize + 10 : 0)))
             topColumnView.frame = NSRect(x: 0, y: slotH, width: colW, height: max(0, h - slotH))
             petView.needsDisplay = true
             petColumn.needsDisplay = true
         } else {
-            petColumn.removeFromSuperview()
+            retirePetColumn()
         }
     }
 
@@ -1301,14 +1308,16 @@ final class WindowHost: NSViewController {
         let enabled = PetSlot.enabled
         let b = view.bounds
         let size = PetSlot.size(on: view.window?.screen)
-        let room = min(size.width, max(0, b.width - 300))
+        // 寬度跟 layoutPetSlot 同一條算式（columnRoom）：總指揮模式的右欄寬是自己記的，不是桌寵格的寬；
+        // 以前這裡用桌寵格的寬，動畫第一幀把右欄擠窄再彈回來，看板整份重排兩次（實測停頓 150ms 以上）
+        let room = columnRoom(size)
         let show = enabled && room >= 190
-        guard show || petColumn.superview != nil else { layoutPetSlot(); return }
+        guard show || petColumnVisible else { layoutPetSlot(); return }
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { layoutPetSlot(); return }
 
-        let from = petColumnProgress ?? (petColumn.superview != nil ? 1 : 0)
+        let from = petColumnProgress ?? (petColumnVisible ? 1 : 0)
         let to: CGFloat = show ? 1 : 0
-        let width = min(size.width, max(0, b.width - 300))
+        let width = room
         let animation = PetColumnAnimation(from: from, to: to, start: ProcessInfo.processInfo.systemUptime,
                                            width: width, boundsSize: b.size)
         petColumnAnimation = animation
@@ -1322,7 +1331,8 @@ final class WindowHost: NSViewController {
                 animation = PetColumnAnimation(from: animation.from, to: animation.to, start: animation.start, width: self.petColumnRoom(), boundsSize: self.view.bounds.size)
                 self.petColumnAnimation = animation
             }
-            let t = min(1, (ProcessInfo.processInfo.systemUptime - animation.start) / 0.25)
+            let tickStart = ProcessInfo.processInfo.systemUptime
+            let t = min(1, (tickStart - animation.start) / 0.25)
             let eased = t * t * (3 - 2 * t)
             let progress = animation.from + (animation.to - animation.from) * eased
             self.petColumnProgress = progress
@@ -1332,7 +1342,7 @@ final class WindowHost: NSViewController {
                 self.petColumnAnimationTimer = nil
                 self.petColumnAnimation = nil
                 self.petColumnProgress = nil
-                if animation.to == 0 { self.petColumn.removeFromSuperview() }
+                if animation.to == 0 { self.retirePetColumn() }
                 self.layoutPetSlot()
             }
         }
@@ -1342,7 +1352,7 @@ final class WindowHost: NSViewController {
 
     /// 測試用（--trace-right）：右欄目前的左緣位置與寬度、主內容寬度
     func debugRightPanel() -> String {
-        let col = petColumn.superview != nil ? "\(Int(petColumn.frame.minX)) \(Int(petColumn.frame.width))" : "- -"
+        let col = petColumnVisible ? "\(Int(petColumn.frame.minX)) \(Int(petColumn.frame.width))" : "- -"
         return "\(Int(view.bounds.width)) \(Int(body.frame.width)) \(col) on=\(PetSlot.enabled) bound=\(boundWindow != nil) pending=\(petColumnTogglePending)"
     }
 
@@ -1370,7 +1380,7 @@ final class WindowHost: NSViewController {
         body.frame = NSRect(x: 0, y: 0, width: b.width - width * p, height: h)
         body.subviews.first { $0 !== placeholder && !($0 is DropOverlay) }?.frame = body.bounds
         guard width > 0 else { return }
-        if petColumn.superview !== view { view.addSubview(petColumn) }
+        mountPetColumn()
         if petView.superview !== petColumn { petColumn.addSubview(petView) }
         attachTopColumn()
         petColumn.frame = NSRect(x: b.width - width * p, y: 0, width: width, height: h)
@@ -1887,5 +1897,37 @@ extension WindowHost {
         ContextMonitor.shared.load(c, path: folder)
         let ctx = ContextMonitor.shared.tokens[id].map { "\(ContextMonitor.text($0)) tokens" } ?? L("（還沒有紀錄）")
         return [(L("工作資料夾"), (folder as NSString).abbreviatingWithTildeInPath), (L("模型"), store.displayModel(id)), (L("上下文大小"), ctx)]
+    }
+}
+
+
+/// 測試用（--frame-stats）：從開始起每 1/120 秒量一次主執行緒的空檔，空檔超過 20ms 就是一次掉幀；不看動畫自己的計時器（主執行緒卡住時它也一起卡）
+enum RightPanelPerf {
+    private static var gaps: [Double] = []
+    private static var timer: Timer?
+    private static var last = 0.0
+    private static var t0 = 0.0
+    private static var observing = false
+    private static var marks: [String] = []
+    static func reset() {
+        gaps = []; marks = []; last = ProcessInfo.processInfo.systemUptime; t0 = last
+        timer?.invalidate()
+        for n in [Notification.Name.rightPanelToggleWillBegin, .rightPanelToggled] where !observing {
+            NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { note in marks.append(String(format: "[%@@%.0f]", note.name == .rightPanelToggled ? "end" : "begin", (ProcessInfo.processInfo.systemUptime - t0) * 1000)) }
+        }
+        observing = true
+        let t = Timer(timeInterval: 1.0 / 120, repeats: true) { _ in
+            let now = ProcessInfo.processInfo.systemUptime
+            gaps.append((now - last) * 1000); if (now - last) * 1000 > 20 { marks.append(String(format: "@%.0f:%.0f", (now - t0) * 1000, (now - last) * 1000)) }; last = now
+        }
+        RunLoop.main.add(t, forMode: .common); timer = t
+    }
+    static var maxGap: Double { gaps.max() ?? 0 }
+    static func report(_ label: String) -> String {
+        timer?.invalidate(); timer = nil
+        guard !gaps.isEmpty else { return "\(label) 沒有資料\n" }
+        func f(_ x: Double) -> String { String(format: "%.1f", x) }
+        let over = gaps.filter { $0 > 20 }
+        return "\(label) 最長停頓=\(f(gaps.max() ?? 0))ms >20ms的次數=\(over.count) 停頓總和=\(f(over.reduce(0, +)))ms [\(marks.joined(separator: " "))]\n"
     }
 }

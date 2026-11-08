@@ -487,11 +487,9 @@ final class ContextStrip: NSView {
         let h: CGFloat = 14, y = (bounds.height - h) / 2
         title.sizeToFit(); value.sizeToFit()
         title.frame = NSRect(x: 0, y: y, width: title.frame.width, height: h)
-        let bx = title.frame.maxX + 6
-        track.frame = NSRect(x: bx, y: (bounds.height - 3) / 2, width: Self.barWidth, height: 3)
-        fill.frame = NSRect(x: bx, y: track.frame.minY, width: Self.barWidth * (fraction ?? 0), height: 3)
-        track.isHidden = fraction == nil; fill.isHidden = fraction == nil
-        let vx = (fraction == nil ? title.frame.maxX : track.frame.maxX) + 6
+        // 「上下文」標籤字、「剩餘」標籤字和上下文進度條都拿掉；這一行是「561K / 640K」＋各家額度（圖示、細條、百分比），靠左對齊
+        track.isHidden = true; fill.isHidden = true; title.isHidden = true
+        let vx: CGFloat = 0
         var right = bounds.width
         if !trailing.isHidden {
             trailing.sizeToFit()
@@ -511,11 +509,14 @@ final class ContextStrip: NSView {
 final class UsageGlanceStrip: NSView, NSViewToolTipOwner {
     var fg: NSColor = .labelColor { didSet { rebuild() } }
     private var groups: [UsageGlanceGroup] = []
-    private var cells: [(icon: NSImageView, text: NSTextField)] = []
+    /// 每家一組：圖示＋每個數字各一條剩餘量細條（>50% 綠、20～50% 黃、<20% 紅，剩越少越短）＋數字
+    private struct Cell { let icon: NSImageView; let items: [(track: NSView, fill: NSView, text: NSTextField, frac: CGFloat?)] }
+    private var cells: [Cell] = []
     private let lead = NSTextField(labelWithString: L("剩餘"))
     private var sub: AnyCancellable?
     private var shown = 0
     static let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+    static let barW: CGFloat = 28, barH: CGFloat = 3, itemGap: CGFloat = 10
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -528,35 +529,48 @@ final class UsageGlanceStrip: NSView, NSViewToolTipOwner {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? {
         // 只有畫出東西的那段算（空白處照舊點到輸入框）
-        guard shown > 0, let last = cells.prefix(shown).last?.text, let p = superview?.convert(point, to: self),
+        guard shown > 0, let last = cells.prefix(shown).last?.items.last?.text, let p = superview?.convert(point, to: self),
               p.x <= last.frame.maxX, p.x >= 0 else { return nil }
         return self
     }
     override func mouseDown(with e: NSEvent) { UsageSheet.toggle() }
 
+    static func barColor(_ remaining: Int) -> NSColor { remaining > 50 ? .systemGreen : (remaining >= 20 ? .systemYellow : .systemRed) }
+
     private func rebuild() {
         groups = UsageMonitor.shared.glance
-        cells.forEach { $0.icon.removeFromSuperview(); $0.text.removeFromSuperview() }
+        for c in cells { c.icon.removeFromSuperview(); c.items.forEach { $0.track.removeFromSuperview(); $0.fill.removeFromSuperview(); $0.text.removeFromSuperview() } }
         cells = groups.map { g in
             let iv = NSImageView()
-            // 各家的圖示直接讀使用者電腦上裝的 App（不打包、不自己畫商標）；沒裝就退回 SF Symbols
-            if let img = AppIcons.icon(for: g.key) {
-                iv.image = img; iv.imageScaling = .scaleProportionallyUpOrDown; iv.contentTintColor = nil
+            // 圖示不自己畫：Claude／Codex 用面板那套（Resources/icons），agy 讀使用者裝的 Antigravity.app 去背；取不到就退回 SF Symbols
+            if let gl = AppIcons.glyph(for: g.key) {
+                // 跟「全部的用量」面板同一套去背圖示：Claude 橘星芒、Codex 單色（跟字色）、agy 彩色 A
+                let img = gl.image.copy() as! NSImage
+                img.isTemplate = gl.template
+                iv.image = img; iv.imageScaling = .scaleProportionallyUpOrDown
+                iv.contentTintColor = gl.template ? fg.withAlphaComponent(0.6) : nil
             } else {
                 iv.image = NSImage(systemSymbolName: g.symbol, accessibilityDescription: g.name)?
                     .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
                 iv.contentTintColor = fg.withAlphaComponent(0.55)
             }
-            let t = NSTextField(labelWithString: "")
-            let str = NSMutableAttributedString()
-            for p in g.parts() {
-                str.append(NSAttributedString(string: p.text, attributes: [.font: Self.font,
-                    .foregroundColor: p.low ? NSColor.systemRed : fg.withAlphaComponent(0.5)]))
+            addSubview(iv)
+            let items = g.items.map { it -> (track: NSView, fill: NSView, text: NSTextField, frac: CGFloat?) in
+                let track = NSView(), fill = NSView()
+                for v in [track, fill] { v.wantsLayer = true; v.layer?.cornerRadius = 1.5; addSubview(v) }
+                track.layer?.backgroundColor = fg.withAlphaComponent(0.12).cgColor
+                let t = NSTextField(labelWithString: "")
+                let r = it.bucket?.remaining
+                let low = r.map(UsageRowView.isLow) ?? false
+                let str = (it.tag.map { $0 + " " } ?? "") + (r.map { "\($0)%" } ?? "—")
+                t.attributedStringValue = NSAttributedString(string: str, attributes: [.font: Self.font,
+                    .foregroundColor: low ? NSColor.systemRed : fg.withAlphaComponent(0.5)])
+                t.lineBreakMode = .byClipping
+                addSubview(t)
+                if let r { fill.layer?.backgroundColor = Self.barColor(r).cgColor }
+                return (track, fill, t, r.map { CGFloat(min(100, max(0, $0))) / 100 })
             }
-            t.attributedStringValue = str
-            t.lineBreakMode = .byClipping
-            addSubview(iv); addSubview(t)
-            return (iv, t)
+            return Cell(icon: iv, items: items)
         }
         lead.textColor = fg.withAlphaComponent(0.5)
         needsLayout = true
@@ -573,31 +587,48 @@ final class UsageGlanceStrip: NSView, NSViewToolTipOwner {
         return n
     }
 
+    /// 一組（不含圖示）的寬：每個數字「細條＋空隙＋數字」，數字之間隔 itemGap
+    private func width(of c: Cell) -> CGFloat {
+        c.items.enumerated().reduce(CGFloat(0)) { acc, e in
+            acc + (e.offset > 0 ? Self.itemGap : 0) + (e.element.frac == nil ? 0 : Self.barW + 4) + e.element.text.frame.width
+        }
+    }
+
     override func layout() {
         super.layout()
         removeAllToolTips()
         let h: CGFloat = 14, y = (bounds.height - h) / 2
-        lead.sizeToFit()
-        cells.forEach { $0.text.sizeToFit() }
-        shown = Self.fit(widths: cells.map { $0.text.frame.width }, lead: lead.frame.width, available: bounds.width)
-        lead.isHidden = shown == 0
-        lead.frame = NSRect(x: 0, y: y, width: lead.frame.width, height: h)
-        var x = lead.frame.maxX
+        lead.isHidden = true; lead.frame = .zero
+        cells.forEach { c in c.items.forEach { $0.text.sizeToFit() } }
+        // 「剩餘」兩個字拿掉了：第一組貼著左緣，後面每組前面空 12
+        shown = Self.fit(widths: cells.map { width(of: $0) }, lead: -12, available: bounds.width)
+        var x: CGFloat = -12
         for (i, c) in cells.enumerated() {
             let on = i < shown
-            c.icon.isHidden = !on; c.text.isHidden = !on
+            c.icon.isHidden = !on
+            for it in c.items { it.text.isHidden = !on; it.track.isHidden = !on || it.frac == nil; it.fill.isHidden = !on || it.frac == nil }
             guard on else { continue }
             x += 12
             c.icon.frame = NSRect(x: x, y: (bounds.height - 13) / 2, width: 13, height: 13)
-            c.text.frame = NSRect(x: x + 16, y: y, width: c.text.frame.width, height: h)
-            addToolTip(NSRect(x: x - 4, y: 0, width: c.text.frame.maxX - x + 8, height: bounds.height), owner: self, userData: nil)
-            x = c.text.frame.maxX
+            var ix = x + 16
+            for (k, it) in c.items.enumerated() {
+                if k > 0 { ix += Self.itemGap }
+                if let f = it.frac {
+                    it.track.frame = NSRect(x: ix, y: (bounds.height - Self.barH) / 2, width: Self.barW, height: Self.barH)
+                    it.fill.frame = NSRect(x: ix, y: it.track.frame.minY, width: max(f > 0 ? 1 : 0, Self.barW * f), height: Self.barH)
+                    ix += Self.barW + 4
+                }
+                it.text.frame = NSRect(x: ix, y: y, width: it.text.frame.width, height: h)
+                ix = it.text.frame.maxX
+            }
+            addToolTip(NSRect(x: x - 4, y: 0, width: ix - x + 8, height: bounds.height), owner: self, userData: nil)
+            x = ix
         }
     }
 
     // 滑過時才算說明：重置倒數跟著時間走
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
-        for (i, c) in cells.prefix(shown).enumerated() where point.x <= c.text.frame.maxX + 4 { return groups[i].tip }
+        for (i, c) in cells.prefix(shown).enumerated() where point.x <= (c.items.last?.text.frame.maxX ?? 0) + 4 { return groups[i].tip }
         return ""
     }
 }
@@ -686,7 +717,7 @@ final class ChatInputBar: NSView {
     var busy = false {
         didSet {
             if busy { suggestion = nil }
-            if oldValue && !busy { lastSent = nil }   // 這輪做完了，⌃ C 就不再放回
+            if oldValue && !busy { lastSent = nil; lastSentQuotes = [] }   // 這輪做完了，⌃ C 就不再放回
             updateButton(); needsLayout = true
         }
     }
@@ -694,6 +725,11 @@ final class ChatInputBar: NSView {
     /// 每次送出都留一份（不管當時 Claude 忙不忙）：送出失敗要放回來用。lastSent 在忙的時候是 nil（排隊的那則停下來之後還是會送，不放回），不能拿來還原送不出去的
     private var lastAttempt: (text: String, attachments: [(data: Data, mediaType: String, image: NSImage, no: Int, edited: Bool)], nextNo: Int, files: [URL])?
     private var lastSent: (text: String, attachments: [(data: Data, mediaType: String, image: NSImage, no: Int, edited: Bool)], nextNo: Int, files: [URL])?
+    /// 送出時一起帶走的引用（ChatPane 送出成功才清掉它們），⌃ C／送出失敗放回輸入框時要一起還原，不然引用的內容會遺失
+    var quotesProvider: () -> [MessageQuote] = { [] }
+    var onRestoreQuotes: ([MessageQuote]) -> Void = { _ in }
+    private var lastAttemptQuotes: [MessageQuote] = []
+    private var lastSentQuotes: [MessageQuote] = []
     var suggestion: String? { get { textView.suggestion } set { textView.suggestion = newValue } }
     /// 鎖住輸入（對話正在別處進行）：顯示說明和一顆按鈕
     private let lockView = NSView()
@@ -1309,6 +1345,7 @@ final class ChatInputBar: NSView {
     func restoreFailedSend() {
         guard let last = lastAttempt else { return }
         lastSent = last
+        lastSentQuotes = lastAttemptQuotes
         lastAttempt = nil
         restoreLastSent()
     }
@@ -1319,6 +1356,8 @@ final class ChatInputBar: NSView {
         // 輸入框已經有新打的字就不蓋掉它；暫存的留著（還沒放回去，不能丟）
         guard textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, attachments.isEmpty else { return }
         lastSent = nil
+        let restoredQuotes = lastSentQuotes
+        lastSentQuotes = []
         textView.string = last.text
         textView.undoManager?.removeAllActions()   // 直接換掉整段字不會進復原紀錄，舊紀錄套上來會錯位
         attachments = last.attachments
@@ -1326,6 +1365,7 @@ final class ChatInputBar: NSView {
         files = last.files
         rebuildChips()
         textChanged()
+        if !restoredQuotes.isEmpty, !hasQuotes { onRestoreQuotes(restoredQuotes) }   // 還在（送出失敗）就不用補
         textView.setSelectedRange(NSRange(location: (last.text as NSString).length, length: 0))
         // 送出失敗是非同步回來的，使用者可能已經在別格打字：焦點沒落在別處、或本來就在這裡才拉回（agy Argon 11/6）
         if let w = window {
@@ -1356,7 +1396,8 @@ final class ChatInputBar: NSView {
         suggestion = nil
         // Claude 在做時送的是排隊的那則，停下來之後它還是會送出去，所以不放回
         lastAttempt = (text: text, attachments: attachments, nextNo: nextImageNo, files: files)
-        if busy { lastSent = nil } else { lastSent = lastAttempt }
+        lastAttemptQuotes = quotesProvider()
+        if busy { lastSent = nil; lastSentQuotes = [] } else { lastSent = lastAttempt; lastSentQuotes = lastAttemptQuotes }
         // 只有寄件匣已落盤、後端接受寫入才清空；失敗時字、圖、引用留在原處，不切焦點。
         guard onSend?(text, attachments.map { ($0.data, $0.mediaType) }, now) == true else {
             lastAttempt = nil

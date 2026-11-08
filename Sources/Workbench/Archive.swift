@@ -12,7 +12,7 @@ extension Store {
         var out: [UUID: Date] = [:]
         for c in conversations {
             let path = project(c.projectID)?.path ?? NSHomeDirectory()
-            let url = Store.claudeTranscript(c.claudeSession, path: path)
+            let url = ContextMonitor.transcript(c, path: path)   // 非 Claude 聊天室看自己的紀錄檔，不然永遠找不到、被誤封存
             if let d = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate { out[c.id] = d }
         }
         if out != lastActivity { lastActivity = out }

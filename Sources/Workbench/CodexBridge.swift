@@ -362,7 +362,8 @@ final class CodexBridge {
                 let code = (it["exitCode"] as? NSNumber)?.intValue ?? 0
                 if code != 0 { content = "Exit code \(code)\n" + content }
             case "mcpToolCall":
-                content = (it["result"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) }
+                // result 可能是 JSON null（NSNull）：JSONSerialization 對不是陣列／字典的頂層丟的是 ObjC 例外，try? 接不住，整個 App 會崩潰（實跑 exit 134）
+                content = (it["result"]).flatMap { JSONSerialization.isValidJSONObject($0) ? (try? JSONSerialization.data(withJSONObject: $0)) : nil }.flatMap { String(data: $0, encoding: .utf8) }
                     ?? ((it["error"] as? [String: Any])?["message"] as? String ?? "")
             default:
                 content = status == "completed" ? "完成" : ""

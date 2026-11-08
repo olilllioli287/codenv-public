@@ -58,6 +58,44 @@ extension TerminalPane {
         return false
     }
 
+    /// 清掉拖放暫存資料夾裡超過 maxAge 的項目，但草稿（drafts）和寄件匣（outbox）還指著的不刪：
+    /// 草稿放過夜、隔天重開，裡面的檔案路徑還要有效（寄件匣只複製圖片，不複製 filePaths 的檔案）。
+    /// 引用判斷：草稿／寄件匣的 JSON 原文裡有出現這個項目的路徑（斜線可能被轉成 \/，兩種寫法都找）。回傳刪掉幾個
+    @discardableResult
+    static func cleanDropFolder(folder: URL, stateDir: URL, maxAge: TimeInterval = 86400, now: Date = Date()) -> Int {
+        let fm = FileManager.default
+        guard let old = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return 0 }
+        var referenced = ""
+        for sub in ["drafts", "outbox"] {
+            let dir = stateDir.appendingPathComponent(sub, isDirectory: true)
+            // 資料夾存在卻列不出來＝不知道哪些被引用，什麼都不刪
+            if fm.fileExists(atPath: dir.path), (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) == nil { return 0 }
+            for f in (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
+                let name = f.lastPathComponent
+                // 讀不懂而被隔離的（xxx.json.bad、xxx.json.bad-時間）也當引用來源：使用者可能還要從裡面救回草稿
+                guard f.pathExtension == "json" || name.contains(".json.bad") else { continue }
+                // 草稿／寄件匣讀不出來＝不知道哪些還被引用，這次什麼都不刪（寧可多留）。隔離檔本來就可能不是合法 UTF-8，容錯讀
+                guard let data = try? Data(contentsOf: f) else { return 0 }
+                referenced += String(decoding: data, as: UTF8.self) + "\n"
+            }
+        }
+        // JSON 裡的路徑可能被跳脫（斜線 \/、引號、反斜線）：原樣和 JSON 跳脫後的寫法都找
+        func jsonEscaped(_ s: String) -> String {
+            guard let d = try? JSONEncoder().encode(s), let t = String(data: d, encoding: .utf8) else { return s }
+            return String(t.dropFirst().dropLast())
+        }
+        var removed = 0
+        for f in old where ((try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) < now.addingTimeInterval(-maxAge) {
+            // /tmp、/var 是 /private/... 的捷徑：草稿裡可能是任一種寫法，都要認
+            var variants: Set<String> = [f.path, f.resolvingSymlinksInPath().path]
+            for v in variants where v.hasPrefix("/private/") { variants.insert(String(v.dropFirst(8))) }
+            for v in variants where !v.hasPrefix("/private/") { variants.insert("/private" + v) }
+            if variants.contains(where: { referenced.contains($0) || referenced.contains(jsonEscaped($0)) }) { continue }
+            try? fm.removeItem(at: f); removed += 1
+        }
+        return removed
+    }
+
     static func keepCopy(_ u: URL) -> URL? {
         let dir = dropFolder.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

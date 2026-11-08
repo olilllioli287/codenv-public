@@ -16,6 +16,7 @@ extension AppDelegate {
                 if pair[0] == "petEmbedOn" { PetEmbedPrefs.enabled = pair[1] == "1" }
                 if pair[0] == "petSlotOn" { PetSlot.enabled = pair[1] == "1" }
                 if pair[0] == "sidebarMode", ["commander", "tree"].contains(pair[1]) { Prefs.shared.sidebarMode = pair[1] }
+                if pair[0] == "colorScheme", ["dark", "light", "system"].contains(pair[1]) { Prefs.shared.colorScheme = pair[1] }
             }
         }
         if args.contains("--dump-theme") {
@@ -102,6 +103,7 @@ extension AppDelegate {
                 k.limits.maxHold = v[0]; k.limits.hotCelsius = v[1]; k.limits.hotSeconds = v[2]; k.limits.logEvery = v[3]
                 if v.count > 4 { k.limits.preholdOffDelay = v[4] }
                 if v.count > 5 { k.limits.statusEvery = v[5] }
+                if v.count > 6 { k.limits.preholdRetry = v[6] }
             }
         }
         for (i, a) in args.enumerated() where a == "--lid-sim" && i + 1 < args.count {
@@ -114,6 +116,7 @@ extension AppDelegate {
                 switch kv[0] {
                 case "close": sim.closed = true
                 case "open": sim.closed = false
+                case "display": sim.external = kv.last == "1"
                 case "temp": sim.temp = Double(kv.last ?? "") ?? sim.temp
                 case "batt": sim.percent = Int(kv.last ?? "") ?? sim.percent
                 case "ac": sim.onAC = kv.last == "1"
@@ -121,6 +124,11 @@ extension AppDelegate {
                 case "work":
                     if let n = Int(kv.last ?? "") { k.workingCount = { n } }
                     else { k.workingCount = { [weak k] in k?.workingIDs().count ?? 0 } }
+                case "jump":   // jump=秒：把 LidKeeper 的「現在」往前撥（模擬 Mac 睡過一覺，醒來兩次檢查間隔很長）
+                    let add = Double(kv.last ?? "") ?? 0
+                    let prev = k.now
+                    k.now = { prev().addingTimeInterval(add) }
+                    _ = prev
                 case "recover": k.recoverIfNeeded()
                 case "extdead": sim.connDead = true; sim.actualOn = false      // 小幫手重啟、連線斷了
                 case "extoff": sim.actualOn = false      // 別人把小幫手的 nosleep 解除了
@@ -1496,6 +1504,64 @@ extension AppDelegate {
                 if let d = try? JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: URL(fileURLWithPath: parts[1]), options: .atomic) }
             }
         }
+        // --graph-op "秒數:操作:參數"：關聯圖測試掛鉤（只在 --state-dir 測試實例生效）
+        //   fake:<區數>:<聊天室數>（在目前總指揮底下造假的區與聊天室，區會巢狀、幾個設成工作中／等你）、mode:graph|list（右欄顯示方式）、
+        //   panel:open|close（F6 面板）、dump:<檔>（關聯圖節點／位置／計時器 JSON）、select:<標題>、area:add|move…不在這裡（用 codenv-todo）
+        for (i, a) in args.enumerated() where a == "--graph-op" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 2, let sec = Double(parts[0]), sec.isFinite, sec >= 0 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self else { return }
+                let arg = parts.count > 2 ? parts[2] : ""
+                switch parts[1] {
+                case "fake":
+                    let nums = arg.split(separator: ":").compactMap { Int($0) }
+                    guard nums.count == 2, let s = self.store.currentSessionLayout, let root = self.store.areaRoot(s),
+                          let pid = self.store.projects.first?.id else { return }
+                    var areas: [UUID] = []
+                    for k in 0..<nums[0] {
+                        let parent = (k >= 3 && k % 2 == 1) ? areas[k / 3 - 1 + 0] : root
+                        areas.append(self.store.addGroup(named: "假區\(k + 1)", parent: parent).id)
+                    }
+                    let keep = self.store.selectedProject
+                    for k in 0..<nums[1] {
+                        let c = self.store.createConversation(in: pid)
+                        self.store.selectedProject = keep
+                        self.store.move(c.id, toGroup: areas.isEmpty || k % 7 == 0 ? root : areas[k % areas.count])
+                        self.store.rename(c.id, to: "假聊天室\(k + 1)", byUser: false)
+                        if k % 9 == 0 { self.store.status[c.id] = .working }
+                        else if k % 23 == 1 { self.store.status[c.id] = .waiting }
+                    }
+                case "click", "move", "rclick":    // 標題：在節點中心送滑鼠事件（移動後立刻按，不等 hover）
+                    guard let win = self.main.window, let g = self.main.graphPanel.graphView ?? ChatGraphView.rightInstance, let wp = g.windowPoint(title: arg) else { return }
+                    func post(_ type: NSEvent.EventType) {
+                        if let e = NSEvent.mouseEvent(with: type, location: wp, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: win.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) { NSApp.postEvent(e, atStart: false) }
+                    }
+                    post(.mouseMoved)
+                    if parts[1] == "click" { post(.leftMouseDown); DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { post(.leftMouseUp) } }
+                    if parts[1] == "rclick" { post(.rightMouseDown); DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { post(.rightMouseUp) } }
+                case "mode": RightPanelModel.shared.chatGraph = arg == "graph"
+                case "panel": if arg == "open" { self.main.graphPanel.show() } else { self.main.graphPanel.hide() }
+                case "select":
+                    RightPanelModel.shared.selectedChat = self.store.conversations.first { $0.title == arg }?.id
+                case "dump":
+                    let gp = self.main.graphPanel.graphView
+                    var o: [String: Any] = ["panelOpen": self.main.graphPanel.isOpen, "mode": RightPanelModel.shared.chatGraph ? "graph" : "list",
+                                            "panel": gp?.dump() ?? NSNull(), "right": ChatGraphView.rightInstance?.dump() ?? NSNull()]
+                    o["firstResponder"] = String(describing: self.main.window?.firstResponder.map { type(of: $0) })
+                    if let win = self.main.window, let cv = win.contentView, let g = self.main.graphPanel.graphView, let wp = g.windowPoint(title: "codenv_2") {
+                        o["hitTest"] = String(describing: cv.hitTest(cv.superview?.convert(wp, from: nil) ?? wp).map { type(of: $0) })
+                        o["isKey"] = win.isKeyWindow
+                    }
+                    o["sheet"] = self.main.window?.attachedSheet.map { String(describing: type(of: $0)) } ?? "none"
+                    o["selected"] = RightPanelModel.shared.selectedChat.flatMap { self.store.conversation($0)?.title } ?? NSNull()
+                    o["infoChat"] = RightPanelModel.shared.infoChat.flatMap { self.store.conversation($0)?.title } ?? NSNull()
+                    o["areas"] = self.store.currentSessionLayout.map { s in self.store.areaNodes(s).map { self.store.areaPath($0.group.id, in: s) } } ?? []
+                    if let d = try? JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: URL(fileURLWithPath: arg), options: .atomic) }
+                default: break
+                }
+            }
+        }
         // --collab-open "秒數"：打開協作看板（像按最左邊的協作圖示）
         for (i, a) in args.enumerated() where a == "--collab-open" && i + 1 < args.count {
             guard let sec = Double(args[i + 1]) else { continue }
@@ -2079,6 +2145,36 @@ extension AppDelegate {
             guard let sec = Double(args[i + 1]) else { continue }
             DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in self?.main.toggleRightPanel() }
         }
+        // --right-stall-probe "秒數:分頁:檔案"（限 --state-dir）：那時打開右欄並切到分頁，3 秒後像按 F4 收起，
+        //   寫「maxStallMs=最長停頓毫秒 collapsed1s=yes|no」（1 秒內右欄是否已收完）。考題 C21 用
+        for (i, a) in args.enumerated() where a == "--right-stall-probe" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 2).map(String.init)
+            guard parts.count == 3, let sec = Double(parts[0]), let tab = RightTab.named(parts[1]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in self?.main.showRightPanel(tab: tab) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec + 3) { [weak self] in
+                RightPanelPerf.reset()
+                self?.main.toggleRightPanel()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec + 4) { [weak self] in
+                let gone = self?.main.host.debugRightPanel().contains("- - on=") == true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    _ = RightPanelPerf.report("probe")
+                    let out = String(format: "maxStallMs=%.0f collapsed1s=%@\n", RightPanelPerf.maxGap, gone ? "yes" : "no")
+                    try? out.write(toFile: parts[2], atomically: true, encoding: .utf8)
+                }
+            }
+        }
+        // --frame-stats "開始秒數:標籤:檔案"：開始秒數起記錄右欄滑動動畫的每幀耗時，1 秒後把摘要附加寫進檔案（接在 --toggle-right 前一點開始）
+        for (i, a) in args.enumerated() where a == "--frame-stats" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 2).map(String.init)
+            guard parts.count == 3, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { RightPanelPerf.reset() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec + 1.5) {
+                let line = RightPanelPerf.report(parts[1])
+                if let h = FileHandle(forWritingAtPath: parts[2]) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close() }
+                else { try? line.write(toFile: parts[2], atomically: true, encoding: .utf8) }
+            }
+        }
         // --trace-right "開始秒數:檔案"：從那時起 1.5 秒，每 1/60 秒記一行「經過毫秒 視窗內容寬 主內容寬 右欄左緣 右欄寬」
         for (i, a) in args.enumerated() where a == "--trace-right" && i + 1 < args.count {
             let parts = args[i + 1].split(separator: ":", maxSplits: 1)
@@ -2494,6 +2590,371 @@ extension AppDelegate {
             PetTimers.shared.inject(id: "c", label: "超時的編譯", eta: 60, startedAgo: 300)
             PetTimers.shared.inject(id: "d", label: "做完了", eta: 60, finished: true)
         }
+        // --area-add-probe 輸出檔：在測試資料裡造兩個總指揮（c2 涵蓋 c1 底下一個叫「共名」的子組），
+        // 叫 c1 建同名同父的區：必須失敗、「共名」那組仍在（舊版會把它 removeGroup 刪掉）；再刪該組，總指揮涵蓋清單不能留失效 id
+        if let i = args.firstIndex(of: "--area-add-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let st = self?.main.store else { return }
+                let r1 = ConvGroup(name: "R1"); var z = ConvGroup(name: "共名"); z.parentID = r1.id
+                st.groups.append(contentsOf: [r1, z])
+                let p1 = Project(name: "p1", path: "/tmp", groupID: r1.id), p2 = Project(name: "p2", path: "/tmp", groupID: z.id)
+                st.projects.append(contentsOf: [p1, p2])
+                var c1 = Conversation(projectID: p1.id, title: "chief1"); c1.groupID = r1.id
+                var c2 = Conversation(projectID: p2.id, title: "chief2"); c2.groupID = z.id
+                st.conversations.append(contentsOf: [c1, c2])
+                let s1 = SessionLayout(name: "S1", windows: [], groups: [r1.id], chief: c1.id)
+                let s2 = SessionLayout(name: "S2", windows: [], groups: [z.id], chief: c2.id)
+                st.sessions.append(contentsOf: [s1, s2])
+                let r = st.commanderAreaAdd(caller: c1.id.uuidString, name: "共名", parent: nil)
+                var lines = ["ok=\(r["ok"] as? Bool ?? true)", "error=\(r["error"] as? String ?? "")"]
+                lines.append("zStillThere=\(st.groups.contains { $0.id == z.id })")
+                st.removeGroup(z.id)
+                lines.append("staleIdCleared=\(!(st.sessions.first { $0.id == s2.id }?.groups ?? []).contains(z.id))")
+                try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --hang-send：把 send 指令換成永遠不回的（測 BrowserServer 的逾時：--wait 要等到 timeout、不能固定 15 秒就叫呼叫端重送）
+        if args.contains("--hang-send"), args.contains("--state-dir") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { BrowserServer.shared.sendChat = { _, _, _, _, _, _ in } }
+        }
+        // --usage-date-probe 輸出檔：friendlyDate 沒有年份的字串跨年時要選對年（用假的「現在」，不碰真資料）
+        if let i = args.firstIndex(of: "--usage-date-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let cal = Calendar.current
+                func at(_ y: Int, _ m: Int, _ d: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: d, hour: 12))! }
+                func ymd(_ d: Date?) -> String { d.map { let c = cal.dateComponents([.year, .month, .day], from: $0); return "\(c.year!)-\(c.month!)-\(c.day!)" } ?? "nil" }
+                var lines: [String] = []
+                lines.append("dec_to_jan=\(ymd(UsageMonitor.friendlyDate("Jan 1 at 12am", zone: nil, now: at(2026, 12, 30))))")
+                lines.append("jan_to_dec=\(ymd(UsageMonitor.friendlyDate("Dec 31 at 11pm", zone: nil, now: at(2027, 1, 2))))")
+                lines.append("same_year=\(ymd(UsageMonitor.friendlyDate("Nov 9 at 1am", zone: nil, now: at(2026, 11, 8))))")
+                try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --board-bad-probe 輸出檔：在測試資料夾的 collab.json 放 2 個好目標＋1 個壞目標（缺 title），loadTodos 要讀到 2 個，原檔不動
+        if let i = args.firstIndex(of: "--board-bad-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let json = #"{"items":[],"goals":[{"id":"g1","title":"好一","status":"active","steps":[]},{"id":"g2","status":"active"},{"id":"g3","title":"好二","status":"active","steps":[]}]}"#
+                try? json.write(to: CollabBoardModel.todoFile, atomically: true, encoding: .utf8)
+                let (_, goals) = CollabBoardModel.loadTodos()
+                let intact = (try? String(contentsOf: CollabBoardModel.todoFile, encoding: .utf8)) == json
+                try? "goals=\(goals.map(\.id).joined(separator: ","))\nfileIntact=\(intact)".write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --web-crash-loop-probe "秒:輸出檔"：1 分鐘內連殺網頁程序 5 次（每次等它重載完）；重載最多 3 次，之後不再重載（ready 累計 1+3=4 次）
+        if let i = args.firstIndex(of: "--web-crash-loop-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            if parts.count == 2, let sec = Double(parts[0]), parts[1].hasPrefix("/") {
+                let outFile = parts[1]
+                DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                    guard let self, let f = self.store.currentWindow?.focused, let p = self.workspace.panes[f] as? ChatPane else {
+                        try? "error=找不到聊天格\n".write(toFile: outFile, atomically: true, encoding: .utf8); return
+                    }
+                    var n = 0
+                    func next() {
+                        if n == 5 {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                                let shown = p.crashOverlayShownForTest
+                                p.pressReloadAfterCrashForTest()      // 按「重新載入」：提示要收掉、網頁要重新載入回來
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                                    try? "ready_count=\(p.readyCountForTest)\nready_now=\(p.webReadyForTest)\noverlay_shown=\(shown)\noverlay_after_reload=\(p.crashOverlayShownForTest)\n".write(toFile: outFile, atomically: true, encoding: .utf8)
+                                }
+                            }
+                            return
+                        }
+                        n += 1
+                        p.killWebProcessForTest()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: next)
+                    }
+                    next()
+                }
+            }
+        }
+        // --web-crash-probe "秒:輸出檔"：把聊天網頁的 WebContent 程序殺掉，幾秒後網頁要自己重載回來（ready 重新成立、頁面有內容）
+        if let i = args.firstIndex(of: "--web-crash-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            if parts.count == 2, let sec = Double(parts[0]), parts[1].hasPrefix("/") {
+                let outFile = parts[1]
+                DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                    guard let self, let f = self.store.currentWindow?.focused, let p = self.workspace.panes[f] as? ChatPane else {
+                        try? "error=找不到聊天格\n".write(toFile: outFile, atomically: true, encoding: .utf8); return
+                    }
+                    let before = p.readyCountForTest
+                    p.killWebProcessForTest()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                        try? "ready_count_before=\(before)\nready_count_after=\(p.readyCountForTest)\nready_after=\(p.webReadyForTest)\n".write(toFile: outFile, atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }
+        // --keychain-timeout-probe 輸出檔：把 security 換成睡 30 秒的假腳本，keychain() 要在幾秒內回 nil（不能卡住）
+        if let i = args.firstIndex(of: "--keychain-timeout-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let fake = (out as NSString).deletingLastPathComponent + "/fake-security"
+                try? "#!/bin/sh\nsleep 30\n".write(toFile: fake, atomically: true, encoding: .utf8)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake)
+                NonoSandbox.securityPath = fake
+                NonoSandbox.keychainTimeout = 2
+                let t0 = Date()
+                let r = NonoSandbox.keychain(service: "codenv-probe-none")
+                let secs = Date().timeIntervalSince(t0)
+                try? "result_nil=\(r == nil)\nsecs=\(Int(secs))\nfast=\(secs < 6)\n".write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --update-check-probe "網址|git資料夾|輸出檔"：對那個網址做一次更新檢查（逾時縮成 3 秒）；網址指到不回應的伺服器時，要在幾秒內失敗而不是卡住
+        if let i = args.firstIndex(of: "--update-check-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let parts = args[i + 1].components(separatedBy: "|")
+            if parts.count == 3 {
+                let url = parts[0], root = parts[1], out = parts[2]
+                SourceUpdate.gitTimeout = 3
+                DispatchQueue.global().async {
+                    let t0 = Date()
+                    let r = SourceUpdate.probeLatest(in: URL(fileURLWithPath: root), url: url)
+                    let secs = Date().timeIntervalSince(t0)
+                    try? "result=\(r)\nsecs=\(Int(secs))\n".write(toFile: out, atomically: true, encoding: .utf8)
+                }
+            }
+        }
+        // --runner-dash-probe 輸出檔：檔名以 - 開頭的 C++ 檔做 F9 檢查，不能被 g++ 當成選項
+        if let i = args.firstIndex(of: "--runner-dash-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let dir = (out as NSString).deletingLastPathComponent + "/dashproj"
+                try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                let f = dir + "/-Wall.cpp"
+                try? "int main() { return 0; }\n".write(toFile: f, atomically: true, encoding: .utf8)
+                let bad = dir + "/-bad.cpp"
+                try? "int main() { return undefined_name; }\n".write(toFile: bad, atomically: true, encoding: .utf8)
+                CodeRunner.check(file: f) { status, _, _ in
+                    let cmd = CodeRunner.runCommand(file: f)
+                    CodeRunner.check(file: bad) { st2, diags, _ in
+                        try? "status_ok=\(status == .ok)\ncmd_has_dotslash=\(cmd.contains("'./-Wall.cpp'"))\nbad_failed=\(st2 == .failed)\nbad_diag_count=\(diags.count)\n".write(toFile: out, atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }
+        // --schedule-marker-probe 輸出檔：同一個排程隔年同月日同時間的防重送標記不能一樣
+        if let i = args.firstIndex(of: "--schedule-marker-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let sch = WakeSchedule(conversation: UUID(), text: "x")
+                func due(_ y: Int) -> Date { Calendar.current.date(from: DateComponents(year: y, month: 3, day: 5, hour: 9, minute: 0))! }
+                let a = ScheduleStore.marker(sch, due(2026)), b = ScheduleStore.marker(sch, due(2027))
+                try? "differ=\(a != b)\nmarker=\(a)\nlegacy=\(ScheduleStore.legacyMarker(a))\n".write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --lid-display-filter-probe 輸出檔：哪些螢幕算「實體外接」（內建、虛擬／未知廠商、睡眠中的都不算）
+        if let i = args.firstIndex(of: "--lid-display-filter-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let ok = CGSize(width: 600, height: 340)
+                func f(_ b: Bool, _ v: UInt32, _ m: UInt32, _ a: Bool, _ sz: CGSize = ok) -> Bool { RealLidEnv.isRealExternal(builtin: b, vendor: v, model: m, asleep: a, size: sz) }
+                let lines = ["real_external=\(f(false, 0x0610, 1, false))", "builtin=\(f(true, 0x0610, 1, false))",
+                             "virtual_unknown_vendor=\(f(false, 0xFFFF_FFFF, 1, false))", "virtual_zero_vendor=\(f(false, 0, 0, false))", "asleep=\(f(false, 0x0610, 1, true))",
+                             "virtual_no_size=\(f(false, 505, 1, false, .zero))"]
+                try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --drop-clean-probe 輸出檔：用暫存資料夾測拖放暫存清理（不碰真的共用資料夾）：舊的沒人引用→刪、舊的被草稿引用→留、新的→留
+        if let i = args.firstIndex(of: "--drop-clean-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let fm = FileManager.default
+                let root = URL(fileURLWithPath: (out as NSString).deletingLastPathComponent).appendingPathComponent("dropclean", isDirectory: true)
+                let folder = root.appendingPathComponent("drop", isDirectory: true), state = root.appendingPathComponent("state", isDirectory: true)
+                try? fm.removeItem(at: root)
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true); try? fm.createDirectory(at: state.appendingPathComponent("drafts"), withIntermediateDirectories: true)
+                let old = Date().addingTimeInterval(-3 * 86400)
+                func make(_ name: String, date: Date) -> URL {
+                    let d = folder.appendingPathComponent(name, isDirectory: true); try? fm.createDirectory(at: d, withIntermediateDirectories: true)
+                    try? "x".write(to: d.appendingPathComponent("a.png"), atomically: true, encoding: .utf8)
+                    try? fm.setAttributes([.modificationDate: date], ofItemAtPath: d.path); return d
+                }
+                let unref = make("unref", date: old), ref = make("ref", date: old), fresh = make("fresh", date: Date())
+                // 草稿 JSON 的斜線被轉成 \/（JSONEncoder 預設）
+                let draft = "{\"filePaths\":[\"\(ref.appendingPathComponent("a.png").path.replacingOccurrences(of: "/", with: "\\/"))\"]}"
+                try? draft.write(to: state.appendingPathComponent("drafts/c1.json"), atomically: true, encoding: .utf8)
+                // 被隔離的壞草稿（不是合法 JSON、也不是合法 UTF-8）裡的路徑也算引用
+                let badRef = make("badref", date: old)
+                var badData = Data([0xFF, 0xFE, 0x00]); badData.append(Data(badRef.appendingPathComponent("a.png").path.utf8))
+                try? badData.write(to: state.appendingPathComponent("drafts/c2.json.bad-20260101-000000-abc123"))
+                let n = TerminalPane.cleanDropFolder(folder: folder, stateDir: state)
+                try? "removed=\(n)\nunref_gone=\(!fm.fileExists(atPath: unref.path))\nref_kept=\(fm.fileExists(atPath: ref.path))\nbad_ref_kept=\(fm.fileExists(atPath: badRef.path))\nfresh_kept=\(fm.fileExists(atPath: fresh.path))\n".write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --git-safety-probe 輸出檔：(1) 專案設定的 filter 不會被背景 git 執行 (2) 逾時會連忽略 TERM 的 git 和它的子程序一起砍掉（假 git，用暫存資料夾）
+        if let i = args.firstIndex(of: "--git-safety-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+                let fm = FileManager.default
+                let root = URL(fileURLWithPath: (out as NSString).deletingLastPathComponent).appendingPathComponent("gitsafety", isDirectory: true)
+                try? fm.removeItem(at: root); try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+                func sh(_ cmd: String, cwd: URL? = nil) {
+                    let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh"); p.arguments = ["-c", cmd]; p.currentDirectoryURL = cwd
+                    p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice; try? p.run(); p.waitUntilExit()
+                }
+                // (1) 專案設定的 filter（已知限制：擋不住，只記錄 filter_ran 供參考）；大小相同、內容不同的修改要被偵測到（changed_attr=1、changed_info=1）
+                let repo = root.appendingPathComponent("repo", isDirectory: true), marker = root.appendingPathComponent("pwned").path
+                let repo2 = root.appendingPathComponent("repo2", isDirectory: true), crlf = root.appendingPathComponent("crlf", isDirectory: true)
+                for d in [repo, repo2, crlf] { try? fm.createDirectory(at: d, withIntermediateDirectories: true) }
+                let ident = "git -c user.email=a@b -c user.name=n commit -qm x"
+                sh("git init -q . && printf 'aaaa\\n' > a && echo '* filter=evil' > .gitattributes && git config filter.evil.clean 'touch \(marker); cat' && git add a .gitattributes && \(ident) && rm -f \(marker) && sleep 1 && printf 'bbbb\\n' > a", cwd: repo)
+                sh("git init -q . && printf 'aaaa\\n' > a && git add a && \(ident) && echo 'a filter=evil' > .git/info/attributes && git config filter.evil.clean 'cat' && sleep 1 && printf 'bbbb\\n' > a", cwd: repo2)
+                // CRLF 提交、* text eol=crlf 的 repo：不能因為我們加的選項多出假的變更
+                sh("git init -q . && git config core.autocrlf false && printf 'x\\r\\ny\\r\\n' > a && echo '* text eol=crlf' > .gitattributes && git add a .gitattributes && \(ident)", cwd: crlf)
+                let info = SessionActivity.readGit(repo.path), info2 = SessionActivity.readGit(repo2.path), infoCrlf = SessionActivity.readGit(crlf.path)
+                let filterRan = fm.fileExists(atPath: marker)
+                // (2) 逾時整群砍
+                let fake = root.appendingPathComponent("fake-git").path
+                try? "#!/bin/sh\ntrap '' TERM\n(sleep 7771) &\nsleep 7772\n".write(toFile: fake, atomically: true, encoding: .utf8)
+                try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake)
+                GitProcess.path = fake; SessionActivity.gitTimeout = 2
+                let t0 = Date()
+                let r = SessionActivity.readGit(repo.path)
+                let secs = Date().timeIntervalSince(t0)
+                // (3) git 不存在：perl exec 失敗要回 nil，不能回「成功但空」的結果
+                GitProcess.path = "/nonexistent/git"
+                let missing = SessionActivity.readGit(repo.path)
+                GitProcess.path = "/usr/bin/git"
+                // (4) 右欄的 RPShell.run 也整群砍（忽略 TERM 的 sh 加背景子程序）
+                let t1 = Date()
+                let rr = RPShell.run("/bin/sh", ["-c", "trap '' TERM; (sleep 7773) & sleep 7774"], timeout: 2)
+                let rpSecs = Date().timeIntervalSince(t1)
+                Thread.sleep(forTimeInterval: 1)
+                let ps = Process(); ps.executableURL = URL(fileURLWithPath: "/bin/ps"); ps.arguments = ["-ax", "-o", "command="]
+                let pipe = Pipe(); ps.standardOutput = pipe; try? ps.run()
+                let psOut = pipe.fileHandleForReading.readDataToEndOfFile(); ps.waitUntilExit()      // 先讀完再等結束，輸出多時才不會互等
+                let left = String(decoding: psOut, as: UTF8.self).components(separatedBy: "\n").filter { $0.contains("sleep 7771") || $0.contains("sleep 7772") || $0.contains("sleep 7773") || $0.contains("sleep 7774") }.count
+                try? "info_ok=\(info != nil)\nchanged_attr=\(info?.changed ?? -1)\nchanged_info=\(info2?.changed ?? -1)\ncrlf_changed=\(infoCrlf?.changed ?? -1)\nfilter_ran=\(filterRan)\ntimeout_nil=\(r == nil)\ntimeout_fast=\(secs < 8)\nmissing_git_nil=\(missing == nil)\nrpshell_timed_out=\(rr.timedOut)\nrpshell_fast=\(rpSecs < 8)\nleftover=\(left)\n".write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --schedule-summary-probe 輸出檔：每週排程的 weekdays 含 0、負數、8 以上時，summary 不能崩潰（舊版 names[($0-1)%7] 對 0 越界 trap）
+        if let i = args.firstIndex(of: "--schedule-summary-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                func sum(_ w: [Int]) -> String { var s = WakeSchedule(conversation: UUID(), text: "x"); s.frequency = "weekly"; s.weekdays = w; return s.summary }
+                let lines = ["zero=\(sum([0]))", "neg=\(sum([-3, 2]))", "eight=\(sum([8, 1]))", "empty=\(sum([]))", "normal=\(sum([7, 1]))"]
+                try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --carry-time-probe "紀錄檔:輸出檔"：量換模型交接在主執行緒要花多久（只讀檔尾）對照整份讀；再等背景補完全文檔，量全文檔是否完整
+        if let i = args.firstIndex(of: "--carry-time-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1)
+            if parts.count == 2 {
+                let url = URL(fileURLWithPath: String(parts[0])), out = String(parts[1])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int) ?? 0
+                    let t0 = Date()
+                    let sid = UUID()
+                    let note = ModelCarry.note(from: url, session: sid, model: "測試模型", limit: 6000, canRead: true)
+                    let syncSecs = Date().timeIntervalSince(t0)
+                    let doc = ModelCarry.dir.appendingPathComponent(sid.uuidString.lowercased() + ".md")
+                    let firstDoc = (try? String(contentsOf: doc, encoding: .utf8)) ?? ""
+                    // 同一份檔整份解析（舊作法）的耗時，在背景量，免得卡住自己
+                    DispatchQueue.global().async {
+                        let t1 = Date()
+                        let all = ModelCarry.turns(url)
+                        let fullSecs = Date().timeIntervalSince(t1)
+                        var waited = 0.0
+                        var finalDoc = firstDoc
+                        while waited < 120 {
+                            finalDoc = (try? String(contentsOf: doc, encoding: .utf8)) ?? ""
+                            if !finalDoc.contains("這是先寫的檔尾版") { break }
+                            Thread.sleep(forTimeInterval: 0.5); waited += 0.5
+                        }
+                        let lines = ["size=\(size)", String(format: "sync_secs=%.3f", syncSecs), String(format: "full_parse_secs=%.3f", fullSecs),
+                                     "note_nil=\(note == nil)", "note_chars=\(note?.count ?? 0)",
+                                     "first_doc_partial=\(firstDoc.contains("這是先寫的檔尾版"))", "first_doc_chars=\(firstDoc.count)",
+                                     "final_doc_partial=\(finalDoc.contains("這是先寫的檔尾版"))", "final_doc_chars=\(finalDoc.count)",
+                                     "full_turns=\(all.count)", "note_has_last=\(all.last.map { note?.contains(String($0.text.prefix(20))) ?? false } ?? false)"]
+                        try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }
+        // --carry-race-probe "A:B:長行:輸出檔"：A（大檔）→ B（小檔）同一個聊天室連換兩次，等背景跑完，全文檔必須是 B 的（不能被 A 的完整版蓋回）；
+        // 長行檔＝最後一行超過檔尾窗的檔，交接不能回 nil
+        if let i = args.firstIndex(of: "--carry-race-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":").map(String.init)
+            if parts.count == 4 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    let sid = UUID()
+                    let nA = ModelCarry.note(from: URL(fileURLWithPath: parts[0]), session: sid, model: "甲", limit: 6000, canRead: true)
+                    let nB = ModelCarry.note(from: URL(fileURLWithPath: parts[1]), session: sid, model: "乙", limit: 6000, canRead: true)
+                    let nLong = ModelCarry.note(from: URL(fileURLWithPath: parts[2]), session: UUID(), model: "丙", limit: 6000, canRead: true)
+                    DispatchQueue.global().async {
+                        Thread.sleep(forTimeInterval: 12)      // 背景補全文的工作全部跑完
+                        let doc = (try? String(contentsOf: ModelCarry.dir.appendingPathComponent(sid.uuidString.lowercased() + ".md"), encoding: .utf8)) ?? ""
+                        let lines = ["noteA_nil=\(nA == nil)", "noteB_nil=\(nB == nil)", "long_nil=\(nLong == nil)", "long_has_text=\(nLong?.contains("LONGFIRST") ?? false)",
+                                     "doc_has_B=\(doc.contains("BBBB"))", "doc_has_A=\(doc.contains("AAAA"))"]
+                        try? lines.joined(separator: "\n").write(toFile: parts[3], atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }
+        // --decode-compat-probe 輸出檔：目前格式的 sprint.json／schedules.json 單筆要讀得懂（有人新增非 Optional 欄位、舊檔缺鍵會整份讀不出來時，這裡先失敗）
+        if let i = args.firstIndex(of: "--decode-compat-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                func enc<T: Encodable>(_ v: T) -> Data { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return (try? e.encode(v)) ?? Data() }
+                func dec<T: Decodable>(_ t: T.Type, _ d: Data) -> Bool { let x = JSONDecoder(); x.dateDecodingStrategy = .iso8601; return (try? x.decode(t, from: d)) != nil }
+                // 把現在的實例編成 JSON，再逐一拿掉一個鍵（模擬舊版檔案沒有這個鍵）：缺鍵讀不懂的列出來
+                func missing<T: Codable>(_ v: T, as t: T.Type) -> [String] {
+                    let base = enc(v)
+                    guard let o = try? JSONSerialization.jsonObject(with: base) as? [String: Any] else { return ["（編不出 JSON）"] }
+                    var bad: [String] = []
+                    for k in o.keys.sorted() {
+                        var o2 = o; o2[k] = nil
+                        if let d = try? JSONSerialization.data(withJSONObject: o2), !dec(t, d) { bad.append(k) }
+                    }
+                    return bad
+                }
+                let ws = WakeSchedule(conversation: UUID(), text: "x")
+                let sp = SprintState()
+                let lines = ["wake_roundtrip=\(dec(WakeSchedule.self, enc(ws)))", "sprint_roundtrip=\(dec(SprintState.self, enc(sp)))",
+                             "wake_missing_fail=\(missing(ws, as: WakeSchedule.self).joined(separator: ","))",
+                             "sprint_missing_fail=\(missing(sp, as: SprintState.self).joined(separator: ","))"]
+                try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --env-probe 輸出檔：測試實例給子程序的 CODENV_* 環境變數、主視窗在哪台螢幕（--test-screen 測試用）
+        if let i = args.firstIndex(of: "--env-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                var lines = Workspace.environment().filter { $0.hasPrefix("CODENV_") }.sorted()
+                if let w = self?.main.window {
+                    let c = NSPoint(x: w.frame.midX, y: w.frame.midY)
+                    let sc = NSScreen.screens.first { $0.frame.contains(c) }
+                    lines.append("window_screen=\(sc?.localizedName ?? "?")")
+                    lines.append("window_inside_visible=\(sc.map { $0.visibleFrame.insetBy(dx: -1, dy: -1).contains(w.frame) } ?? false)")
+                    lines.append("window_visible=\(w.isVisible)")
+                }
+                lines.append("screens=\(NSScreen.screens.map(\.localizedName).joined(separator: "|"))")
+                try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        // --progress-fuzz：直接呼叫 PetTimers.handle 塞 NaN／無限／超大數字（不發全域通知，不碰真桌寵），沒崩潰就把結果寫進檔案
+        if let i = args.firstIndex(of: "--progress-fuzz"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let bad: [Double] = [.nan, .infinity, -.infinity, 1e30, -1e30, 9.3e18, 5]
+                for (n, v) in bad.enumerated() {
+                    PetTimers.shared.handle(["cmd": "start", "id": "fz\(n)", "label": "x", "total": NSNumber(value: v), "eta": NSNumber(value: v)])
+                    PetTimers.shared.handle(["cmd": "update", "id": "fz\(n)", "done": NSNumber(value: v), "total": NSNumber(value: v)])
+                    PetTimers.shared.handle(["cmd": "cancel", "id": "fz\(n)"])
+                }
+                // 走到 items()：eta 1e30 繞過 handle 的 clamp 直接進 model，畫面重畫算「剩幾分鐘」不能 trap
+                for (n, v) in bad.enumerated() {
+                    PetTimers.shared.inject(id: "it\(n)", label: "x", eta: v)
+                    _ = PetTimers.shared.model.items()
+                    PetTimers.shared.handle(["cmd": "cancel", "id": "it\(n)"])
+                }
+                try? "ok \(bad.count)".write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
         // --commander-op "秒數:new:名稱:新分組名:資料夾[:single|multi]" 或 "秒數:del:名稱"：不經表單直接呼叫新增／刪除總指揮（結果寫 EventLog）
         for (i, a) in args.enumerated() where a == "--commander-op" && i + 1 < args.count && args.contains("--state-dir") {
             let parts = args[i + 1].split(separator: ":", omittingEmptySubsequences: false).map(String.init)
@@ -2515,6 +2976,41 @@ extension AppDelegate {
         for (i, a) in args.enumerated() where a == "--cli-path-dump" && i + 1 < args.count && args.contains("--state-dir") {
             let out = CLITools.names.map { "\($0)=\(CLITools.path($0) ?? "nil")" }.joined(separator: "\n") + "\nPATH=\(CLITools.pathEntries(home: NSHomeDirectory()))\nsearchScript=\(SearchIndexClient.script.path)\n"
             try? out.write(toFile: args[i + 1], atomically: true, encoding: .utf8)
+        }
+        // --sprint-card-snapshot "秒數:檔案前綴"：把右欄的衝刺卡片畫成圖片（前綴-idle.png、前綴-running.png；running 用假狀態，只寫測試實例的 sprint.json）
+        for (i, a) in args.enumerated() where a == "--sprint-card-snapshot" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) {
+                func shot(_ suffix: String) {
+                    let host = NSHostingView(rootView: SprintCard().environment(\.uiScale, UIScale.shared.f).frame(width: 330).padding(8).background(Color(nsColor: .windowBackgroundColor)))
+                    host.frame = NSRect(origin: .zero, size: host.fittingSize)
+                    host.layoutSubtreeIfNeeded()
+                    guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: parts[1] + "-" + suffix + ".png"))
+                }
+                shot("idle")
+                SprintStore.shared.update { s in
+                    s.phase = "running"; s.convTitle = "codenv_1"; s.startedAt = Date().addingTimeInterval(-3600)
+                    s.watchLabel = "5 小時"; s.targetReset = Date().addingTimeInterval(95 * 60)
+                    s.goal = "把對話搜尋的索引改成增量更新，並補上測試；順便清掉舊的暫存檔"
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { shot("running") }
+            }
+        }
+        // --agy-notice-snapshot "秒數:檔案.png"：把 agy 預設開啟的提醒卡片畫成圖片（不顯示真的浮動卡片）
+        for (i, a) in args.enumerated() where a == "--agy-notice-snapshot" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) {
+                let host = NSHostingView(rootView: AgyNoticeCard(onKnow: {}, onSettings: {}).background(Color(nsColor: .windowBackgroundColor)))
+                host.frame = NSRect(origin: .zero, size: host.fittingSize)
+                host.layoutSubtreeIfNeeded()
+                guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: parts[1]))
+            }
         }
         // --commander-form-snapshot "秒數:檔案.png"：把「新增總指揮」表單畫成圖片（表單是 sheet，--snapshot 拍不到）
         for (i, a) in args.enumerated() where a == "--commander-form-snapshot" && i + 1 < args.count && args.contains("--state-dir") {
@@ -2596,6 +3092,38 @@ extension AppDelegate {
             }
         }
 
+        // --codelab-big5-probe "秒數:Big5檔路徑:另一個檔路徑:輸出檔"：開 Big5 檔（不改）→ 換開另一個檔，Big5 檔的位元組不能變（不能被悄悄存成 UTF-8）
+        for (i, a) in args.enumerated() where a == "--codelab-big5-probe" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 3).map(String.init)
+            guard parts.count == 4, let sec = Double(parts[0]), parts[1].hasPrefix("/"), parts[2].hasPrefix("/"), parts[3].hasPrefix("/") else { continue }
+            let big5Path = parts[1], otherPath = parts[2], outFile = parts[3]
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self, let f = self.store.currentWindow?.focused, let p = self.workspace.panes[f] as? ChatPane else {
+                    try? "error=找不到聊天格\n".write(toFile: outFile, atomically: true, encoding: .utf8); return
+                }
+                if p.codeLab == nil { p.attachCodeLab(directory: (big5Path as NSString).deletingLastPathComponent, key: f.uuidString) }
+                guard let lab = p.codeLab else { try? "error=無法建立程式碼區\n".write(toFile: outFile, atomically: true, encoding: .utf8); return }
+                self.recoveryProbeLabs.append(lab)
+                let before = FileManager.default.contents(atPath: big5Path) ?? Data()
+                func pollReady(attempt: Int = 0, done: @escaping () -> Void) {
+                    lab.testAction("js=typeof cl !== 'undefined'") { res in
+                        if res.contains("true") || res.contains("1") { done() }
+                        else if attempt < 50 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { pollReady(attempt: attempt + 1, done: done) } }
+                        else { try? "error=編輯器初始化超時\n".write(toFile: outFile, atomically: true, encoding: .utf8) }
+                    }
+                }
+                pollReady {
+                    lab.open(big5Path)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        lab.testAction("switch=" + otherPath) { _ in }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            let after = FileManager.default.contents(atPath: big5Path) ?? Data()
+                            try? "big5_intact=\(after == before)\nbefore_bytes=\(before.count)\nafter_bytes=\(after.count)\ncurrent_file=\(lab.file ?? "nil")\n".write(toFile: outFile, atomically: true, encoding: .utf8)
+                        }
+                    }
+                }
+            }
+        }
         // --codelab-delayed-save-probe "秒數:檔A路徑:檔B路徑:輸出檔"
         // 考卷 C14 規格：CodeLab 開檔 A、改開檔 B 之後才收到網頁送來 path=A 的 save 訊息，B 的 bytes 不能變、A 也不能被寫成 B 的內容
         for (i, a) in args.enumerated() where a == "--codelab-delayed-save-probe" && i + 1 < args.count && args.contains("--state-dir") {
