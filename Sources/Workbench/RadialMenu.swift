@@ -249,6 +249,7 @@ final class RadialMenu {
             f.origin.y = max(v.minY, min(f.origin.y, v.maxY - s))
         }
         let panel = NSPanel(contentRect: f, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isRestorable = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.level = .popUpMenu

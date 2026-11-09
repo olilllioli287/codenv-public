@@ -6,13 +6,13 @@ import AppKit
 // 用法也一樣：數字鍵選、n 新增、d 從清單移除、. 用目前目錄、q 或 Esc 取消；也可以直接點。
 
 enum ClaudeEnvs {
-    /// 使用者的清單；用 --state-dir 開的測試 App 改用測試資料夾裡的副本（第一次從真的複製一份），不會改到真的
+    /// 使用者的清單；測試 App 在 --state-dir 裡建立空清單，不讀取真實設定
     static let file: URL = {
         let real = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/envs")
         let a = CommandLine.arguments
         guard let i = a.firstIndex(of: "--state-dir"), i + 1 < a.count else { return real }
         let test = URL(fileURLWithPath: a[i + 1]).appendingPathComponent("envs")
-        if !FileManager.default.fileExists(atPath: test.path) { try? FileManager.default.copyItem(at: real, to: test) }
+        if !FileManager.default.fileExists(atPath: test.path) { try? Data().write(to: test, options: .atomic) }
         return test
     }()
 

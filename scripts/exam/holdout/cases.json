@@ -18,6 +18,16 @@
     ]
   },
   {
+    "id": "C84",
+    "name": "F1 與 F12 面板關閉後正確還原焦點",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C83",
+    "name": "F12 開關全部用量且保留焦點",
+    "runner": "native.sh"
+  },
+  {
     "id": "C13",
     "name": "空檔恢復與非空壞檔保護",
     "runner": "native.sh"
@@ -188,7 +198,7 @@
     "runner": "native.sh"
   },
   {
-    "id": "C48",
+    "id": "C67",
     "name": "換模型交接：連換兩次不被舊快照蓋回、超長最後一行不回 nil",
     "runner": "native.sh"
   },
@@ -196,5 +206,65 @@
     "id": "C49",
     "name": "看板 .bak 變少不輪替、欄位壞時留事件紀錄",
     "runner": "native.sh"
+  },
+  {
+    "id": "C50",
+    "name": "沒設每日上限時第 31 件照派、額度剩不到 5% 才暫停",
+    "runner": "holdout/todo.py"
+  },
+  {
+    "id": "C51",
+    "name": "目標 rm 只刪已完成／提議中的目標並先備份看板",
+    "runner": "holdout/todo.py"
+  },
+  {
+    "id": "C54",
+    "name": "Codex 核准卡允許整段對話並送 acceptForSession",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C55",
+    "name": "全部不問獨立於快速循環且選取需確認",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C56",
+    "name": "背景啟動為 accessory 且主視窗仍建立",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C57",
+    "name": "衝刺收尾檢查：提醒狀態、回覆配對與 20 句假判斷分類通路",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C58",
+    "name": "agy 走 magpie 號池：連得上換模型名＋環境變數、連不上或關掉原樣、看板同規則",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C59",
+    "name": "magpie 兩個帳號同額度平均，hover 顯示各帳號餘額與重置",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C60",
+    "name": "codenv-todo archive 總指揮封存閒置分支、拒絕工作中與越權",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C66",
+    "name": "待你處理收件匣操作與聊天室通知",
+    "runner": "native.sh"
+  },
+  {
+    "id": "C68",
+    "name": "輸入框金鑰攔截：存鑰匙圈／仍要送出／取消、正常長字串不誤攔、附檔也攔",
+    "runner": "native.sh"
+  },
+  {
+    "id": "K01",
+    "name": "金鑰偵測樣式、誤攔、遮罩、鑰匙圈讀寫（測試專用前綴）",
+    "runner": "keyvault.sh"
   }
 ]

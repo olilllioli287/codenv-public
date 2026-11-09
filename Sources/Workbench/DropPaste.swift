@@ -127,9 +127,10 @@ extension TerminalPane {
             }
             return out + "'"
         }
-        let special = Set(" \\'\"`$!&*()[]{}<>|;?#~=%^,\t")
-        var out = ""
-        for ch in s { if special.contains(ch) { out.append("\\") }; out.append(ch) }
-        return out
+        // 逐 unicodeScalar 判斷：用 Character 的話，「;」後面接組合字（U+0301）會變成一個不在集合裡的字元，沒被跳脫
+        let special = Set(" \\'\"`$!&*()[]{}<>|;?#~=%^,\t".unicodeScalars)
+        var out = String.UnicodeScalarView()
+        for u in s.unicodeScalars { if special.contains(u) { out.append("\\") }; out.append(u) }
+        return String(out)
     }
 }

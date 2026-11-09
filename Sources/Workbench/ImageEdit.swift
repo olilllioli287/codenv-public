@@ -47,7 +47,9 @@ enum ImageEditor {
         let source = page.deletingLastPathComponent().appendingPathComponent("editor.swift")
         let srcDate = (try? source.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
         let binDate = (try? mine.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-        if fm.isExecutableFile(atPath: mine.path), binDate >= srcDate { return done(mine) }
+        // 自己編的也要過 trusted()：不是檔案（symlink）、別人寫得進去的當作沒有，刪掉重編
+        if fm.isExecutableFile(atPath: mine.path), binDate >= srcDate, trusted(mine.path) { return done(mine) }
+        if fm.fileExists(atPath: mine.path) || (try? fm.destinationOfSymbolicLink(atPath: mine.path)) != nil { try? fm.removeItem(at: mine) }
         guard fm.fileExists(atPath: source.path) else { return done(nil) }
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         DispatchQueue.global(qos: .userInitiated).async {

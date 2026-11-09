@@ -87,6 +87,7 @@ final class OutboxPersistence {
             let draft = imageDrafts.indices.contains(i) ? imageDrafts[i] : nil
             saved.append(Image(path: url.path, mediaType: image.mediaType, no: draft?.no ?? (i + 1), edited: draft?.edited ?? false))
         }
+        // 不套 KeyScan.redact：wireText 要跟實際送出的字完全一致，才能拿去比對「已送達」，遮了會重送或誤判沒送到；只有使用者在金鑰卡片選「仍要送出」才會留明文，送達後即刪（金鑰管理，總指揮 11/8 裁決）
         records.append(Record(id: id.lowercased(), text: text, wireText: wireText, quotes: quotes,
                               filePaths: filePaths, images: saved, transcriptOffsets: offsets))
         try save(records)

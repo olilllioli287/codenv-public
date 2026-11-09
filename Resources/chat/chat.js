@@ -1597,11 +1597,11 @@
       const sugs = r.permission_suggestions || [];
       if (sugs.length) {
         const st = suggestionText(sugs);
-        const all = btns.appendChild(el('button', '', st.persistent ? L('以後都允許') : L('這次對話都允許')));
+        const all = btns.appendChild(el('button', '', st.persistent ? L('以後都允許') : L('這段對話都允許')));
         all.type = 'button';
         all.title = st.text;
         all.addEventListener('click', () => this.decide('always'));
-        if (st.text) this.el.insertBefore(el('div', 'perm-sug', (st.persistent ? L('「以後都允許」會記住：') : L('「這次對話都允許」會開啟：')) + st.text), btns);
+        if (st.text) this.el.insertBefore(el('div', 'perm-sug', (st.persistent ? L('「以後都允許」會記住：') : L('「這段對話都允許」會開啟：')) + st.text), btns);
       }
       const deny = btns.appendChild(el('button', 'danger', L('拒絕')));
       deny.type = 'button';
@@ -1618,7 +1618,7 @@
         const m = { type: 'permission', request_id: this.reqId, behavior: 'allow', updatedInput: r.input || {} };
         if (kind === 'always') m.updatedPermissions = r.permission_suggestions || [];
         post(m);
-        this.finish('allow', kind === 'always' ? (suggestionText(r.permission_suggestions).persistent ? L('已允許，以後都允許') : L('已允許，這次對話都允許')) : L('已允許'));
+        this.finish('allow', kind === 'always' ? (suggestionText(r.permission_suggestions).persistent ? L('已允許，以後都允許') : L('已允許，這段對話都允許')) : L('已允許'));
         if (this.tool && this.tool.state === 'waiting') { this.tool.setState('running'); this.tool.refreshHead(); }
       }
     }

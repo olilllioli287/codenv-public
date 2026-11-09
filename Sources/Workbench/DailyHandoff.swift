@@ -64,7 +64,7 @@ final class DailyHandoff {
     private func loadState(for boundary: Date) -> DayState {
         let key = Self.dayKey(boundary)
         // 保護模式（原檔讀不懂又另存不了、不能寫檔）：用記憶體裡的當日計數，每日上限照樣生效，不要每輪都從 0 開始
-        if protectOriginal, let m = memState, m.day == key { return m }
+        if let m = memState, m.day == key { return m }
         if let data = try? Data(contentsOf: stateURL) {
             if let s = try? JSONDecoder().decode(DayState.self, from: data) { if s.day == key { return s } }
             else if !setAsideDone { setAsideDone = UnreadableFile.setAside(stateURL, data: data); if !setAsideDone { protectOriginal = true } }   // 讀不懂：另存一份（只存一次，不是每 10 分鐘一份）
@@ -76,7 +76,8 @@ final class DailyHandoff {
     private func saveState(_ s: DayState) {
         memState = s
         guard !protectOriginal, let data = try? JSONEncoder().encode(s) else { return }
-        try? data.write(to: stateURL, options: .atomic)
+        do { try data.write(to: stateURL, options: .atomic) }
+        catch { protectOriginal = true; EventLog.log("每日交接", "計數存檔失敗，改用記憶體保留本次計數：\(error.localizedDescription)") }
     }
 
     private static func dayKey(_ boundary: Date) -> String {
@@ -109,7 +110,9 @@ final class DailyHandoff {
                   let modified = a[.modificationDate] as? Date, let size = (a[.size] as? NSNumber)?.uint64Value else { continue }
             // 有新對話：交接過的看紀錄是否比上次交接晚（今天已交接過就不再做）；從沒交接過的看分界前 24 小時內有沒有新內容
             if let last = c.lastHandoffAt {
-                guard last < boundary, modified > last.addingTimeInterval(Self.graceAfterHandoff) else { continue }
+                let days = min(14, max(1, Prefs.shared.dailyHandoffIntervalDays))
+                let due = Calendar.current.date(byAdding: .day, value: -(days - 1), to: boundary) ?? boundary
+                guard last < due, modified > last.addingTimeInterval(Self.graceAfterHandoff) else { continue }
             } else {
                 guard modified >= boundary.addingTimeInterval(-24 * 3600) else { continue }
             }
@@ -139,6 +142,7 @@ final class DailyHandoff {
     /// 檢查一輪（force＝測試用 --daily-handoff-now：忽略「功能開關」，其他條件照常）
     func check(_ reason: String, force: Bool = false) {
         guard force || Prefs.shared.dailyHandoffEnabled, !running, main != nil else { return }
+        guard !store.isSaveProtected, !store.loadFailed else { log("設定檔受保護或讀取失敗，暫停每日交接", once: true); return }
         // 測試實例沒有假摘要器就不跑：絕不能呼叫真的 claude
         if testing, Handoff.fakeFile == nil { return }
         let now = ScheduleStore.now()
@@ -149,14 +153,26 @@ final class DailyHandoff {
         if let why = usageLow() { log("暫停：\(why)，等下一次檢查", once: true); return }
         let room = max(0, Prefs.shared.dailyHandoffMax - state.started)
         guard room > 0 else { return }
-        let list = Array(candidates(state: state, boundary: b).prefix(room))
+        // 正在用的先濾掉再取名額：不然被延後的聊天室占著名額，後面閒著的輪不到（延後的下一輪檢查再看）
+        let list = Self.pick(candidates(state: state, boundary: b).map(\.id), room: room) { id in
+            guard let c = self.store.conversation(id), let dir = self.store.project(c.projectID)?.path else { return true }   // 找不到的留給 runNext 處理
+            return self.inUse(c, dir: dir) == nil
+        }
         guard !list.isEmpty else { return }
+        forced = force
         saveState(state)
-        queue = list.map(\.id)
+        queue = list
         running = true
         EventLog.log("每日交接", "\(reason)檢查：排入 \(queue.count) 件")
         step()
     }
+
+    /// 從候選（已排好順序）挑出這輪要做的：先排除用得到的（isFree 為 false），再取 room 件
+    static func pick(_ ids: [UUID], room: Int, isFree: (UUID) -> Bool) -> [UUID] {
+        Array(ids.filter(isFree).prefix(max(0, room)))
+    }
+
+    private var forced = false      // 這一輪是測試掛鉤硬跑的（忽略功能開關）
 
     private var gapSeconds: TimeInterval {
         if testing, let i = CommandLine.arguments.firstIndex(of: "--daily-handoff-gap"), i + 1 < CommandLine.arguments.count,
@@ -174,6 +190,8 @@ final class DailyHandoff {
     private func runNext() {
         guard let main else { return finishRound() }
         guard !queue.isEmpty else { return finishRound() }
+        // 功能在排隊後被關掉：已排隊的不要再跑（每一件開始前都看一次）
+        if !forced, !Prefs.shared.dailyHandoffEnabled { log("功能已關閉，剩下 \(queue.count) 件不做了"); return finishRound() }
         if let why = usageLow() { log("暫停：\(why)，剩下 \(queue.count) 件等下一次檢查"); return finishRound() }
         let id = queue.removeFirst()
         let b = boundary(now: ScheduleStore.now())

@@ -139,9 +139,32 @@ enum Handoff {
         if let effort { args += ["--effort", effort] }
         args.append(prompt)
         let quoted = args.map { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
+        var finished = false
+        let finish = { (r: Result<String, HandoffError>) in
+            DispatchQueue.main.async { if !finished { finished = true; done(r) } }
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r: GroupRun
+            do { r = try runGrouped(script: "exec claude \(quoted)", directory: directory, timeout: 300, grace: 3) }
+            catch { return finish(.failure(HandoffError(L("開不了 claude：\(error.localizedDescription)")))) }
+            guard let o = try? JSONSerialization.jsonObject(with: r.stdout) as? [String: Any] else {
+                let why = r.timedOut ? L("超過 5 分鐘還沒寫完") : r.stderr.split(separator: "\n").last.map(String.init) ?? L("沒有回應")
+                return finish(.failure(HandoffError(why)))
+            }
+            let text = (o["result"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if o["is_error"] as? Bool == true || text.isEmpty { return finish(.failure(HandoffError(text.isEmpty ? L("Claude 沒有寫出內容") : text))) }
+            finish(.success(text))
+        }
+    }
+
+    struct GroupRun { var stdout: Data; var stderr: String; var timedOut: Bool; var status: Int32 }
+
+    /// 跑 `zsh -l -c script`（阻塞，呼叫端放背景）：自己的程序群組（perl setsid，跟 Bang 一樣），逾時先對整群送 SIGTERM，
+    /// 過 grace 秒還在就整群 SIGKILL——只殺單一 pid 的話，握著 stdout 的孫程序會讓 readDataToEndOfFile 永遠不結束
+    static func runGrouped(script: String, directory: String, timeout: TimeInterval, grace: TimeInterval) throws -> GroupRun {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        p.arguments = ["-l", "-c", "exec claude \(quoted)"]
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        p.arguments = ["-e", "use POSIX (); POSIX::setsid(); exec {$ARGV[0]} @ARGV or die \"exec: $!\"", "/bin/zsh", "-l", "-c", script]
         p.currentDirectoryURL = URL(fileURLWithPath: directory)
         var env: [String: String] = [:]
         for kv in Workspace.environment() {
@@ -152,32 +175,34 @@ enum Handoff {
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = out
         p.standardError = err
-        var finished = false
-        let finish = { (r: Result<String, HandoffError>) in
-            DispatchQueue.main.async { if !finished { finished = true; done(r) } }
+        try p.run()
+        let pid = p.processIdentifier
+        let flag = TimeoutFlag()
+        let timer = DispatchWorkItem {
+            guard pid > 1, p.isRunning else { return }      // killpg(0) 會殺到 codenv 自己的群組
+            flag.set()
+            killpg(pid, SIGTERM)
+            DispatchQueue.global().asyncAfter(deadline: .now() + grace) { if killpg(pid, 0) == 0 { killpg(pid, SIGKILL) } }
         }
-        DispatchQueue.global(qos: .userInitiated).async {
-            do { try p.run() } catch { return finish(.failure(HandoffError(L("開不了 claude：\(error.localizedDescription)")))) }
-            let timer = DispatchWorkItem { if p.isRunning { p.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: timer)
-            // stdout、stderr 要同時讀：只先讀 stdout 的話，claude 的 stderr 寫滿管子（約 64 KB）會卡住，stdout 也就永遠沒有結尾，一路等到 5 分鐘逾時
-            var errData = Data()
-            let errDone = DispatchGroup()
-            errDone.enter()
-            DispatchQueue.global(qos: .userInitiated).async { errData = err.fileHandleForReading.readDataToEndOfFile(); errDone.leave() }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            errDone.wait()
-            let errText = String(data: errData, encoding: .utf8) ?? ""
-            p.waitUntilExit()
-            timer.cancel()
-            guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                let why = p.terminationReason == .uncaughtSignal ? L("超過 5 分鐘還沒寫完") : errText.split(separator: "\n").last.map(String.init) ?? L("沒有回應")
-                return finish(.failure(HandoffError(why)))
-            }
-            let text = (o["result"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if o["is_error"] as? Bool == true || text.isEmpty { return finish(.failure(HandoffError(text.isEmpty ? L("Claude 沒有寫出內容") : text))) }
-            finish(.success(text))
-        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
+        // stdout、stderr 要同時讀：只先讀 stdout 的話，claude 的 stderr 寫滿管子（約 64 KB）會卡住，stdout 也就永遠沒有結尾
+        var errData = Data()
+        let errDone = DispatchGroup()
+        errDone.enter()
+        DispatchQueue.global(qos: .userInitiated).async { errData = err.fileHandleForReading.readDataToEndOfFile(); errDone.leave() }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        errDone.wait()
+        p.waitUntilExit()
+        timer.cancel()
+        // 正常結束後群組裡若還有殘留的子程序（背景啟動的），一併清掉
+        if pid > 1, killpg(pid, 0) == 0 { killpg(pid, SIGKILL) }
+        return GroupRun(stdout: data, stderr: String(data: errData, encoding: .utf8) ?? "", timedOut: flag.value, status: p.terminationStatus)
+    }
+
+    private final class TimeoutFlag {
+        private let lock = NSLock(); private var v = false
+        func set() { lock.lock(); v = true; lock.unlock() }
+        var value: Bool { lock.lock(); defer { lock.unlock() }; return v }
     }
 }
 

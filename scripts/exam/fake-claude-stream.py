@@ -145,7 +145,7 @@ def main():
         emit(assistant_record)
         # 完整回答送出後先等一下才結束這輪：考題要趁這段時間（格子還在、還在忙）讀畫面；
         # 結束後不在版面上的閒置格子會被整格收掉（Workspace.releaseUnplaced），就看不到了
-        time.sleep(float(os.environ.get("FAKE_RESULT_DELAY", "15")))
+        time.sleep(float(os.environ.get("FAKE_RESULT_DELAY", "40")))
         emit({"type": "result", "subtype": "success", "is_error": False, "result": ANSWER})
 
     return 0

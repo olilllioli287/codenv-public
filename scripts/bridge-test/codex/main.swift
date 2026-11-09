@@ -40,6 +40,25 @@ c.outgoing(["type": "user", "uuid": "U4", "message": ["role": "user", "content":
 c.steer("U4"); c.incoming(["id": lastID("turn/steer"), "result": [:]])
 let l2 = (try? String(contentsOf: c.transcriptURL, encoding: .utf8)) ?? ""
 check(l2.components(separatedBy: "成功插話").count - 1 == 1, "codex 插話成功記一次")
+// ---- turn/interrupt：目前 turn 的 threadId／turnId 必須送到 app-server；interrupted 結束後清理並結束忙碌狀態
+let stopID = UUID()
+let stopBridge = CodexBridge(session: stopID, directory: "/tmp", model: "m")
+var stopSent: [[String: Any]] = [], stopEmitted: [[String: Any]] = []
+stopBridge.send = { stopSent.append($0) }; stopBridge.emit = { stopEmitted.append($0) }
+stopBridge.start()
+let threadStartID = (stopSent.last { $0["method"] as? String == "thread/start" }?["id"] as? NSNumber)?.intValue ?? -1
+stopBridge.incoming(["id": threadStartID, "result": ["thread": ["id": "INT-T"]]])
+stopBridge.outgoing(["type": "user", "uuid": "INT-U", "message": ["role": "user", "content": "慢慢回答"]])
+let turnStartID = (stopSent.last { $0["method"] as? String == "turn/start" }?["id"] as? NSNumber)?.intValue ?? -1
+check(turnStartID > 0, "codex 假 app-server 已收到 turn/start")
+stopBridge.incoming(["method": "turn/started", "params": ["turn": ["id": "INT-R"]]])
+stopBridge.interrupt()
+let interrupt = stopSent.last { $0["method"] as? String == "turn/interrupt" }
+let interruptParams = interrupt?["params"] as? [String: Any] ?? [:]
+check(interrupt?["jsonrpc"] as? String == "2.0" && interruptParams["threadId"] as? String == "INT-T" && interruptParams["turnId"] as? String == "INT-R", "codex 中斷送 turn/interrupt 並帶目前 thread／turn")
+stopBridge.incoming(["id": interrupt?["id"] ?? -1, "result": [:]])
+stopBridge.incoming(["method": "turn/completed", "params": ["turn": ["id": "INT-R", "status": "interrupted"]]])
+check(stopEmitted.contains { $0["type"] as? String == "result" && $0["is_error"] as? Bool == true }, "codex interrupted 完成事件送 result 結束生成")
 // ---- MCP 工具結果是 JSON null：以前 JSONSerialization 丟 ObjC 例外整個 App 崩潰（exit 134）；現在要照常收尾
 emitted = []
 c.incoming(["method": "item/started", "params": ["item": ["type": "mcpToolCall", "id": "M1", "server": "s", "tool": "t", "arguments": [String: Any]()]]])
@@ -57,6 +76,7 @@ cp.incoming(["method": "session/update", "params": ["update": ["sessionUpdate": 
 let last = emitted.compactMap { String(data: try! JSONSerialization.data(withJSONObject: $0), encoding: .utf8) }.filter { $0.contains("ls -la") }.joined()
 check(last.contains("ls -la"), "copilot 自動放行後工具卡參數完整")
 try? FileManager.default.removeItem(at: c.transcriptURL)
+try? FileManager.default.removeItem(at: stopBridge.transcriptURL)
 try? FileManager.default.removeItem(at: CopilotBridge.transcript(for: cpID))
 appDefaults.removePersistentDomain(forName: "codenv-bridge-unit")
 exit(failed ? 1 : 0)

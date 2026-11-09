@@ -20,6 +20,7 @@ final class LocalServer {
     private var users = 0                   // 正在用的（一輪還沒做完的）
     private var idle: Timer?
     private var logTail = ""
+    var isReady: Bool { ready && process?.isRunning == true }
 
     private init() {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { [weak self] _ in self?.stop() }
@@ -588,6 +589,17 @@ final class LocalBridge {
             finishTool(c.id, "規劃模式不能改東西", error: true, toModel: "Plan mode: you may only read files. Describe the plan instead.")
             return
         }
+        let writeInside: Bool = {
+            guard mode == "acceptEdits", c.name == "Write" || c.name == "Edit" else { return false }
+            let root = URL(fileURLWithPath: directory).resolvingSymlinksInPath().standardizedFileURL.path
+            let target = URL(fileURLWithPath: Self.path(input, directory)).resolvingSymlinksInPath().standardizedFileURL.path
+            func contains(_ base: String, _ child: String) -> Bool {
+                let a = (base.hasSuffix("/") ? base : base + "/").lowercased()
+                let b = child.lowercased()
+                return b == String(a.dropLast()) || b.hasPrefix(a)
+            }
+            return contains(root, target) || contains("/private/tmp", target) || contains("/tmp", target)
+        }()
         // 不用問的：讀檔；接受修改＝讀、寫、改檔；自動、全部允許＝都不問；選過「永遠允許」的
         // 讀檔：在這個工作資料夾裡才不問；資料夾外的絕對路徑（模型被誘導去讀私密檔案）要問
         let readInside: Bool = {
@@ -595,8 +607,8 @@ final class LocalBridge {
             let root = URL(fileURLWithPath: directory).resolvingSymlinksInPath().path + "/"
             return (URL(fileURLWithPath: Self.path(input, directory)).resolvingSymlinksInPath().path + "/").hasPrefix(root)
         }()
-        let auto = readInside || always.contains(c.name) || mode == "auto" || mode == "bypassPermissions"
-            || (mode == "acceptEdits" && c.name != "Bash")
+        let auto = readInside || writeInside || always.contains(c.name) || mode == "auto" || mode == "bypassPermissions"
+            || (mode == "acceptEdits" && c.name != "Bash" && (c.name != "Write" && c.name != "Edit" || writeInside))
         if auto { run(c.id, c.name, input); return }
         let rid = "local-\(UUID().uuidString.prefix(8))"
         approvals[rid] = (c.id, c.name, input)
@@ -944,7 +956,7 @@ final class LocalBridge {
             msg["content"] = blocks
             obj["message"] = msg
         }
-        guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        guard let d = Transcripts.redactedJSON(obj) else { return }
         Transcripts.append(d + Data([0x0a]), to: transcriptURL)      // 寫不進去會記進事件紀錄（Transcripts.append）
     }
 }

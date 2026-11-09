@@ -90,7 +90,7 @@ final class ChatSession {
     /// 開程序時用的模型（nil＝預設）；本機模型另外給連線位址
     var model: String?
     var effort: String?
-    var localEndpoint: LocalModel?
+    var localEndpoint: LocalModel? { didSet { if let l = localEndpoint, l.token.isEmpty { KeyVault.prefetch(l.secretService) } } }      // 選了就先在背景讀金鑰（授權框不卡主執行緒）
     /// 不是 nil：這段改跑 agy（Gemini，AgyBridge.swift），值是 agy 的模型名稱
     var agyModel: String?
     private var agy: AgyBridge?
@@ -213,15 +213,16 @@ final class ChatSession {
         // Gemini（agy）：另一套參數，沒有 --name、--debug-file、Artifact 這些 claude 才認得的
         if let m = agyModel {
             let run = AgyBridge.resolve(m, effort: effort)
-            let args = AgyBridge.arguments(model: run, mode: permissionMode ?? Prefs.shared.permissionMode,
-                                           conversation: AgyBridge.conversation(for: claudeSession))
+            let route = AgyMagpie.route(run)
+            let args = AgyBridge.arguments(model: route.model, mode: permissionMode ?? Prefs.shared.permissionMode,
+                                           conversation: AgyBridge.conversation(for: claudeSession), settings: route.settings)
             // 系統說沒網路就先不開 agy（不然它會開瀏覽器登入頁）；只看已知狀態，不卡主執行緒。ChatPane 送出前已經擋過一次
             guard AgyBridge.enabled else { onExit?(-1, L("agy 功能是關著的（設定 ⌘ , → 對話 → agy）。打開前會先請你看一段 Google 的條款說明。")); return false }
             guard AgyNet.quickOK else { onExit?(-1, AgyNet.offlineMessage); return false }
             let b = AgyBridge(session: claudeSession, model: run)
             b.cancelled = agyCancelled
             agyCancelled = []
-            if spawn(AgyBridge.executable, args, env: [:], bridge: b) {
+            if spawn(AgyBridge.executable, args, env: route.env, bridge: b) {
                 let pIdentifier = process?.processIdentifier ?? 0
                 EventLog.log("聊天程序", "\(convTag)：已啟動（pid \(pIdentifier)）")
                 return true
@@ -333,7 +334,27 @@ final class ChatSession {
             }
             // 本機模型：改連使用者自己的伺服器（要講 Anthropic Messages API 的格式）
             env["ANTHROPIC_BASE_URL"] = local.baseURL
-            env["ANTHROPIC_AUTH_TOKEN"] = local.token.isEmpty ? "local" : local.token
+            // 金鑰在鑰匙圈：背景讀、最多等 2 秒（授權框是模態的，不能卡住開聊天室）；拒絕或還在等授權時明確報錯，不能偷偷改用假的 "local"
+            var secret = local.token
+            if secret.isEmpty {
+                switch KeyVault.readBounded(local.secretService) {
+                case .value(let v): secret = v
+                case .missing: break                        // 這個伺服器沒設金鑰（不需要）
+                case .denied(let code):
+                    let why = code == -25308
+                        ? L("目前不允許跳出授權框（需要 codenv 在前景時才能授權）。請把 codenv 切到前景再送一次，並在授權框按「永遠允許」。")
+                        : L("你拒絕了授權。要用的話，到設定的「金鑰」分頁重新貼一次，或下次跳出授權框時按「永遠允許」。")
+                    emit(["type": "result", "subtype": "error_during_execution", "is_error": true, "result": L("codenv 讀不到鑰匙圈的「\(local.name)」金鑰：") + why])
+                    return false
+                case .pending:
+                    emit(["type": "result", "subtype": "error_during_execution", "is_error": true, "result": L("codenv 正在等你在鑰匙圈的授權框（讀取「\(local.name)」金鑰）按「永遠允許」。按完之後再送一次。")])
+                    return false
+                case .failed(let code):
+                    emit(["type": "result", "subtype": "error_during_execution", "is_error": true, "result": L("codenv 讀鑰匙圈的「\(local.name)」金鑰失敗（錯誤碼 \(code)）。")])
+                    return false
+                }
+            }
+            env["ANTHROPIC_AUTH_TOKEN"] = secret.isEmpty ? "local" : secret
         }
         // -p 模式預設不給建議，要用環境變數打開
         if suggest { env["CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"] = "true" }
@@ -341,7 +362,6 @@ final class ChatSession {
         if Prefs.shared.artifacts, localEndpoint == nil { env["CLAUDE_CODE_ARTIFACT"] = "1" }
         // 自動壓縮的門檻（⌘ , 對話頁「自動壓縮上下文」；要能自己調，預設 640K）
         env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = String(Prefs.shared.cloudCompactTokens)
-        if let t = conversationTag { env["CODENV_CONVERSATION"] = t }
         // 沙盒：nono 擋掉鑰匙圈，登入權杖由這裡（沙盒外）取出、用環境變數帶進去
         var wrap: [String]? = nil
         // 本機模型（自己的伺服器）不包沙盒：不要假裝有包，直接說
@@ -358,9 +378,19 @@ final class ChatSession {
             case .success(let s):
                 wrap = s.prefix
                 env.merge(s.env) { $1 }
+                // 沙盒讀不到 AI 工作台資料夾，也就拿不到正式 token：發一把只屬於這段聊天室的 token（程序結束作廢），身分由伺服器綁定
+                if let t = conversationTag, UUID(uuidString: t) != nil,
+                   let tok = BrowserServer.shared.issueScopedToken(conv: t), !BrowserServer.shared.socketPath.isEmpty {
+                    env["CODENV_SCOPED_TOKEN"] = tok
+                    env["CODENV_SOCKET"] = BrowserServer.shared.socketPath
+                } else {
+                    emit(["type": "result", "subtype": "error_during_execution", "is_error": true, "result": L("沙盒沒有啟動：codenv 的控制通道還沒準備好，沒辦法發沙盒專用的 token")])
+                    return false
+                }
                 EventLog.log("聊天程序", "\(convTag)：用 nono 沙盒啟動（\(s.longLived ? "長效權杖" : "暫用目前的登入權杖")）")
             }
         }
+        pendingName = nil
         guard spawn("claude", args, env: env, bridge: nil, wrap: wrap) else {
             EventLog.log("聊天程序", "\(convTag)：啟動失敗")
             return false
@@ -396,6 +426,7 @@ final class ChatSession {
         for kv in Workspace.environment() {
             if let i = kv.firstIndex(of: "=") { env[String(kv[..<i])] = String(kv[kv.index(after: i)...]) }
         }
+        if let t = conversationTag { env["CODENV_CONVERSATION"] = t }
         // 隔離測試的假 Claude 也要寫到 --claude-home 指定的暫存紀錄資料夾。
         if Self.testClaude != nil {
             env["AI_WORKBENCH_TEST_CWD"] = directory
@@ -432,6 +463,7 @@ final class ChatSession {
         p.terminationHandler = { [weak self] proc in
             DispatchQueue.main.async {
                 guard let self, self.process === proc else { return }
+                if let t = self.conversationTag { BrowserServer.shared.revokeScopedTokens(conv: t) }
                 outPipe.fileHandleForReading.readabilityHandler = nil
                 errPipe.fileHandleForReading.readabilityHandler = nil
                 EventLog.log("聊天程序", "\(self.convTag)：程序結束（pid \(proc.processIdentifier)，代碼 \(proc.terminationStatus)）")
@@ -680,6 +712,7 @@ final class ChatSession {
 
     /// 關掉程序。馬上放手（不等它真的結束），之後送訊息會直接開新的接回去
     func terminate() {
+        if let t = conversationTag { BrowserServer.shared.revokeScopedTokens(conv: t) }
         if let pid = process?.processIdentifier {
             EventLog.log("聊天程序", "\(convTag)：要求結束（pid \(pid)）")
         } else if mlx != nil || apple != nil {
@@ -710,6 +743,7 @@ final class ChatSession {
         apple?.close()
         apple = nil
         pending.removeAll()
+        pendingName = nil
         status = .idle
         // 主動關掉時 terminationHandler 會因為 process 已換掉而直接 return，這裡要自己處理還沒確認的訊息：
         // 不處理的話它們一直掛在 unacked，網頁永遠不卸載、寄件匣也一直當成「還在路上」不放回（agy Argon 11/6）。
@@ -790,6 +824,17 @@ final class ChatSession {
 
     /// 從事件推出目前狀態（給側欄的燈號）
     private func track(_ o: [String: Any]) {
+        // Claude 的背景工作回報不是模型新一輪輸出。通知可能是 system/task_notification，
+        // 也可能以 user 事件包在 <task-notification> 標籤內；不能讓它把 result 後的 idle 拉回 working。
+        func isBackgroundNotification(_ event: [String: Any]) -> Bool {
+            if event["type"] as? String == "system", event["subtype"] as? String == "task_notification" { return true }
+            guard event["type"] as? String == "user" else { return false }
+            let message = event["message"] as? [String: Any] ?? [:]
+            if let text = message["content"] as? String { return text.contains("<task-notification>") }
+            let blocks = message["content"] as? [[String: Any]] ?? []
+            return blocks.contains { ($0["text"] as? String)?.contains("<task-notification>") == true }
+        }
+        if isBackgroundNotification(o) { return }
         switch o["type"] as? String {
         case "control_request":
             if let req = o["request"] as? [String: Any], req["subtype"] as? String == "can_use_tool", let id = o["request_id"] as? String {
@@ -860,9 +905,9 @@ final class ChatSession {
     }
 }
 
-/// 權限模式：⇧ Tab 的順序跟 Claude Code 一樣（bypassPermissions 要另外的啟動參數，不放進來）
+/// 權限模式循環：bypassPermissions 放在一般模式之後，選取時另行確認。
 enum PermissionMode {
-    static let cycle = ["default", "acceptEdits", "plan", "auto"]
+    static let cycle = ["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
     static func next(after m: String) -> String {
         guard let i = cycle.firstIndex(of: m) else { return cycle[0] }
         return cycle[(i + 1) % cycle.count]
@@ -915,16 +960,49 @@ struct ModelChoice: Codable, Equatable {
 }
 
 /// 自己架的本機模型伺服器（要能講 Anthropic Messages API，例如 llama.cpp 的 llama-server、LiteLLM 轉接）
-struct LocalModel: Codable, Equatable, Identifiable {
+struct LocalModel: Equatable, Identifiable {
     var id = UUID()
     var name: String           // 選單上顯示的
     var baseURL: String        // 例如 http://127.0.0.1:8080
     var model: String          // 傳給 --model 的名字
+    /// 只有「舊版存在設定裡、還沒搬進鑰匙圈」的金鑰會留在這裡；搬完就是空的（KeyVault.swift，金鑰分頁）
     var token: String = ""
 
+    /// 這個伺服器的金鑰放在鑰匙圈的哪個 service（codenv-localmodel-<id 前 8 碼>）
+    var secretService: String { KeyVault.service("localmodel-" + id.uuidString.lowercased().prefix(8)) }
+    /// 實際要用的金鑰：鑰匙圈裡的；搬家失敗時才用留在設定裡的舊值
+    var secret: String { token.isEmpty ? (KeyVault.read(service: secretService) ?? "") : token }
+
     static var all: [LocalModel] {
-        get { (appDefaults.data(forKey: "localModels")).flatMap { try? JSONDecoder().decode([LocalModel].self, from: $0) } ?? [] }
+        get {
+            var list = (appDefaults.data(forKey: "localModels")).flatMap { try? JSONDecoder().decode([LocalModel].self, from: $0) } ?? []
+            // 舊設定裡的金鑰自動搬進鑰匙圈，搬成功就從設定檔拿掉（這等於替舊待決定「本機模型金鑰要不要搬進鑰匙圈」選了搬）
+            var moved = false
+            for i in list.indices where !list[i].token.isEmpty {
+                if KeyVault.set(service: list[i].secretService, key: list[i].token) == nil { list[i].token = ""; moved = true }
+            }
+            if moved { appDefaults.set(try? JSONEncoder().encode(list), forKey: "localModels") }
+            return list
+        }
         set { appDefaults.set(try? JSONEncoder().encode(newValue), forKey: "localModels") }
+    }
+}
+
+extension LocalModel: Codable {
+    enum CodingKeys: String, CodingKey { case id, name, baseURL, model, token }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        baseURL = try c.decode(String.self, forKey: .baseURL)
+        model = try c.decode(String.self, forKey: .model)
+        token = try c.decodeIfPresent(String.self, forKey: .token) ?? ""
+    }
+    func encode(to e: Encoder) throws {
+        var c = e.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(name, forKey: .name)
+        try c.encode(baseURL, forKey: .baseURL); try c.encode(model, forKey: .model)
+        if !token.isEmpty { try c.encode(token, forKey: .token) }     // 只有還沒搬進鑰匙圈的舊值才寫（寫不進鑰匙圈時不能把它弄丟）
     }
 }
 

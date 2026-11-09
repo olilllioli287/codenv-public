@@ -43,6 +43,8 @@ rm -rf "$APP/Contents/Resources/i18n"
 rsync -a Resources/i18n "$APP/Contents/Resources/"   # 英文介面的對照表（I18n.swift 用）
 rm -rf "$APP/Contents/Resources/icons"
 rsync -a Resources/icons "$APP/Contents/Resources/"   # 模型選單分頁的圖示（Claude、Gemini）
+rm -rf "$APP/Contents/Resources/help"
+rsync -a Resources/help "$APP/Contents/Resources/"
 
 # 舊簽名留著會讓 codesign 吐 errSecInternalComponent，一定要先清掉
 rm -rf "$APP/Contents/_CodeSignature"

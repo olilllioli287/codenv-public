@@ -1,7 +1,7 @@
 import Foundation
 
 /// 兩種總指揮：single＝整個總指揮就是一個專案（例：一個獨立專案）；
-/// multi＝底下的子群組各是一個子專案（例：一個專案分成幾個子專案）。沒明確選就依群組結構推斷
+/// multi＝底下的子群組各是一個子專案（範例專案）。沒明確選就依群組結構推斷
 extension Store {
     /// 總指揮涵蓋的頂層組底下的第一層子組（＝multi 的子專案），照群組排列順序
     func subProjects(_ s: SessionLayout) -> [ConvGroup] {

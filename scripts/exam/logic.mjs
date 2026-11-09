@@ -80,5 +80,48 @@ if (id === 'A06') {
       assert.ok((paths(html)[0].match(/M/g) || []).length >= 2, '不連續處被接起');
     }
   }
+} else if (['C62', 'C80'].includes(id)) {
+  const source = readFileSync(path.join(root, 'Sources/Workbench/Usage.swift'), 'utf8');
+  const fixtureName = id === 'C80' ? 'fixtures-magpie-real-1109.json' : 'fixtures/magpie-accounts.json';
+  const fixture = JSON.parse(readFileSync(path.join(root, 'scripts/exam/dev', fixtureName), 'utf8'));
+  const poolKey = (pool, name) => {
+    const s = `${pool} ${name}`.toLowerCase().replaceAll('·', ' ');
+    if (s.includes('argon') || s.includes('gemini 4') || s.includes('gemini4')) return /week|weekly|每週|7 days/.test(s) ? 'argonWeek' : null;
+    if (/five hour|5 hour|5 小時|5h|session/.test(s)) return 'gemini5';
+    if (/weekly|week|每週/.test(s)) return 'geminiWeek';
+    if (s.includes('gemini')) return 'geminiWeek';
+    return null;
+  };
+  const labels = { gemini5: 'Gemini 5 小時', geminiWeek: 'Gemini 每週', argonWeek: 'Argon 每週' };
+  const accounts = fixture.map(account => ({
+    name: account.email,
+    windows: Object.fromEntries(account.windows.map(window => [poolKey(`${window.pool ?? ''} ${window.model || window.modelName || window.label || ''}`, window.name), window.remaining]).filter(([key]) => key)),
+    resets: Object.fromEntries(account.windows.map(window => [poolKey(`${window.pool ?? ''} ${window.model || window.modelName || window.label || ''}`, window.name), Date.parse(window.resetsAt)]).filter(([key]) => key)),
+  }));
+  assert.equal(accounts.length, 2, '雙帳號 fixture');
+  if (id === 'C80') {
+    assert.deepEqual(accounts.map(a => a.windows.argonWeek), [99.52854500000001, 29.972547000000006], '真實 Argon 7 days 視窗；模型視窗不得蓋掉');
+    assert.equal(Math.round(accounts.reduce((sum, a) => sum + a.windows.argonWeek, 0) / accounts.length), 65, '真實 Argon 每週約 66%');
+    assert.ok(fixture[1].windows.some(window => window.pool == null), 'fixture 含 pool null 視窗');
+  } else assert.deepEqual(accounts.map(a => a.windows.argonWeek), [70, 50], 'Argon pool/name 與 Gemini 4 Argon 標籤對應');
+  const average = key => Math.round(accounts.reduce((sum, a) => sum + a.windows[key], 0) / accounts.length);
+  if (id === 'C80') {
+    assert.deepEqual(['gemini5', 'geminiWeek', 'argonWeek'].map(average), [98, 90, 65], '真實資料三個平均 bucket');
+    assert.deepEqual(accounts.map(a => Object.values(a.windows).map(Math.round)), [[99, 100, 100], [81, 96, 30]], '真實逐帳號額度明細（四捨五入）');
+  } else {
+    assert.deepEqual(['gemini5', 'geminiWeek', 'argonWeek'].map(average), [85, 70, 60], '三個平均 bucket');
+    assert.deepEqual(accounts.map(a => a.name), ['alpha@example.test', 'beta@example.test']);
+    assert.deepEqual(accounts.map(a => Object.values(a.windows)), [[90, 80, 70], [80, 60, 50]], '逐帳號額度明細');
+    assert.equal(Math.min(...accounts.map(a => a.resets.argonWeek)), Date.parse('2026-11-13T04:00:00Z'), 'Argon 合計使用最早重置時間');
+  }
+  const status = `${average('gemini5')}%  ${average('geminiWeek')}%  阿公 ${average('argonWeek')}%`;
+  assert.equal(status, id === 'C80' ? '98%  90%  阿公 65%' : '85%  70%  阿公 60%');
+  assert.doesNotMatch(status, /阿公 —|—/);
+  assert.match(source, /"argonWeek"\s*:\s*"Argon 每週"/);
+  assert.match(source, /window\["model"\].*window\["modelName"\].*window\["label"\]/, '讀取窗口模型標籤');
+  assert.match(source, /MagpieAccountQuota\(id: id, name: name, buckets: accountValues\[id\] \?\? \[:\]\)/);
+  assert.match(source, /ForEach\(m\.magpieAccounts\)/, '用量卡片列出各帳號');
+  assert.doesNotMatch(source, /else if key == "agy", i == 2/, '狀態列不得硬填 Argon');
+  assert.match(source, /"Gemini 5 小時", "Gemini 每週", "Argon 每週"/, '卡片呈現三個合計 bucket');
 } else throw Error('未知案例：' + id);
 console.log('斷言通過 ' + id);

@@ -60,8 +60,9 @@ final class DraftPersistence {
 
     /// 回傳草稿 JSON 有沒有真的寫進磁碟（寄件匣要等這個成功才能刪）
     @discardableResult
-    func write(text: String, quotes: [MessageQuote], filePaths: [String], images: [Image]) -> Bool {
+    func write(text rawText: String, quotes: [MessageQuote], filePaths: [String], images: [Image]) -> Bool {
         work?.cancel(); work = nil
+        let text = KeyScan.redact(rawText, strongOnly: true)      // 還沒送出的草稿也不把明確的 API 金鑰寫進檔案（只遮有前綴的，KeyVault.swift）
         guard !text.isEmpty || !quotes.isEmpty || !filePaths.isEmpty || !images.isEmpty else { remove(); return true }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -63,6 +63,7 @@ extension MainWindowController {
         ContextMonitor.shared.load(c, path: folder)
         let host = NSHostingController(rootView: AboutChatView(c: c, folder: folder, transcript: ContextMonitor.transcript(c, path: folder)))
         let w = NSPanel(contentViewController: host)
+        w.isRestorable = false
         w.title = L("關於這個聊天室")
         w.styleMask = [.titled, .closable]
         w.isReleasedWhenClosed = false

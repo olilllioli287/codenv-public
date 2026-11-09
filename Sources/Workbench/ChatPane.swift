@@ -416,10 +416,13 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         inputBar.onSend = { [weak self] text, images, now in self?.send(text: text, images: images, now: now) ?? false }
         inputBar.onModelButton = { [weak self] v in self?.showModelPanel(from: v) }
         inputBar.onToolsButton = { [weak self] v in self?.onToolsMenu?(v) }
+        inputBar.onTerminalButton = { (NSApp.delegate as? AppDelegate)?.toggleFloatingTerminal() }
+        inputBar.onGraphButton = { (NSApp.delegate as? AppDelegate)?.toggleGraphPanel() }
         session.onModel = { [weak self] m in self?.resolvedModel = m; self?.refreshModelTitle(); self?.onResolvedModel?(m) }
         session.onModels = { [weak self] _ in self?.refreshModelTitle() }
         session.onCommands = { [weak self] l in self?.inputBar.commands = l }
         inputBar.onCycleMode = { [weak self] in self?.cycleMode() }
+        inputBar.onSelectBypassMode = { [weak self] in self?.confirmBypassMode() }
         session.onPermissionMode = { [weak self] m in self?.refreshMode(); self?.onPermissionModeChange?(m) }
         session.onPermissionModeError = { [weak self] err in
             guard let self else { return }
@@ -1080,12 +1083,45 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     }
     private var currentMode: String { session.permissionMode ?? Prefs.shared.permissionMode ?? "default" }
     private func refreshMode() { inputBar.permissionMode = currentMode }
+    private var bypassModeConfirmed = false
     /// ⇧ Tab 或按輸入框上的模式按鈕：換到下一個模式
     func cycleMode() {
         let next = PermissionMode.next(after: currentMode)
+        if next == "bypassPermissions" {
+            confirmBypassMode()
+            return
+        }
         session.setPermissionMode(next)
         refreshMode()
         onPermissionModeChange?(next)
+    }
+
+    func testSetPermissionMode(_ mode: String) {
+        guard mode == "bypassPermissions" else { return }
+        confirmBypassMode()
+    }
+
+    private func confirmBypassMode() {
+        if bypassModeConfirmed {
+            session.setPermissionMode("bypassPermissions")
+            refreshMode()
+            onPermissionModeChange?("bypassPermissions")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = L("開啟「全部不問」？")
+        alert.informativeText = L("Codex 可能執行指令或改動工作區，不會逐次詢問核准。只有在你願意自行承擔風險時才繼續。")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L("全部不問"))
+        alert.addButton(withTitle: L("取消"))
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            refreshMode()
+            return
+        }
+        bypassModeConfirmed = true
+        session.setPermissionMode("bypassPermissions")
+        refreshMode()
+        onPermissionModeChange?("bypassPermissions")
     }
 
     func applyEffort(_ v: String?) {
@@ -1561,6 +1597,14 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         return s.contains("\"type\":\"user\"") || s.contains("\"type\":\"assistant\"")
     }
 
+    /// 紀錄檔（~/.claude/projects/*.jsonl）是不可信資料（沙盒內的 Claude 寫得進去）：拼進 JS 前先解析成 JSON 物件、再重新編碼，
+    /// 不是合法 JSON 物件的行丟掉；重新編碼後的字串才嵌進 wb.history(...)，原始行裡夾帶的東西進不了 JS
+    static func safeHistoryLine(_ line: String) -> String? {
+        guard let d = line.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+              let out = try? JSONSerialization.data(withJSONObject: o), let r = String(data: out, encoding: .utf8) else { return nil }
+        return r
+    }
+
     private static let userKey = Data("\"type\":\"user\"".utf8)
     private static let assistantKey = Data("\"type\":\"assistant\"".utf8)
     private static func isMessageBytes(_ raw: Data.SubSequence) -> Bool {
@@ -1585,7 +1629,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             let taken = reader.take(Self.historyLimit, where: Self.isMessageBytes)
             let more = reader.hasMore
             let merged = self?.mergeBang(taken, records: bangs, hi: .distantFuture, more: more) ?? (lines: taken, lo: Date.distantPast)
-            let lines = merged.lines
+            let lines = merged.lines.compactMap(Self.safeHistoryLine)
             let code = lines.isEmpty ? nil : "wb.history([" + lines.joined(separator: ",") + "])"
             let tPick = Date()
             DispatchQueue.main.async {
@@ -1619,7 +1663,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             let taken = reader.take(300, where: Self.isMessageBytes)
             let more = reader.hasMore
             let merged = self?.mergeBang(taken, records: bangs, hi: hi, more: more) ?? (lines: taken, lo: Date.distantPast)
-            let lines = merged.lines
+            let lines = merged.lines.compactMap(Self.safeHistoryLine)
             let code = lines.isEmpty ? "wb.noMoreAbove()" : "wb.historyPrepend([" + lines.joined(separator: ",") + "], \(more))"
             DispatchQueue.main.async {
                 guard let self, self.older === reader else { return }

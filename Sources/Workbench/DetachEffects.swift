@@ -46,6 +46,7 @@ final class DetachPreview {
     func show(title: String, panes: [(String, CGRect)], size: NSSize, accent: NSColor, at p: NSPoint) {
         if panel == nil {
             let pn = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            pn.isRestorable = false
             pn.isOpaque = false
             pn.backgroundColor = .clear
             pn.level = .floating
@@ -107,6 +108,7 @@ enum Toast {
         let s = label.intrinsicContentSize
         let w = s.width + 36, h: CGFloat = 34
         let pn = NSPanel(contentRect: NSRect(x: 0, y: 0, width: w, height: h), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        pn.isRestorable = false
         pn.isOpaque = false; pn.backgroundColor = .clear; pn.level = .floating; pn.ignoresMouseEvents = true; pn.hasShadow = true
         let bg = NSView(frame: pn.contentView!.bounds)
         bg.wantsLayer = true

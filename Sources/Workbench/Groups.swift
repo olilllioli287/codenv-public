@@ -264,6 +264,9 @@ extension Store {
         groups.removeAll { $0.id == g }
         // 總指揮涵蓋清單裡的失效 id 一併清掉
         for i in sessions.indices where sessions[i].groups?.contains(g) == true { sessions[i].groups?.removeAll { $0 == g } }
+        for i in sessions.indices {
+            if let chief = sessions[i].chief, conversation(chief)?.groupID == g { sessions[i].chief = nil }
+        }
         // 這組的對話、資料夾回到上一層的組（最上層的組就回「其他」）
         for i in conversations.indices where conversations[i].groupID == g { conversations[i].groupID = fallback }
         for i in projects.indices where projects[i].groupID == g { projects[i].groupID = fallback }
@@ -315,7 +318,10 @@ extension Store {
         let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"
         let done = dir.appendingPathComponent("classification-\(f.string(from: Date())).json.applied")
         // 先確定套用的結果存好，才把分類檔收起來；存不了就留著原檔，下次啟動再套一次（不要為了「不重套」把檔案刪掉）
-        guard saveNow() else { return }
+        guard saveNow() else {
+            EventLog.log("設定檔", "套用分類檔後存檔失敗，原檔會保留待重試：\(url.lastPathComponent)")
+            return
+        }
         // 改名不成就換個固定名字再試；都不成就留著原檔（重套一次無害），不要刪掉使用者放的檔案
         do { try FileManager.default.moveItem(at: url, to: done) } catch {
             // 換一個帶亂數的名字，不去刪任何已有的檔（舊的 .applied 是使用者可能想留的歷史）

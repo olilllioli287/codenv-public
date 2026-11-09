@@ -10,5 +10,6 @@ let package = Package(
     ],
     targets: [
         .executableTarget(name: "Workbench", dependencies: ["SwiftTerm"], path: "Sources/Workbench"),
+        .testTarget(name: "WorkbenchTests", dependencies: ["Workbench"], path: "Tests/WorkbenchTests"),
     ]
 )

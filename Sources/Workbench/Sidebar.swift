@@ -390,7 +390,7 @@ struct SidebarView: View {
         } else if c.terminal == true {
             Button(L("回到聊天介面")) { actions.switchMode(c.id, false) }
         } else {
-            Button(L("用終端機打開（聊天介面還沒做的功能）")) { actions.switchMode(c.id, true) }
+            if c.sandbox != true { Button(L("用終端機打開（聊天介面還沒做的功能）")) { actions.switchMode(c.id, true) } }
         }
         if c.terminal != true && !c.isBrowser {
             Button(L("壓縮這段對話（/compact）…")) { actions.compact(c.id) }
@@ -690,12 +690,19 @@ struct IconRail: View {
             RailIcon(name: "house.fill", help: L("首頁"), active: mode != "codelab") { mode = "home" }
             RailIcon(name: "chevron.left.forwardslash.chevron.right", help: L("程式碼學習專區：左邊 Claude、右邊寫程式和執行"), active: mode == "codelab") { mode = "codelab" }
             Spacer()
-            RailIcon(name: "bubble.left.and.bubble.right", help: L("協作看板：目標、兩個 Claude 互傳的訊息"), active: boardOn, action: toggleCollab)
+            // 點協作圖示彈出「待你處理」收件匣（完整看板從收件匣右上角進）；有東西時右上角亮數字，0 就不顯示
+            RailIcon(name: "bubble.left.and.bubble.right", help: L("待你處理（收件匣）；完整看板在裡面"), active: boardOn || collab.inboxOpen) { collab.inboxOpen.toggle() }
                 .overlay(alignment: .topTrailing) {
-                    // 看板沒開時：有一對來回太多次亮橘點，有目標在等你（提議待同意、輪到你的步驟）亮藍點
-                    if !boardOn && (!collab.warnings.isEmpty || collab.waitingOnYou > 0) {
-                        Circle().fill(collab.warnings.isEmpty ? Color.accentColor : .orange).frame(width: 8, height: 8).offset(x: -4, y: 4)
+                    if collab.waitingOnYou > 0 {
+                        Text("\(collab.waitingOnYou)").font(.system(size: 9.5 * s, weight: .bold)).foregroundStyle(.white)
+                            .padding(.horizontal, 4.5).frame(minWidth: 15, minHeight: 15)
+                            .background(Capsule().fill(Color.accentColor)).offset(x: 2, y: -2).allowsHitTesting(false)
+                    } else if !boardOn && !collab.warnings.isEmpty {
+                        Circle().fill(Color.orange).frame(width: 8, height: 8).offset(x: -4, y: 4).allowsHitTesting(false)   // 兩個 Claude 來回太多次
                     }
+                }
+                .popover(isPresented: $collab.inboxOpen, arrowEdge: .trailing) {
+                    Scaled { InboxView(openFullBoard: { collab.inboxOpen = false; toggleCollab() }) }
                 }
             RailIcon(name: "gearshape", help: L("設定（⌘ ,）"), active: false, action: openSettings)
         }

@@ -45,8 +45,11 @@ struct CollabStep: Identifiable, Equatable, Codable {
     var mode: String?        // read／edit／run
     var by: String?
     var cancel: Bool?        // 使用者按了「終止」：執行器看到就停掉 agy（docs/board-auto-approve-spec.md）
+    var proxyBy: String?     // 總指揮代使用者勾的（codenv-todo step … 完成 --note 原話 --by 名字）：誰代勾
+    var proxyNote: String?   // 代勾時附的
+    var proxyConversation: String? = nil // 代勾指令來源聊天室的 UUID
 
-    enum CodingKeys: String, CodingKey { case id, text, owner, state, at, note, attempt, result, mode, by, cancel }
+    enum CodingKeys: String, CodingKey { case id, text, owner, state, at, note, attempt, result, mode, by, cancel, proxyBy, proxyNote, proxyConversation }
     /// 必要欄位照舊（缺了就解碼失敗）；@agy 的新欄位型別不對（例如手改成字串）只當成沒有，不要讓整份看板的目標都讀不出來
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -61,6 +64,9 @@ struct CollabStep: Identifiable, Equatable, Codable {
         mode = try? c.decodeIfPresent(String.self, forKey: .mode)
         by = try? c.decodeIfPresent(String.self, forKey: .by)
         cancel = try? c.decodeIfPresent(Bool.self, forKey: .cancel)
+        proxyBy = try? c.decodeIfPresent(String.self, forKey: .proxyBy)
+        proxyNote = try? c.decodeIfPresent(String.self, forKey: .proxyNote)
+        proxyConversation = try? c.decodeIfPresent(String.self, forKey: .proxyConversation)
     }
     init(id: String, text: String, owner: String? = nil, state: String, at: String? = nil) {
         self.id = id; self.text = text; self.owner = owner; self.state = state; self.at = at
@@ -133,6 +139,8 @@ final class CollabBoardModel: ObservableObject {
     @Published var tab = appDefaults.string(forKey: "collabTab") ?? "goals" { didSet { appDefaults.set(tab, forKey: "collabTab") } }
     /// codenv-todo show：要捲到並閃一下的目標
     @Published var focusGoal: String?
+    /// 收件匣彈窗開著（最左邊協作圖示的彈窗；測試掛鉤 --collab-act inboxopen 也用它）
+    @Published var inboxOpen = false
 
     /// 使用者本人當負責人時的名字（跟 codenv-todo 的 USER 一樣）
     static let user = "你"
@@ -144,8 +152,49 @@ final class CollabBoardModel: ObservableObject {
     static func isManual(_ owner: String?) -> Bool { manualTarget[owner ?? ""] != nil }
     static func manualLabel(_ owner: String?) -> String { L("手動 \(manualTarget[owner ?? ""].flatMap { agyNick[$0] } ?? "")") }
     /// 在等使用者的：Claude 提議的目標、輪到「你」的步驟
-    var waitingOnYou: Int {
-        goals.filter { $0.status == "proposed" }.count + goals.filter { $0.status == "active" && $0.current?.owner == Self.user }.count
+    var waitingOnYou: Int { inbox.count }
+
+    // MARK: 「待你處理」收件匣（只列要使用者決定、驗收的事；agent 之間的步驟和發現照存，不顯示在這）
+
+    /// 收件匣一項：提議中的目標（同意／不要），或 owner 是「你」的「決定：…」／驗收步驟（輪到的那一步）
+    struct InboxItem: Identifiable, Equatable {
+        enum Kind: Equatable { case proposal, decision, verify }
+        let kind: Kind
+        let goal: String
+        let goalTitle: String
+        let step: String?
+        let title: String
+        let done: String?        // 完成條件
+        let by: String?          // 開這個目標的聊天室
+        let at: Date?
+        var id: String { kind == .proposal ? "p-" + goal : "s-" + goal + "-" + (step ?? "") }
+    }
+
+    /// 要使用者決定的步驟：「決定：…」開頭（全形或半形冒號）
+    static func isDecision(_ text: String) -> Bool {
+        text.hasPrefix("決定：") || text.hasPrefix("決定:")
+    }
+    /// 驗收步驟：「使用者驗收」或「驗收…」開頭
+    static func isVerifyStep(_ text: String) -> Bool {
+        text == verify || text.hasPrefix("使用者驗收") || text.hasPrefix("驗收")
+    }
+
+    /// 依目標分組、最新的目標在上。進行中的目標只看「目前輪到」的那一步（前面的步驟還沒做完，使用者的步驟還沒到）
+    var inbox: [InboxItem] {
+        var out: [InboxItem] = []
+        for g in goals {
+            let gAt = g.at.flatMap { Self.parse($0) }
+            if g.status == "proposed" {
+                out.append(InboxItem(kind: .proposal, goal: g.id, goalTitle: g.title, step: nil, title: g.title, done: g.done, by: g.by, at: gAt))
+            } else if g.status == "active", let st = g.current, st.owner == Self.user, st.state != "blocked" {
+                // 別種「你」的步驟（例如手動貼東西）不進收件匣，完整看板還看得到
+                guard Self.isDecision(st.text) || Self.isVerifyStep(st.text) else { continue }
+                let kind: InboxItem.Kind = Self.isDecision(st.text) ? .decision : .verify
+                out.append(InboxItem(kind: kind, goal: g.id, goalTitle: g.title, step: st.id, title: st.text, done: g.done, by: g.by,
+                                     at: st.at.flatMap { Self.parse($0) } ?? gAt))
+            }
+        }
+        return out.sorted { ($0.at ?? .distantPast) > ($1.at ?? .distantPast) }
     }
     /// 按過「知道了」時的次數：多 12 次才再提醒
     @Published var dismissed: [String: Int] = [:]
@@ -478,7 +527,7 @@ final class CollabBoardModel: ObservableObject {
         // 日期不是今天就是新的一天，件數歸零（執行器下次開始時才會改檔）
         let f = DateFormatter(); f.calendar = Calendar(identifier: .gregorian); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"   // Python 寫的是公曆
         if c["date"] as? String == f.string(from: Date()) { st.counts = c["counts"] as? [String: Int] ?? [:] }
-        st.limits = c["limits"] as? [String: Int] ?? [:]
+        st.limits = c["dailyLimits"] as? [String: Int] ?? [:]   // 預設沒有每日上限（11/8 解除）；舊欄位 "limits" 不讀，免得顯示過期的 30／5
         let p = json("pause.json")
         if let u = date(p["until"]), u > Date() { st.pausedUntil = u; st.pauseReason = p["reason"] as? String ?? "" }
         if let t = date(json("runner.json")["at"]) { st.runnerAlive = Date().timeIntervalSince(t) < 90 }
@@ -643,6 +692,63 @@ final class CollabBoardModel: ObservableObject {
     func deleteGoal(_ id: String) { editGoal(id) { _ in nil } }
     func updateGoal(_ id: String, title: String, done: String) {
         editGoal(id) { var g = $0; g["title"] = title; g["done"] = done.isEmpty ? nil : done; return g }
+    }
+
+    // MARK: 收件匣的動作
+
+    /// 把訊息送進某個聊天室（MainWindow 接線；測試或聊天室不在時是 nil / false）
+    static var sendToConversation: ((UUID, String) -> Bool)?
+    /// 目標是哪個聊天室開的（by 是 Claude 的名字或側欄標題）
+    func conversation(ofGoal id: String) -> UUID? { goals.first { $0.id == id }?.by.flatMap { convByName[$0] } }
+
+    /// 送給開目標的聊天室：直接送；送不出去（聊天室沒開起來）就排隊附在它下一則訊息前面。回傳 false＝找不到那個聊天室
+    @discardableResult
+    private func tell(goal: String, _ text: String) -> Bool {
+        guard let conv = conversation(ofGoal: goal) else { return false }
+        if Self.sendToConversation?(conv, text) != true { Self.queueNotice(conv: conv, text: text) }
+        return true
+    }
+
+    private func clip(_ t: String, _ n: Int = 40) -> String {
+        let one = t.split(separator: "\n").first.map(String.init) ?? t
+        return one.count > n ? String(one.prefix(n)) + "…" : one
+    }
+
+    /// 回覆「決定：…」：回覆送到開目標的聊天室，步驟標完成（note 存回覆）。找不到聊天室就不動步驟，留在收件匣
+    @discardableResult
+    func inboxReply(_ it: InboxItem, text: String) -> Bool {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let step = it.step, !body.isEmpty else { return false }
+        guard tell(goal: it.goal, "〔codenv 看板·待你處理〕使用者回覆了「\(clip(it.title))」（目標「\(clip(it.goalTitle))」，步驟 \(step)）：\n\(body)\n這一步已標完成。") else {
+            notice = L("找不到開這個目標的聊天室（\(it.by ?? "?")），回覆沒有送出")
+            return false
+        }
+        editStep(goal: it.goal, step: step) { var st = $0; st["state"] = "done"; st["note"] = "使用者回覆：" + body; st["by"] = Self.user; return st }
+        return true
+    }
+
+    /// 驗收通過
+    func inboxVerified(_ it: InboxItem) {
+        guard let step = it.step else { return }
+        setStep(goal: it.goal, step: step, state: "done")
+        guard tell(goal: it.goal, "〔codenv 看板·待你處理〕使用者驗收通過：目標「\(clip(it.goalTitle))」。") else {
+            notice = L("找不到開這個目標的聊天室（\(it.by ?? "?")），驗收已記錄，但通知沒有送出")
+            return
+        }
+    }
+
+    /// 驗收有問題：通知送出後把步驟卡住並記下原因；聊天室不存在時保留待驗步驟供重試。
+    @discardableResult
+    func inboxRejected(_ it: InboxItem, why: String) -> Bool {
+        guard let step = it.step else { return false }
+        let w = why.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sent = tell(goal: it.goal, "〔codenv 看板·待你處理〕使用者驗收發現問題，退回目標「\(clip(it.goalTitle))」（驗收步驟 \(step)）：\n\(w.isEmpty ? "（沒寫說明）" : w)\n請修好後用 codenv-todo step \(step) 待做 --by <你的名字> 重新交給使用者驗收。")
+        guard sent else {
+            notice = L("找不到開這個目標的聊天室（\(it.by ?? "?")），退回的說明沒有送出")
+            return false
+        }
+        editStep(goal: it.goal, step: step) { var st = $0; st["state"] = "blocked"; st["note"] = "有問題：" + (w.isEmpty ? "（沒寫說明）" : w); st["by"] = Self.user; return st }
+        return true
     }
 
     /// 改一個步驟（fn 改那一步；回傳 nil＝刪掉）
@@ -875,6 +981,9 @@ final class CollabBoardModel: ObservableObject {
             for st in g.steps { out += "  step \(st.id) [\(st.state)] \(st.text) @\(st.owner ?? "-")\n" }
         }
         out += "waitingOnYou=\(waitingOnYou)\n"
+        out += "inbox=\(inbox.count)\n"
+        for it in inbox { out += "  inbox \(it.kind) \(it.goal) \(it.step ?? "-") \(it.title)\n" }
+        if let notice { out += "notice=\(notice)\n" }
         return out
     }
 }
@@ -1191,6 +1300,10 @@ struct CollabBoardView: View {
                 Text(st.text).font(.system(size: 12 * s)).strikethrough(st.state == "done", color: .secondary)
                     .foregroundStyle(st.state == "done" ? .secondary : .primary).textSelection(.enabled)
                 if CollabBoardModel.agyNick[st.owner ?? ""] != nil || CollabBoardModel.isManual(st.owner) { agyLine(st, g) }
+                if let by = st.proxyBy, st.state == "done" {
+                    let source = st.proxyConversation.map { "（來源聊天室 ID：\(String($0.prefix(8)))）" } ?? ""
+                    Text(L("由 \(by) 代勾\(source)：\(st.proxyNote ?? "")")).font(.system(size: 10.5 * s)).foregroundStyle(.secondary).textSelection(.enabled)
+                }
             }
             Spacer(minLength: 4)
             if let o = st.owner, let nick = CollabBoardModel.agyNick[o] {
@@ -1201,7 +1314,7 @@ struct CollabBoardView: View {
             else if let o = st.owner, CollabBoardModel.isManual(o) {
                 // 手動：框線標籤（不是填色），跟自動的分得出來
                 Text(CollabBoardModel.manualLabel(o)).font(.system(size: 10 * s, weight: .medium)).padding(.horizontal, 6).padding(.vertical, 1)
-                    .overlay(Capsule().strokeBorder(color(o).opacity(0.6), lineWidth: 1)).foregroundStyle(color(o)).help(L("@\(o)：你自己開 agy、貼 prompt、把回答貼回來；不算每天上限"))
+                    .overlay(Capsule().strokeBorder(color(o).opacity(0.6), lineWidth: 1)).foregroundStyle(color(o)).help(L("@\(o)：你自己開 agy、貼 prompt、把回答貼回來；不算件數"))
             }
             else if let o = st.owner { Text(o).font(.system(size: 10.5 * s, weight: mine ? .semibold : .regular)).foregroundStyle(mine ? Color.accentColor : color(o)) }
             else if st.state != "done" { Text(L("沒人領")).font(.system(size: 10.5 * s)).foregroundStyle(.tertiary).help(L("Claude 有空時會用 codenv-todo 領走；也可以右鍵指定負責人")) }
@@ -1306,7 +1419,8 @@ struct CollabBoardView: View {
             let order = ["gemini4.0argon", "gemini3.8flash"]
             let line = order.compactMap { k -> String? in
                 guard let nick = CollabBoardModel.agyNick[k] else { return nil }
-                return L("\(nick) \(a.counts[k] ?? 0)／\(a.limits[k] ?? (k == "gemini4.0argon" ? 5 : 30))")
+                if let lim = a.limits[k] { return L("\(nick) \(a.counts[k] ?? 0)／\(lim)") }
+                return L("\(nick) \(a.counts[k] ?? 0) 件")
             }.joined(separator: L("、"))
             VStack(alignment: .leading, spacing: 2) {
                 Text(L("今天 \(line)")).font(.system(size: 11 * s)).foregroundStyle(.secondary)
@@ -1332,6 +1446,135 @@ struct CollabBoardView: View {
             Spacer(minLength: 0)
         }
         .contextMenu { Button(L("刪掉")) { m.editTodo(t.id, col: nil) } }
+    }
+}
+
+
+// MARK: 「待你處理」收件匣（點最左邊協作圖示彈出；完整看板從右上角連結進）
+
+struct InboxView: View {
+    @ObservedObject var m = CollabBoardModel.shared
+    @Environment(\.uiScale) private var s
+    var startOpen: String? = nil                  // 測試用：一開始就展開哪一項
+    var openFullBoard: () -> Void
+    @State private var open: String?              // 展開的項目
+    @State private var text = ""                  // 回覆／說明
+    @State private var rejecting: String?         // 驗收「有問題」展開說明欄的項目
+    @State private var confirmDelete: CollabBoardModel.InboxItem?
+
+    private var groups: [(goal: String, title: String, items: [CollabBoardModel.InboxItem])] {
+        var order: [String] = [], map: [String: [CollabBoardModel.InboxItem]] = [:], titles: [String: String] = [:]
+        for it in m.inbox {
+            if map[it.goal] == nil { order.append(it.goal); titles[it.goal] = it.goalTitle }
+            map[it.goal, default: []].append(it)
+        }
+        return order.map { ($0, titles[$0] ?? "", map[$0] ?? []) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(L(m.inbox.isEmpty ? "待你處理" : "待你處理 \(m.inbox.count)")).font(.system(size: 14 * s, weight: .semibold))
+                Spacer()
+                Button(L("完整看板"), action: openFullBoard).buttonStyle(.link).font(.system(size: 11.5 * s))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            Divider()
+            if let n = m.notice {
+                Text(n).font(.system(size: 11 * s)).foregroundStyle(.orange).padding(.horizontal, 12).padding(.vertical, 6)
+            }
+            if m.inbox.isEmpty {
+                Text(L("沒有要你處理的事")).font(.system(size: 12 * s)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 28)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(groups, id: \.goal) { g in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(g.title).font(.system(size: 11 * s, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                                ForEach(g.items) { it in item(it) }
+                            }
+                        }
+                    }.padding(12)
+                }
+            }
+        }
+        .frame(width: 340 * s).frame(maxHeight: 460 * s)
+        .onAppear { if open == nil { open = startOpen } }
+        .confirmationDialog(L("不要這個目標？"), isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } })) {
+            Button(L("不要，刪掉"), role: .destructive) { if let it = confirmDelete { m.deleteGoal(it.goal) }; confirmDelete = nil }
+        } message: { Text(L("目標和它的步驟會一起刪掉，救不回來。")) }
+    }
+
+    private func kindLabel(_ k: CollabBoardModel.InboxItem.Kind) -> String {
+        switch k { case .proposal: return L("提議"); case .decision: return L("決定"); case .verify: return L("驗收") }
+    }
+
+    private func ago(_ d: Date?) -> String {
+        guard let d else { return "" }
+        let n = max(0, Int(Date().timeIntervalSince(d)))
+        return n < 60 ? L("剛剛") : n < 3600 ? L("\(n / 60) 分鐘前") : n < 86400 ? L("\(n / 3600) 小時前") : L("\(n / 86400) 天前")
+    }
+
+    private func item(_ it: CollabBoardModel.InboxItem) -> some View {
+        let isOpen = open == it.id
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(kindLabel(it.kind)).font(.system(size: 10 * s, weight: .medium)).padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.18))).foregroundStyle(Color.accentColor)
+                Text(it.title).font(.system(size: 12 * s)).lineLimit(isOpen ? nil : 1).frame(maxWidth: .infinity, alignment: .leading)
+                Text(ago(it.at)).font(.system(size: 10 * s)).foregroundStyle(.tertiary).fixedSize()
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { open = isOpen ? nil : it.id; text = ""; rejecting = nil }
+            if isOpen {
+                if let d = it.done, !d.isEmpty {
+                    Text(L("怎樣算完成：\(d)")).font(.system(size: 11 * s)).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                actions(it)
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.06)))
+    }
+
+    @ViewBuilder private func actions(_ it: CollabBoardModel.InboxItem) -> some View {
+        switch it.kind {
+        case .proposal:
+            HStack {
+                Text(L("\(it.by ?? "Claude") 提議的")).font(.system(size: 11 * s)).foregroundStyle(.secondary)
+                Spacer()
+                Button(L("同意")) { m.setGoalStatus(it.goal, "active") }
+                Button(L("不要")) { confirmDelete = it }
+            }.controlSize(.small)
+        case .decision:
+            field(L("回覆（會送給 \(it.by ?? "開目標的聊天室")）"), send: L("送出"), multiline: true) {
+                if m.inboxReply(it, text: text) { open = nil; text = "" }
+            }
+        case .verify:
+            if rejecting == it.id {
+                field(L("哪裡有問題"), send: L("退回"), multiline: true) {
+                    if m.inboxRejected(it, why: text) { open = nil; text = ""; rejecting = nil }
+                }
+            } else {
+                HStack {
+                    Spacer()
+                    Button(L("有問題")) { rejecting = it.id; text = "" }
+                    Button(L("已驗")) { m.inboxVerified(it); open = nil }.keyboardShortcut(.defaultAction)
+                }.controlSize(.small)
+            }
+        }
+    }
+
+    private func field(_ prompt: String, send: String, multiline: Bool = false, _ go: @escaping () -> Void) -> some View {
+        HStack {
+            TextField(prompt, text: $text, axis: .vertical).textFieldStyle(.roundedBorder).font(.system(size: 12 * s)).lineLimit(multiline ? 1...8 : 1...1)
+                .onSubmit {
+                    if send == L("送出") && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
+                    go()
+                }
+            Button(send, action: go).controlSize(.small).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && send == L("送出"))
+        }
     }
 }
 

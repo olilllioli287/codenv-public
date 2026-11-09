@@ -20,9 +20,10 @@ final class CopilotBridge {
     }
     static func name(_ model: String) -> String { models.first { $0.id == model }?.name ?? model }
 
-    /// 有沒有裝 copilot（brew 的 copilot-cli 裝在 /opt/homebrew/bin）
+    /// 有沒有裝 copilot（Homebrew 或使用者 PATH）
     static var installed: Bool {
-        ["/opt/homebrew/bin/copilot", "/usr/local/bin/copilot"].contains { FileManager.default.isExecutableFile(atPath: $0) }
+        let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        return (paths + ["/opt/homebrew/bin", "/usr/local/bin"]).contains { FileManager.default.isExecutableFile(atPath: ($0 as NSString).appendingPathComponent("copilot")) }
     }
 
     /// 開程序的參數
@@ -412,7 +413,7 @@ final class CopilotBridge {
             msg["content"] = blocks
             obj["message"] = msg
         }
-        guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        guard let d = Transcripts.redactedJSON(obj) else { return }
         Transcripts.append(d + Data([0x0a]), to: transcriptURL)      // 寫不進去會記進事件紀錄（Transcripts.append）
     }
 }

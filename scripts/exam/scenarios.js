@@ -40,6 +40,20 @@ $$\frac{d}{dx}[y^2]=2y\frac{dy}{dx}$$
       check(document.querySelectorAll('.katex').length === 5, '完成後公式重複／遺失');
       check(!document.querySelector('main').textContent.includes('WBMATHPLACEHOLDER'), '完成後佔位字外露');
       check(!document.querySelector('.streaming'), '完成後串流游標殘留');
+    } else if (id === 'B12') {
+      wb.localUser({ uuid: 'busy-user', text: '測試計時結束' });
+      wb.setBusy(true);
+      await wait(1100);
+      check(!document.querySelector('.typing').hidden, '忙碌時沒有顯示狀態列');
+      wb.event({ type: 'result', subtype: 'success', is_error: false });
+      wb.setBusy(false);
+      check(document.querySelector('.typing').hidden, 'result 後狀態列仍顯示');
+      check(document.querySelector('.typing-s').textContent === '', 'result 後計時文字未清除');
+      wb.event({ type: 'user', message: { role: 'user', content: '<task-notification><summary>背景工作</summary><status>completed</status></task-notification>' } });
+      await wait(1100);
+      check(document.querySelector('.typing').hidden, '背景工作通知重新顯示忙碌計時');
+      check(document.querySelector('.typing-s').textContent === '', '背景工作通知重新啟動計時');
+      window.__exam.details.push('result 清除計時；背景工作完成通知不重啟');
     } else if (id === 'B10') {
       wb.localUser({ uuid: 'other', text: '保留另一則' });
       wb.localUser({ uuid: 'queued-1', text: '排隊一', queued: true });
@@ -57,6 +71,25 @@ $$\frac{d}{dx}[y^2]=2y\frac{dy}{dx}$$
       wb.event({ type: 'result', subtype: 'success', is_error: false });
       wb.userTaken('queued-3'); wb.flushQueued();
       check(!turn('已讀取')?.classList.contains('lost'), '已讀取被誤標 lost');
+    } else if (id === 'B12') {
+      // 對應 Codex app-server 的 turn/interrupt → turn/completed(interrupted)。
+      // 原生 JSON-RPC 由 C21 的 fake app-server fixture 覆蓋；這裡驗畫面收到結束事件後解除 busy。
+      const mid = 'exam-codex-interrupt';
+      const event = e => wb.event({ type: 'stream_event', event: e, parent_tool_use_id: null, api_message_id: mid });
+      wb.localUser({ uuid: 'codex-interrupt-user', text: 'Codex 中斷考題' });
+      wb.setBusy(true);
+      event({ type: 'message_start', message: { id: mid } });
+      event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+      event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '中斷前已收到的部分回覆' } });
+      await until(() => document.querySelector('main').textContent.includes('中斷前已收到'), 'Codex 中斷前的部分輸出未呈現');
+      event({ type: 'content_block_stop', index: 0 });
+      wb.event({ type: 'user', message: { role: 'user', content: '[Request interrupted by user]' } });
+      wb.event({ type: 'result', subtype: 'error_during_execution', is_error: true });
+      wb.setBusy(false);
+      await wait(100);
+      check(!document.querySelector('.streaming'), 'interrupted 收尾後仍有串流游標');
+      check(document.querySelector('main').textContent.includes('中斷前已收到的部分回覆'), '中斷前已收到的內容被清掉');
+      window.__exam.details.push('interrupted 結束生成狀態並保留部分回覆；JSON-RPC 由 C21 覆蓋');
     } else if (id === 'B04') {
       wb.history([{ type: 'user', message: { content: '歷史內容縮短測試' } }]);
       const pad = document.createElement('div');
@@ -91,6 +124,8 @@ $$\frac{d}{dx}[y^2]=2y\frac{dy}{dx}$$
       await wait(300);
       check(dist() <= 2, '恢復追隨後新增內容未貼底');
       wb.setBusy(false);
+    } else if (id === 'C62') {
+      check(false, 'C62 是 Node 純邏輯案例，請使用 logic.mjs');
     } else throw Error('未知案例：' + id);
     window.__exam.stage = 'passed';
   } catch (error) {

@@ -316,6 +316,7 @@ struct HoverPlain: ButtonStyle {
 final class FloatingPanel: NSPanel {
     private var monitors: [Any] = []
     var onClose: (() -> Void)?
+    private(set) var wasKeyBeforeClose = false
     init(content: NSView) {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         isOpaque = false
@@ -354,6 +355,7 @@ final class FloatingPanel: NSPanel {
         monitors.forEach { NSEvent.removeMonitor($0) }
         monitors = []
         NotificationCenter.default.removeObserver(self)
+        wasKeyBeforeClose = isKeyWindow
         super.close()
         onClose?()
     }

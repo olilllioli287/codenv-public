@@ -329,10 +329,12 @@ final class SessionActivity: ObservableObject {
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         // 卡住（iCloud 未下載的資料夾、斷線的網路磁碟）最多等 15 秒；不然 gitLoading 一直擋著、這個資料夾的分支永遠不更新
-        let watchdog = GitProcess.arm(p, after: gitTimeout)
+        var timedOut = false
+        let watchdog = GitProcess.arm(p, after: gitTimeout) { timedOut = true }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         watchdog.cancel()
+        if timedOut { return GitInfo(branch: L("git status 逾時")) }
         guard p.terminationStatus == 0, let s = String(data: data, encoding: .utf8), s.contains("# branch.") else { return nil }      // 沒有 branch 標頭＝git 根本沒跑起來
         var g = GitInfo(branch: "")
         for line in s.split(separator: "\n") {

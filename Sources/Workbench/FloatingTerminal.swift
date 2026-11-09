@@ -82,6 +82,7 @@ final class FloatingTerminalController: NSObject, NSWindowDelegate {
         panel = FloatingTerminalPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
                                       styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         super.init()
+        panel.isRestorable = false
         panel.title = L("浮動終端機")
         panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = false

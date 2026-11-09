@@ -17,6 +17,17 @@ enum Transcripts {
     private static let queue = DispatchQueue(label: "transcripts")
 
     private static let iso: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+    /// 各家引擎寫 jsonl 前：整份轉成 JSON 字串，有明確前綴的 API 金鑰（nvapi-、sk-…、私鑰標頭）只留末四碼（KeyVault.swift；高熵字串不動，免得改到模型回的內容）
+    static func redactedJSON(_ obj: [String: Any]) -> Data? {
+        func walk(_ v: Any) -> Any {
+            if let t = v as? String { return KeyScan.redact(t, strongOnly: true) }
+            if let d = v as? [String: Any] { return d.mapValues(walk) }
+            if let a = v as? [Any] { return a.map(walk) }
+            return v
+        }
+        // 在字串值上遮，不碰 JSON 結構（沒結尾的私鑰標頭會一路吃到字串尾，不能吃掉後面的引號）
+        return try? JSONSerialization.data(withJSONObject: walk(obj))
+    }
     /// 紀錄每筆的 timestamp（跟 Claude 紀錄一樣的 ISO 8601）
     static func stamp() -> String { iso.string(from: Date()) }
 
@@ -108,8 +119,12 @@ enum Transcripts {
     }
 
     static func fileName(title: String, id: UUID, taken: Set<String>) -> String {
-        var base = String(title.map { "/:\\\0".contains($0) ? "_" : $0 }).trimmingCharacters(in: .whitespacesAndNewlines)
-        if base.hasPrefix(".") { base = "_" + base.dropFirst() }
+        // 逐 unicodeScalar 換：「/」後面接組合字會合成一個 Character，用 Character 判斷會漏掉路徑分隔符
+        let bad = Set("/:\\\0".unicodeScalars)
+        var scalars = String.UnicodeScalarView()
+        for u in title.unicodeScalars { scalars.append(bad.contains(u) ? "_" : u) }
+        var base = String(scalars).trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.unicodeScalars.first == "." { base = "_" + String(base.unicodeScalars.dropFirst()) }
         if base.isEmpty { base = "聊天室" }
         base = utf8Prefix(base, maxBytes: 180)
         let name = base + ".md"
@@ -131,14 +146,19 @@ enum Transcripts {
         (try? Data(contentsOf: indexURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] } ?? [:]
     }
     private static func saveIndex(_ idx: [String: String]) {
-        if let d = try? JSONSerialization.data(withJSONObject: idx, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: indexURL, options: .atomic) }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: idx, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: indexURL, options: .atomic)
+        } catch {
+            EventLog.log("紀錄檔", "索引儲存失敗（\(indexURL.lastPathComponent)）：\(error.localizedDescription)")
+        }
     }
 
     /// 這個聊天室該用的檔名（已經有就沿用，名稱變了才換）；同時把舊檔改名過去
     private static func placeFile(id: UUID, title: String, idx: inout [String: String]) -> URL {
         let key = id.uuidString
         let others = Set(idx.filter { $0.key != key }.map(\.value))
-        let old = idx[key]
+        let old = idx[key].flatMap(safeIndexName)      // 索引是檔案內容：舊檔名帶路徑、不是 .md 的一律當作沒有，不拿去搬移或覆蓋
         // 舊檔名還符合現在的名稱（含加了短 id 的版本）就不動
         let plain = fileName(title: title, id: id, taken: [])
         let withID = fileName(title: title, id: id, taken: [plain])
@@ -162,6 +182,12 @@ enum Transcripts {
         }
         idx[key] = name
         return url
+    }
+
+    /// 索引裡的檔名只認單純的檔名（不含路徑、不是隱藏檔、副檔名 .md）
+    static func safeIndexName(_ n: String) -> String? {
+        guard n.hasSuffix(".md"), !n.hasPrefix("."), !n.contains("/"), !n.contains("\0"), n == (n as NSString).lastPathComponent, n.utf8.count <= 255 else { return nil }
+        return n
     }
 
     /// 資料夾裡現有的檔名（不是 index 記的、別人放的也算，免得蓋掉）
@@ -188,11 +214,11 @@ enum Transcripts {
             md += "codenv 的聊天室紀錄（精簡版：只留雙方說的話，工具輸出拿掉，工具呼叫只留一行）。原始紀錄：\n"
             md += files.map { "- \($0.model)：\($0.url.path)" }.joined(separator: "\n") + "\n\n"
             for t in sorted {
-                md += "## \(t.time.map(df.string) ?? "（較早）")｜\(t.user ? "使用者" : t.model)\n\n\(t.text)\n\n"
+                md += "## \(t.time.map(df.string) ?? "（較早）")｜\(t.user ? "使用者" : t.model)\n\n\(KeyScan.redact(t.text, strongOnly: true))\n\n"
             }
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             var idx = loadIndex()
-            let oldName = idx[id.uuidString]      // placeFile 會把索引改成新名字，舊名要在它之前取
+            let oldName = idx[id.uuidString].flatMap(safeIndexName)      // placeFile 會把索引改成新名字，舊名要在它之前取
             let url = placeFile(id: id, title: title, idx: &idx)
             do {
                 try md.write(to: url, atomically: true, encoding: .utf8)

@@ -64,7 +64,7 @@ final class Workspace {
             (p as? ChatPane)?.restoreSavedDraftIfNeeded()
             return p
         }
-        if c.terminal != true { return chatPane(for: c) }
+        if c.terminal != true || c.sandbox == true { return chatPane(for: c) }      // 開了沙盒的聊天室不開終端機版（終端機沒包 nono，等於脫離沙盒）
         let p = TerminalPane(theme: theme)
         let path = store.project(c.projectID)?.path ?? NSHomeDirectory()
         let id = c.claudeSession.uuidString.lowercased()
@@ -174,6 +174,13 @@ final class Workspace {
 
     /// 換成終端機／聊天介面打開同一段對話（兩邊共用 Claude 的對話紀錄）
     func switchMode(_ id: UUID, terminal: Bool, done: (() -> Void)? = nil) {
+        // 沙盒聊天室不能切成終端機模式（終端機版沒包 nono；先關掉沙盒再切）
+        if terminal, store.conversation(id)?.sandbox == true {
+            NSSound.beep()
+            EventLog.log("沙盒", "\(store.conversation(id)?.title ?? "?")：開著沙盒，不能用終端機打開（先在右鍵關掉沙盒）")
+            done?()
+            return
+        }
         // 程式碼區有沒存的修改：先存，存不了就不換（關掉這一格會把它丟掉）
         if let lab = (panes[id] as? ChatPane)?.codeLab, lab.hasUnsaved {
             lab.saveForClose { [weak self] ok in

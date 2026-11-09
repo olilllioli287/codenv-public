@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AppKit
 
 // 右欄統一容器（總指揮模式用）：頂端一排「小圖示＋兩字標籤」的分頁，列高 32 點，整體壓扁。
@@ -57,6 +58,12 @@ final class RightPanelModel: ObservableObject {
     @Published var chatGraph: Bool {
         didSet { appDefaults.set(chatGraph, forKey: "rightPanelChatGraph") }
     }
+    @Published var dividerHeight: CGFloat {
+        didSet {
+            guard dividerHeight != oldValue else { return }
+            appDefaults.set(Double(dividerHeight), forKey: Prefs.rightPanelDividerHeightKey)
+        }
+    }
     /// 最下面的桌寵空位要不要留（右欄本身的開關是 F4＝PetSlot.enabled）
     @Published var petSlotOn: Bool {
         didSet { appDefaults.set(petSlotOn, forKey: "rightPanelPet"); NotificationCenter.default.post(name: PetSlot.changed, object: nil) }
@@ -81,6 +88,8 @@ final class RightPanelModel: ObservableObject {
         tab = RightTab(rawValue: appDefaults.string(forKey: "rightPanelTab") ?? "") ?? .windows
         petSlotOn = appDefaults.object(forKey: "rightPanelPet") as? Bool ?? true
         chatGraph = appDefaults.bool(forKey: "rightPanelChatGraph")
+        let storedDivider = appDefaults.object(forKey: Prefs.rightPanelDividerHeightKey) as? Double
+        dividerHeight = min(AppDefaults.rightPanelDividerMaximumHeight, max(AppDefaults.rightPanelDividerMinimumHeight, CGFloat(storedDivider ?? Double(AppDefaults.rightPanelDividerDefaultHeight))))
         panelObserver = NotificationCenter.default.addObserver(forName: PetSlot.changed, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             if self.panelOn != PetSlot.enabled { self.panelOn = PetSlot.enabled }
@@ -407,19 +416,20 @@ struct RPWindowsTab: View {
     @ObservedObject private var panelModel = RightPanelModel.shared
     @FocusState private var listFocused: Bool
     @State private var windowBox = WindowGrabber.Box()
+    @State private var dividerDragStart: CGFloat?
+    @State private var panelHeight: CGFloat = 0
     private let tick = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        let wins = RPData.windows(store)
         let chats = RPData.chats(store, workspace: workspace)
         VStack(spacing: 0) {
+            running
+                .frame(height: upperRegionHeight, alignment: .top)
+                .clipped()
+            divider
+            header(L("聊天室 (\(chats.count))"), trailing: chats.isCommander ? AnyView(modeToggle(chats.isCommander)) : nil)
+            if chats.isCommander && !panelModel.chatGraph { columns }
             if panelModel.chatGraph && chats.isCommander {
-                // 關聯圖：Window 清單照舊放上面，聊天室那塊整個換成圖
-                VStack(alignment: .leading, spacing: 0) {
-                    header(L("Window (\(wins.count))"))
-                    ForEach(wins) { windowRow($0) }
-                    header(L("聊天室 (\(chats.count))"), trailing: AnyView(modeToggle(chats.isCommander)))
-                }
                 ChatGraphRepresentable(store: store, workspace: workspace,
                                        onSummon: { id in if let sid = chats.sessionID { store.summonConversation(id, inSession: sid) } },
                                        onInfo: { openInfo($0) })
@@ -427,10 +437,6 @@ struct RPWindowsTab: View {
             } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    running
-                    header(L("Window (\(wins.count))"))
-                    ForEach(wins) { windowRow($0) }
-                    header(L("聊天室 (\(chats.count))"), trailing: chats.isCommander ? AnyView(HStack(spacing: 8) { columns; modeToggle(true) }) : nil)
                     if !chats.isCommander {
                         Text(L("這一區沒有總指揮")).font(.system(size: 11 * s)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.vertical, 4)
                     }
@@ -480,6 +486,7 @@ struct RPWindowsTab: View {
             Divider()
             portsBar
         }
+        .background(GeometryReader { proxy in Color.clear.onAppear { panelHeight = proxy.size.height }.onChange(of: proxy.size.height) { _, new in panelHeight = new } })
         .background(WindowGrabber(box: windowBox))
         .sheet(item: Binding(get: { panelModel.infoChat.map { InfoTarget(id: $0) } }, set: { if $0 == nil { panelModel.infoChat = nil } })) { t in
             ChatInfoForm(store: store, id: t.id) { panelModel.infoChat = nil; listFocused = true }
@@ -494,6 +501,32 @@ struct RPWindowsTab: View {
         ChatInfoCard.shared.cancel()
         panelModel.selectedChat = id
         panelModel.infoChat = id
+    }
+
+    private var upperRegionHeight: CGFloat {
+        let available = max(0, panelHeight - portsBarHeight)
+        let minimumLower: CGFloat = 110
+        let maximum = max(AppDefaults.rightPanelDividerMinimumHeight, min(AppDefaults.rightPanelDividerMaximumHeight, available - minimumLower - RightPanelLayout.dividerHitHeight - 48))
+        return min(maximum, max(AppDefaults.rightPanelDividerMinimumHeight, panelModel.dividerHeight))
+    }
+
+    private var portsBarHeight: CGFloat { 26 * s }
+
+    private var divider: some View {
+        Rectangle().fill(Color.primary.opacity(0.18))
+            .overlay(Rectangle().fill(Color.primary.opacity(0.28)).frame(height: 1))
+            .frame(height: RightPanelLayout.dividerHitHeight)
+            .contentShape(Rectangle())
+            .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { value in
+                    if dividerDragStart == nil { dividerDragStart = panelModel.dividerHeight }
+                    let available = max(0, panelHeight - portsBarHeight)
+                    let maximum = max(AppDefaults.rightPanelDividerMinimumHeight, min(AppDefaults.rightPanelDividerMaximumHeight, available - 110 - RightPanelLayout.dividerHitHeight - 48))
+                    panelModel.dividerHeight = min(maximum, max(AppDefaults.rightPanelDividerMinimumHeight, (dividerDragStart ?? panelModel.dividerHeight) + value.translation.height))
+                }
+                .onEnded { _ in dividerDragStart = nil })
+            .accessibilityIdentifier("rightPanelDivider")
     }
 
     /// 列表／關聯圖切換（記住選擇）
@@ -511,23 +544,28 @@ struct RPWindowsTab: View {
                 .help(g ? L("關聯圖") : L("列表"))
             }
         }
+        .frame(width: RightPanelLayout.toggleButtonsWidth * s, height: 16 * s, alignment: .trailing)
+        .accessibilityIdentifier("rightPanelModeToggle")
     }
 
     private var columns: some View {
-        HStack(spacing: 5) {
-            Text(L("記憶體")).frame(width: 42 * s, alignment: .trailing)
-            Text(L("上下文")).frame(width: 36 * s, alignment: .trailing)
+        HStack(spacing: 5 * s) {
+            Text(L("記憶體")).frame(width: RightPanelLayout.memoryColumnWidth * s, alignment: .trailing).accessibilityIdentifier("rightPanelMemoryHeader")
+            Text(L("上下文")).frame(width: RightPanelLayout.contextColumnWidth * s, alignment: .trailing).accessibilityIdentifier("rightPanelContextHeader")
         }
         .font(.system(size: 9.5 * s)).foregroundStyle(.tertiary)
+        .padding(.trailing, RightPanelLayout.chatColumnTrailingInset)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func header(_ t: String, trailing: AnyView? = nil) -> some View {
-        HStack {
+        HStack(spacing: 0) {
             Text(t).font(.system(size: 10.5 * s, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1).fixedSize(horizontal: true, vertical: false)
             Spacer(minLength: 0)
-            trailing
+            if trailing != nil { Spacer().frame(width: RightPanelLayout.toggleButtonsWidth * s) }
         }
         .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
+        .overlay(alignment: .trailing) { trailing?.padding(.trailing, 10) }
     }
 
     // 正在跑（沿用 ActivityBlock）：有任務才展開
@@ -546,33 +584,16 @@ struct RPWindowsTab: View {
                 .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if open { ActivityBlock(store: store).padding(.horizontal, 10).padding(.bottom, 4) }
-        }
-    }
-
-    private func windowRow(_ w: RPWindowRow) -> some View {
-        let shown = w.status != "background"
-        return Button { store.focusWindowFromPanel(w.id) } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 5) {
-                    Text(w.title).font(.system(size: 12 * s, weight: shown ? .semibold : .regular)).lineLimit(1)
-                    Text(w.status == "detached" ? L("顯示中 · 獨立視窗") : (shown ? L("顯示中") : L("在背景")))
-                        .font(.system(size: 9.5 * s)).foregroundStyle(shown ? Color.green : Color.secondary)
-                    Spacer(minLength: 0)
-                }
-                Text(w.subtitle).font(.system(size: 10.5 * s)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            if open {
+                ScrollView(.vertical) { ActivityBlock(store: store).padding(.horizontal, 10).padding(.bottom, 4) }
+                    .frame(maxHeight: .infinity, alignment: .top)
             }
-            .padding(.horizontal, 10).padding(.vertical, 3)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(w.status == "current" ? Color.accentColor.opacity(0.12) : .clear)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help(w.subtitle)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder private func chatRow(_ r: RPChatRow, session: UUID?, indent: CGFloat = 0) -> some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 5 * s) {
             Group {
                 if r.state == .working { PulseDot(color: r.state.color, size: 7 * s) }
                 else { Circle().fill(r.state.color).frame(width: 7 * s, height: 7 * s) }
@@ -587,11 +608,13 @@ struct RPWindowsTab: View {
                     .buttonStyle(.plain).foregroundStyle(hoverRow == r.id ? Color.primary.opacity(0.7) : Color.secondary.opacity(0.5))
                     .help(L("聊天室資訊（選取後按 i）"))
             }
-            Text(r.memory.map(RPData.shortBytes) ?? "—").frame(width: 42 * s, alignment: .trailing)
-            Text(r.context.map(ContextMonitor.text) ?? "—").frame(width: 36 * s, alignment: .trailing)
+            Text(r.memory.map(RPData.shortBytes) ?? "—").frame(width: RightPanelLayout.memoryColumnWidth * s, alignment: .trailing)
+                .accessibilityIdentifier("rightPanelMemoryValue")
+            Text(r.context.map(ContextMonitor.text) ?? "—").frame(width: RightPanelLayout.contextColumnWidth * s, alignment: .trailing)
+                .accessibilityIdentifier("rightPanelContextValue")
         }
         .font(.system(size: 10.5 * s)).monospacedDigit().foregroundStyle(.secondary)
-        .padding(.leading, 10 + indent).padding(.trailing, 10).padding(.vertical, 2)
+        .padding(.leading, 10 + indent).padding(.trailing, RightPanelLayout.chatColumnTrailingInset).padding(.vertical, 2)
         .frame(minHeight: 20 * s)
         // 不要「叫出來」按鈕；滑鼠移到那一列整列淡底色、單擊選取（紫框保持）、雙擊叫出來（右鍵選單裡還有「叫出來」）；
         // 停 1.5 秒浮出資訊卡

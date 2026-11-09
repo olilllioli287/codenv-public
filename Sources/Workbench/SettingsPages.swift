@@ -61,10 +61,16 @@ struct ChatPrefsPage: View {
                     get: { p.agyEnabled },
                     set: { on in if !on { p.agyEnabled = false } else if Prefs.confirmEnableAgy() { p.agyEnabled = true } }))
                 Text(L("呼叫官方 agy -p；Google 寫明個人方案不支援包進 App，風險自負。")).font(.caption).foregroundStyle(.secondary)
+                Toggle(L("agy 走 magpie 號池（本機 127.0.0.1:3425 的閘道；連不上時自動改用 agy 自己的登入）"), isOn: $p.agyMagpie)
+                Text(L("走號池時模型名稱換成 magpie/antigravity/…，思考強度由 magpie 決定（這裡的拉桿不會傳過去）；用量列改讀 magpie 的 Antigravity 帳號額度並平均顯示。完整用量頁仍直接問 agy。")).font(.caption).foregroundStyle(.secondary)
             }
             Section(L("協作看板")) {
                 Toggle(L("Claude 開的目標自動生效"), isOn: Binding(get: { board.autoApprove }, set: { board.setAutoApprove($0) }))
                 Text(L("打開時，Claude 用 codenv-todo 開的目標直接是「進行中」，不用你在看板上按「同意」。「使用者驗收」那一步還是只有你本人能勾；agy 的每日件數上限、退回三次就卡住、來回太多次的警告都照舊。這個設定 Claude 不能用指令改。")).font(.caption).foregroundStyle(.secondary)
+            }
+            Section(L("額度衝刺")) {
+                Toggle(L("衝刺聊天室每輪結束時檢查有沒有停在一半"), isOn: $p.sprintCheck)
+                Text(L("只在額度衝刺執行聊天室生效；Qwen3.6 正在執行時優先使用，否則使用 agy Gemini Flash low。關閉時不判斷、不提醒。")).font(.caption).foregroundStyle(.secondary)
             }
             if Edition.updateRepo != nil {
                 Section(L("更新與回報")) {
@@ -100,6 +106,9 @@ struct ChatPrefsPage: View {
             }
             Section(L("闔蓋")) {
                 Toggle(L("闔上螢幕時，讓正在做事的聊天室做完這一段"), isOn: $p.lidKeepWorking)
+                Toggle(L("打開螢幕時通知它們繼續"), isOn: $p.lidResumeNotifyEnabled)
+                    .padding(.leading, 20)
+                    .disabled(!p.lidKeepWorking)
                 Text(L("有聊天室正在做事時 Mac 不會睡（要 Battery 的小幫手 v6，電量低於 30% 且沒插電時除外）；闔上螢幕後，聊天室做完目前這一段就停。全部停下、撐滿 1 小時、電量低於 30% 或溫度太高就恢復正常睡眠。紀錄在 ~/Library/Logs/codenv-lid.log。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -150,7 +159,11 @@ struct ChatPrefsPage: View {
                 Toggle(L("自動加入正在 tmux／iTerm 裡進行的對話（每 30 秒檢查）"), isOn: $p.autoImportLive)
             }
             Section(L("每日交接")) {
-                Toggle(L("每天自動交接有新對話的聊天室"), isOn: $p.dailyHandoffEnabled)
+                Toggle(L("定期自動交接有新對話的聊天室"), isOn: $p.dailyHandoffEnabled)
+                Stepper(value: $p.dailyHandoffIntervalDays, in: 1...14) { Text(L("每 \(p.dailyHandoffIntervalDays) 天交接一次")) }.disabled(!p.dailyHandoffEnabled)
+                Toggle(L("E4B 每日檢討（建議記憶與技能）"), isOn: $p.e4bDailyReviewEnabled)
+                Text(L("交接完成後，在可用記憶體至少 9 GB 時使用本機 Nemotron E4B 分析交接內容；所有記憶與技能建議只送到看板提議區，不會自行修改記憶檔。另列出 30 天未提及項目供你檢視。"))
+                    .font(.caption).foregroundStyle(.secondary)
                 Stepper(value: $p.dailyHandoffHour, in: 0...23) { Text(L("分界時間：每天 \(p.dailyHandoffHour) 點")) }.disabled(!p.dailyHandoffEnabled)
                 Stepper(value: $p.dailyHandoffMax, in: 1...50) { Text(L("一天最多交接：\(p.dailyHandoffMax) 件")) }.disabled(!p.dailyHandoffEnabled)
                 Text(L("過了分界時間，App 開著時會一件一件在背景交接：未封存的 Claude 聊天室、上次交接後有新對話、上下文超過 20K token 才做；總指揮優先，每件間隔 20 秒，Claude 5 小時或每週額度剩不到 15% 就暫停。正在回答或有權限詢問的聊天室延到下一輪。不會切換你正在看的畫面。")).font(.caption).foregroundStyle(.secondary)
@@ -265,7 +278,7 @@ struct LocalModelsPage: View {
                         TextField(L("名字（選單上顯示的）"), text: binding(id, \.name))
                         TextField(L("伺服器位址"), text: binding(id, \.baseURL), prompt: Text("http://127.0.0.1:8080"))
                         TextField(L("模型名稱（傳給 --model）"), text: binding(id, \.model))
-                        SecureField(L("金鑰（伺服器不需要就留空）"), text: binding(id, \.token))
+                        Text(L("伺服器的金鑰到「金鑰」分頁設定（存在鑰匙圈，不放在設定檔裡）。")).font(.caption).foregroundStyle(.secondary)
                     }
                     .formStyle(.grouped)
                     if let why = list.first(where: { $0.id == id })?.addressProblem {
@@ -293,6 +306,7 @@ struct LocalModelsPage: View {
     }
     private func remove() {
         NSApp.keyWindow?.makeFirstResponder(nil)   // 先結束編輯
+        if let m = list.first(where: { $0.id == picked }) { KeyVault.delete(service: m.secretService) }
         list.removeAll { $0.id == picked }; LocalModel.all = list; picked = nil
     }
 }

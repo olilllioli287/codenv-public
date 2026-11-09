@@ -3,11 +3,23 @@ import SwiftUI
 import SwiftTerm
 import WebKit
 
+// 必須在 NSApplication 建立視窗前註冊，停用 macOS 自己的視窗還原。
+UserDefaults.standard.register(defaults: [
+    "ApplePersistenceIgnoreState": true,
+    "NSQuitAlwaysKeepsWindows": false
+])
+
 // AI 工作台：自己的 AI 工作環境。左邊照 Codex 的側欄（專案→對話），右邊每個對話一格跑 Claude Code 的終端機。
 // 不用 tmux：關掉 App 再開，用 Claude 的 --resume 接回同一段對話。
 // 測試用參數：--dump-theme（印出從 iTerm 讀到的字型配色）、--state-dir <資料夾>（資料存到別的地方，不碰平常用的）、
 //   --background（開起來不搶焦點）、--send "秒數:文字"（幾秒後把文字送進目前那格，可以給好幾個；\r 代表 Enter）
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { false }
+
+    func application(_ app: NSApplication, shouldRestoreApplicationState coder: NSCoder) -> Bool { false }
+
+    func application(_ app: NSApplication, shouldSaveApplicationState coder: NSCoder) -> Bool { false }
+
     var store: Store!
     var workspace: Workspace!
     var focusWatch: FocusWatch?
@@ -254,6 +266,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func closeWholeWindow() { store.closeWindow() }
     @objc func toggleFloatingTerminal() { main.floatingTerminal.toggle() }
     @objc func toggleGraphPanel() { main.toggleGraphPanel() }
+    @objc func toggleUsageSheet() { UsageSheet.toggleForShortcut(in: NSApp.keyWindow) }
+    @objc func toggleHelpSheet() { HelpSheet.toggle(in: NSApp.keyWindow) }
     @objc func resetFloatingTerminalFrame() { main.floatingTerminal.resetGeometry() }
 
     /// ⌘ ⇧ T：找回剛關掉的格子或 Window（主視窗裡由 PrefixKeys 先攔；這裡給選單點、或焦點在小視窗時用）
@@ -365,6 +379,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         f4.keyEquivalentModifierMask = []
         let f6 = viewMenu.addItem(withTitle: L("關聯圖面板（F6）"), action: #selector(toggleGraphPanel), keyEquivalent: String(UnicodeScalar(NSF6FunctionKey)!))
         f6.keyEquivalentModifierMask = []
+        let f12 = viewMenu.addItem(withTitle: L("全部的用量（F12）"), action: #selector(toggleUsageSheet), keyEquivalent: String(UnicodeScalar(NSF12FunctionKey)!))
+        f12.keyEquivalentModifierMask = []
         viewMenu.addItem(withTitle: L("桌寵位置（Ctrl+A b）"), action: #selector(togglePetSlot), keyEquivalent: "")
         viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: L("放大文字"), action: #selector(zoomIn), keyEquivalent: "=")
@@ -381,6 +397,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let helpItem = NSMenuItem(); menu.addItem(helpItem)
         let helpMenu = NSMenu(title: L("說明"))
         helpMenu.addItem(withTitle: L("事件紀錄…"), action: #selector(showEventConsole), keyEquivalent: "")
+        let help = helpMenu.addItem(withTitle: L("codenv 說明（F1）"), action: #selector(toggleHelpSheet), keyEquivalent: String(UnicodeScalar(NSF1FunctionKey)!))
+        help.keyEquivalentModifierMask = []
         if Feedback.available {
             helpMenu.addItem(withTitle: L("回報問題…"), action: #selector(showFeedback), keyEquivalent: "")
         }
@@ -406,9 +424,19 @@ if CommandLine.arguments.contains("--outbox-selftest"),
    let index = CommandLine.arguments.firstIndex(of: "--state-dir"), index + 1 < CommandLine.arguments.count {
     exit(OutboxProbe.run(in: URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)) ? 0 : 1)
 }
+if let i = CommandLine.arguments.firstIndex(of: "--archive-selftest"), i + 1 < CommandLine.arguments.count,
+   let s = CommandLine.arguments.firstIndex(of: "--state-dir"), s + 1 < CommandLine.arguments.count {
+    exit(Store.runArchiveSelfTest(in: URL(fileURLWithPath: CommandLine.arguments[s + 1], isDirectory: true),
+                                  out: CommandLine.arguments[i + 1],
+                                  waitStop: CommandLine.arguments.contains("--wait-stop")) ? 0 : 1)
+}
 
 let app = KeyStatsApp.shared   // 按鍵統計：按鍵先經過它（KeyStats.swift）
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.regular)
+if CommandLine.arguments.contains("--background") {
+    app.setActivationPolicy(.accessory)
+} else {
+    app.setActivationPolicy(.regular)
+}
 app.run()

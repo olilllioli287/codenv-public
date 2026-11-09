@@ -1,0 +1,22 @@
+[
+  {"id":"01","kind":"no_action","text":"收到，我先待命。"},
+  {"id":"02","kind":"no_action","text":"Got it. I'll wait here."},
+  {"id":"03","kind":"no_action","text":"了解，計畫是先看一下再決定怎麼做。"},
+  {"id":"04","kind":"no_action","text":"I understand. Here is what I would do next: inspect the files and run the tests."},
+  {"id":"05","kind":"broken_promise","text":"我現在去修這個 bug。"},
+  {"id":"06","kind":"broken_promise","text":"I'll run the tests now and report the result."},
+  {"id":"07","kind":"broken_promise","text":"我馬上查一下這個函式的呼叫位置。"},
+  {"id":"08","kind":"broken_promise","text":"Next I'll edit the parser and verify the edge cases."},
+  {"id":"09","kind":"unwatched","text":"CI is still running; I'll keep an eye on it and report when it finishes."},
+  {"id":"10","kind":"unwatched","text":"我會盯著那個 PR，等它完成後回報。"},
+  {"id":"11","kind":"unwatched","text":"I'll monitor the test run continuously and let you know when it's done."},
+  {"id":"12","kind":"unwatched","text":"我會一直等 CI 的回報再跟進；目前沒有任何背景輪詢、排程或通知機制。"},
+  {"id":"13","kind":"ok","text":"I started a background poller that checks CI every 30 seconds; it is still running as job 8127."},
+  {"id":"14","kind":"ok","text":"「盯著」只是引用使用者的原話；我沒有承諾監看，也沒有在等任何工作。"},
+  {"id":"15","kind":"ok","text":"The phrase 'keep an eye on it' appears in the documentation example, not as a promise from me."},
+  {"id":"16","kind":"ok","text":"這一輪已修好一個局部問題並通過測試；整體目標還有兩項待做。"},
+  {"id":"17","kind":"waiting_user","text":"這裡有兩種相容方式：保留舊欄位，或直接移除。你希望採用哪一種？"},
+  {"id":"18","kind":"waiting_user","text":"I can either preserve the current behavior or change the default. Which do you prefer?"},
+  {"id":"19","kind":"done","text":"衝刺工作已全部完成，總結已交付，並已執行 codenv-todo sprint done。"},
+  {"id":"20","kind":"done","text":"All requested changes are complete, checks passed, and the final handoff is included above."}
+]

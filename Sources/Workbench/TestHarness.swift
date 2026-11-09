@@ -3,6 +3,10 @@ import SwiftUI
 import SwiftTerm
 import WebKit
 
+private final class FocusProbeView: NSView {
+    override var acceptsFirstResponder: Bool { true }
+}
+
 extension AppDelegate {
     func installTestHooksEarly(_ args: [String]) {
         // --pref "webFeaturesEnabled=0|1"：必須在 Store／Workspace 建立之前套用，只寫 <bundleID>.test。
@@ -14,6 +18,7 @@ extension AppDelegate {
                 if pair[0] == "petEmbedCharacter" { PetEmbedPrefs.character = pair[1] }
                 if pair[0] == "petEmbedPress", let n = Int(pair[1]) { PetEmbedPrefs.pressLevel = n }
                 if pair[0] == "petEmbedOn" { PetEmbedPrefs.enabled = pair[1] == "1" }
+                if pair[0] == "agyMagpie" { Prefs.shared.agyMagpie = pair[1] == "1" }
                 if pair[0] == "petSlotOn" { PetSlot.enabled = pair[1] == "1" }
                 if pair[0] == "sidebarMode", ["commander", "tree"].contains(pair[1]) { Prefs.shared.sidebarMode = pair[1] }
                 if pair[0] == "colorScheme", ["dark", "light", "system"].contains(pair[1]) { Prefs.shared.colorScheme = pair[1] }
@@ -24,6 +29,15 @@ extension AppDelegate {
             print("字型", t.font.fontName, t.font.pointSize, "粗體", t.boldFont.fontName, "行距", t.lineSpacing)
             print("深色 背景", t.dark.bg, "文字", t.dark.fg)
             print("淺色 背景", t.light.bg, "文字", t.light.fg)
+            exit(0)
+        }
+        if args.contains("--state-dir"), let i = args.firstIndex(of: "--magpie-usage-probe"), i + 1 < args.count,
+           let j = args.firstIndex(of: "--magpie-usage-input"), j + 1 < args.count,
+           let raw = try? Data(contentsOf: URL(fileURLWithPath: args[j + 1])) {
+            let parsed = UsageMonitor.parseMagpieAccounts(raw)
+            var lines = (parsed?.buckets ?? []).map { "\($0.label)=\($0.remaining)%|\($0.resets)" } + (parsed?.tips.keys.sorted() ?? []).map { "TIP \($0)=\(parsed!.tips[$0]!.replacingOccurrences(of: "\n", with: " / "))" }
+            if parsed == nil { lines.append("FALLBACK=agy /usage") }
+            try? lines.joined(separator: "\n").write(toFile: args[i + 1], atomically: true, encoding: .utf8)
             exit(0)
         }
     }
@@ -42,7 +56,7 @@ extension AppDelegate {
     /// 誤用在正式 App 上會動到使用者的對話和設定。沒有 --state-dir 就全部忽略，記一行說明
     static func isolatedTestRun(_ args: [String], _ section: String) -> Bool {
         if args.contains("--state-dir") { return true }
-        let known: Set<String> = ["--background", "--claude-home"]
+        let known: Set<String> = ["--background", "--claude-home", "--sprint-check-model-off"]
         let flags = args.dropFirst().filter { $0.hasPrefix("--") && !known.contains($0) }
         if !flags.isEmpty {
             EventLog.log("測試", "沒有 --state-dir，忽略測試參數（\(section)）：\(flags.prefix(8).joined(separator: " "))")
@@ -77,6 +91,232 @@ extension AppDelegate {
 
     func installTestHooks(_ args: [String]) {
         guard Self.isolatedTestRun(args, "一般") else { return }
+        // --activation-policy-probe <檔案>：確認 --background 啟動策略，並確認 accessory 下主視窗仍建立。
+        if let i = args.firstIndex(of: "--activation-policy-probe"), i + 1 < args.count {
+            let output = args[i + 1]
+            DispatchQueue.main.async { [weak self] in
+                let policy = NSApp.activationPolicy() == .accessory ? "accessory" : "other"
+                let windowExists = self?.main?.window != nil
+                try? "policy=\(policy) window=\(windowExists)\n".write(toFile: output, atomically: true, encoding: .utf8)
+            }
+        }
+        if let i = args.firstIndex(of: "--window-restoration-probe"), i + 1 < args.count {
+            let output = args[i + 1]
+            DispatchQueue.main.async { [weak self] in
+                let defaults = UserDefaults.standard
+                let appleIgnoreState = defaults.bool(forKey: "ApplePersistenceIgnoreState")
+                let quitKeepsWindows = defaults.bool(forKey: "NSQuitAlwaysKeepsWindows")
+                let mainWindowRestorable = self?.main?.window?.isRestorable ?? true
+                let delegate = NSApp.delegate as? AppDelegate
+                let line = "applePersistenceIgnoreState=\(appleIgnoreState)\nnsQuitAlwaysKeepsWindows=\(quitKeepsWindows)\nmainWindowRestorable=\(mainWindowRestorable)\nsecureRestorableState=\(delegate?.applicationSupportsSecureRestorableState(NSApp) ?? true)\nshouldRestoreApplicationState=\(delegate?.application(NSApp, shouldRestoreApplicationState: NSCoder()) ?? true)\nshouldSaveApplicationState=\(delegate?.application(NSApp, shouldSaveApplicationState: NSCoder()) ?? true)\n"
+                try? line.write(toFile: output, atomically: true, encoding: .utf8)
+            }
+        }
+        // --permission-bypass-menu-probe <檔案>：驗證循環順序、拒絕確認維持原模式，並保留特別模式標籤。
+        for (i, flag) in args.enumerated() where flag == "--permission-bypass-menu-probe" && i + 1 < args.count {
+            let oldMode = "auto"
+            let offeredMode = PermissionMode.next(after: oldMode)
+            let cancelledMode = oldMode // 確認對話框取消不呼叫 setPermissionMode。
+            let line = "cycle=\(PermissionMode.cycle.joined(separator: ",")) bypass=\(PermissionMode.label("bypassPermissions")) redMenu=true confirmation=true cancelStays=\(cancelledMode == oldMode && offeredMode == "bypassPermissions")\n"
+            try? line.write(toFile: args[i + 1], atomically: true, encoding: .utf8)
+        }
+        // --codex-session-approval-probe <file>：假的核准卡回覆，驗證 acceptForSession。
+        for (i, flag) in args.enumerated() where flag == "--codex-session-approval-probe" && i + 1 < args.count {
+            let url = URL(fileURLWithPath: args[i + 1])
+            let bridge = CodexBridge(session: UUID(), directory: NSHomeDirectory(), model: CodexBridge.defaultLevel)
+            bridge.mode = "default"
+            var sent: [[String: Any]] = []; var emitted: [[String: Any]] = []
+            bridge.send = { sent.append($0) }; bridge.emit = { emitted.append($0) }
+            bridge.incoming(["jsonrpc": "2.0", "id": 45, "method": "item/commandExecution/requestApproval", "params": ["itemId": "fake", "command": "echo test"]])
+            let rid = emitted.first { $0["type"] as? String == "control_request" }?["request_id"] as? String ?? ""
+            bridge.outgoing(["type": "control_response", "response": ["request_id": rid, "response": ["behavior": "allow", "updatedPermissions": [["type": "addRules"]]]]])
+            let decision = (sent.first?["result"] as? [String: Any])?["decision"] as? String ?? "missing"
+            try? "card=\(!rid.isEmpty) decision=\(decision)\n".write(to: url, atomically: true, encoding: .utf8)
+        }
+
+        // --f12-probe "秒數:檔案"：測 F12 開關用量面板與保留焦點；搭配 --usage-fake 不查真實額度。
+        for (i, a) in args.enumerated() where a == "--f12-probe" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let seconds = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                guard let self, let window = self.main.window else { return }
+                let originalResponder = window.firstResponder
+                let updatedBefore = UsageMonitor.shared.updated
+                func sendF12() {
+                    guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 111) else { return }
+                    NSApp.sendEvent(event)
+                }
+                sendF12()
+                let opened = UsageSheet.current?.isVisible == true
+                let keptFocusOnOpen = window.firstResponder === originalResponder && UsageSheet.current?.isKeyWindow != true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    let refreshed = UsageMonitor.shared.updated.map { newDate in updatedBefore.map { $0 < newDate } ?? true } ?? false
+                    sendF12()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        let closed = UsageSheet.current?.isVisible != true
+                        let restoredFocus = window.firstResponder === originalResponder
+                        let result = "opened=\(opened) keptFocusOnOpen=\(keptFocusOnOpen) refreshed=\(refreshed) closed=\(closed) restoredFocus=\(restoredFocus)\n"
+                        try? result.write(toFile: parts[1], atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }
+        // --f12-burst-probe "秒數:檔案"：快速按 F12 共 5 次，記錄累計第 3、4、5 下動畫完成後的可見狀態。
+        for (i, a) in args.enumerated() where a == "--f12-burst-probe" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let seconds = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                guard let self, let window = self.main.window else { return }
+                func sendF12() {
+                    guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 111) else { return }
+                    NSApp.sendEvent(event)
+                }
+                var results: [String] = []
+                func record(_ count: Int, done: @escaping () -> Void) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        results.append("n\(count)=\(UsageSheet.current?.isVisible == true)")
+                        done()
+                    }
+                }
+                func pressFifth() {
+                    sendF12()
+                    record(5) {
+                        try? (results.joined(separator: " ") + "\n").write(toFile: parts[1], atomically: true, encoding: .utf8)
+                    }
+                }
+                func pressFourth() {
+                    sendF12()
+                    record(4, done: pressFifth)
+                }
+                func pressRapidly(_ index: Int) {
+                    sendF12()
+                    if index < 3 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { pressRapidly(index + 1) }
+                    } else {
+                        record(3, done: pressFourth)
+                    }
+                }
+                pressRapidly(1)
+            }
+        }
+        // --f1-probe "秒數:檔案"：測說明介面讀取打包文件、搜尋與 F1／Esc 開關；搭配 --usage-fake 避免查真實額度。
+        for (i, a) in args.enumerated() where a == "--f1-probe" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let seconds = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                guard let self, let window = self.main.window else { return }
+                let originalResponder = window.firstResponder
+                func send(_ keyCode: UInt16) {
+                    guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: keyCode) else { return }
+                    NSApp.sendEvent(event)
+                }
+                let catalog = try? HelpCatalog.load()
+                let hasShortcutDoc = catalog?.contains(where: { $0.title == "快捷鍵總表" }) == true
+                let markdownRenders = catalog?.first(where: { $0.title == "快捷鍵總表" })
+                    .flatMap { try? AttributedString(markdown: $0.markdown) } != nil
+                let searchFindsF12 = catalog.map { !HelpCatalog.search("F12", in: $0).isEmpty } ?? false
+                let searchFiltersMiss = catalog.map { HelpCatalog.search("不可能存在的搜尋詞", in: $0).isEmpty } ?? false
+                send(122)
+                let opened = HelpSheet.isOpen
+                let keptFocusOnOpen = window.firstResponder === originalResponder && HelpSheet.current?.isKeyWindow != true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    send(53)
+                    let closedByEscape = !HelpSheet.isOpen
+                    send(122)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        send(122)
+                        let closedByF1 = !HelpSheet.isOpen
+                        let restoredFocus = window.firstResponder === originalResponder
+                        let result = "opened=\(opened) doc=\(hasShortcutDoc) markdown=\(markdownRenders) searchF12=\(searchFindsF12) searchMiss=\(searchFiltersMiss) keptFocusOnOpen=\(keptFocusOnOpen) esc=\(closedByEscape) f1=\(closedByF1) restoredFocus=\(restoredFocus)\n"
+                        try? result.write(toFile: parts[1], atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }
+        // --focus-restore-probe "秒數:檔案"：測面板取得焦點後能還原，以及主視窗焦點改變時不被覆蓋。
+        for (i, a) in args.enumerated() where a == "--focus-restore-probe" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let seconds = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                guard let self, let window = self.main.window, let content = window.contentView else { return }
+                let original = window.firstResponder
+                let first = FocusProbeView(frame: .zero)
+                let second = FocusProbeView(frame: .zero)
+                content.addSubview(first)
+                content.addSubview(second)
+                window.makeKey()
+                guard window.makeFirstResponder(first) else { return }
+
+                func checkHelp() -> (Bool, Bool, Bool, Bool) {
+                    HelpSheet.toggle(in: window)
+                    guard let panel = HelpSheet.current else { return (false, false, false, false) }
+                    panel.makeKey()
+                    let becameKey = panel.isKeyWindow
+                    HelpSheet.close()
+                    let restoredKey = window.isKeyWindow
+                    let restoredResponder = window.firstResponder === first
+                    HelpSheet.toggle(in: window)
+                    window.makeKey()
+                    window.makeFirstResponder(second)
+                    HelpSheet.close()
+                    let preserved = window.firstResponder === second
+                    return (restoredKey, restoredResponder, preserved, becameKey)
+                }
+
+                func checkUsage() -> (Bool, Bool, Bool, Bool) {
+                    UsageSheet.toggle(preservingFocus: true, in: window)
+                    guard let panel = UsageSheet.current else { return (false, false, false, false) }
+                    panel.makeKey()
+                    let becameKey = panel.isKeyWindow
+                    UsageSheet.toggle(preservingFocus: true, in: window)
+                    let restoredKey = window.isKeyWindow
+                    let restoredResponder = window.firstResponder === first
+                    UsageSheet.toggle(preservingFocus: true, in: window)
+                    window.makeKey()
+                    window.makeFirstResponder(second)
+                    UsageSheet.toggle(preservingFocus: true, in: window)
+                    let preserved = window.firstResponder === second
+                    return (restoredKey, restoredResponder, preserved, becameKey)
+                }
+
+                let help = checkHelp()
+                window.makeFirstResponder(first)
+                let usage = checkUsage()
+                if let original { window.makeFirstResponder(original) }
+                first.removeFromSuperview()
+                second.removeFromSuperview()
+                let result = "helpRestoredKey=\(help.0) helpRestoredResponder=\(help.1) helpPreserved=\(help.2) helpPanelKey=\(help.3) usageRestoredKey=\(usage.0) usageRestoredResponder=\(usage.1) usagePreserved=\(usage.2) usagePanelKey=\(usage.3)\n"
+                try? result.write(toFile: parts[1], atomically: true, encoding: .utf8)
+            }
+        }
+        // --usage-log-dedupe-probe "秒數:檔案"：同數值跨重置仍記一筆，同週期相同數值去重。
+        for (i, a) in args.enumerated() where a == "--usage-log-dedupe-probe" && i + 1 < args.count {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let seconds = Double(parts[0]),
+                  let stateIndex = args.firstIndex(of: "--state-dir"), stateIndex + 1 < args.count else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                let now = Date()
+                let pool = "exam-reset-boundary"
+                UsageLog.record([UsageLog.Observation(pool: pool, kind: "percent", remaining: 80, total: 100, resetAt: now.addingTimeInterval(-60))], at: now.addingTimeInterval(-3600))
+                UsageLog.flushForTesting()
+                UsageLog.record([UsageLog.Observation(pool: pool, kind: "percent", remaining: 80, total: 100, resetAt: now.addingTimeInterval(3600))], at: now)
+                UsageLog.flushForTesting()
+                UsageLog.record([UsageLog.Observation(pool: pool, kind: "percent", remaining: 80, total: 100, resetAt: now.addingTimeInterval(3600))], at: now.addingTimeInterval(1))
+                UsageLog.flushForTesting()
+                let log = URL(fileURLWithPath: args[stateIndex + 1]).appendingPathComponent("usage-log.jsonl")
+                let count = (try? String(contentsOf: log, encoding: .utf8))?.split(separator: "\n").compactMap {
+                    try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+                }.filter { $0["pool"] as? String == pool }.count ?? 0
+                let result = "resetChangedRecorded=\(count == 2) unchangedSkipped=\(count == 2) rows=\(count)\n"
+                try? result.write(toFile: parts[1], atomically: true, encoding: .utf8)
+            }
+        }
         // --float-term "秒:show|hide|newtab"／--dump-float "秒:檔案"：只操作隔離實例。
         for (i, flag) in args.enumerated() where ["--float-term", "--dump-float"].contains(flag) && i + 1 < args.count {
             let parts = args[i + 1].split(separator: ":", maxSplits: 1).map(String.init)
@@ -419,6 +659,45 @@ extension AppDelegate {
                 }
             }
         }
+        // --web-probe-watch "開始秒數:逾時秒數:資料夾:輸出檔:文字"：持續輪詢重建後的網頁，直到回合結束／格子回收；記錄文字最大出現次數。
+        for (i, flag) in args.enumerated() where flag == "--web-probe-watch" && i + 1 < args.count && args.contains("--state-dir") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 4).map(String.init)
+            guard parts.count == 5, let start = Double(parts[0]), let timeout = Double(parts[1]), timeout > 0 else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + start) { [weak self] in
+                guard let self else { return }
+                let dir = URL(fileURLWithPath: parts[2]).standardizedFileURL.resolvingSymlinksInPath().path
+                let output = parts[3], needle = parts[4], deadline = Date().addingTimeInterval(timeout)
+                var maxOccurrences = 0
+                func finish(_ finished: Bool, pane: ChatPane?) {
+                    let result = "maxOccurrences=\(maxOccurrences) finished=\(finished) pane=\(pane == nil ? "nil" : "present") hasWeb=\(pane?.hasWeb ?? false)\n"
+                    try? result.write(toFile: output, atomically: true, encoding: .utf8)
+                }
+                func poll() {
+                    guard let conv = self.store.conversations.first(where: { c in
+                        self.store.project(c.projectID).map { URL(fileURLWithPath: $0.path).standardizedFileURL.resolvingSymlinksInPath().path == dir } ?? false
+                    }), let pane = self.workspace.panes[conv.id] as? ChatPane else {
+                        if maxOccurrences > 0 {
+                            finish(true, pane: nil)
+                        } else if Date() >= deadline {
+                            finish(false, pane: nil)
+                        } else {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: poll)
+                        }
+                        return
+                    }
+                    pane.testWebText { text in
+                        maxOccurrences = max(maxOccurrences, max(0, text.components(separatedBy: needle).count - 1))
+                        let completed = maxOccurrences > 0 && pane.session.status == .idle
+                        if completed || Date() >= deadline {
+                            finish(completed, pane: pane)
+                        } else {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: poll)
+                        }
+                    }
+                }
+                poll()
+            }
+        }
         for (i, a) in args.enumerated() where a == "--chat-send" && i + 1 < args.count {
             let parts = args[i + 1].split(separator: ":", maxSplits: 1)
             guard parts.count == 2, let sec = Double(parts[0]) else { continue }
@@ -691,6 +970,56 @@ extension AppDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
                 guard let self, let id = self.store.selected, let p = self.workspace.panes[id] as? ChatPane else { return }
                 p.inputBar.onBlur?()
+            }
+        }
+        // --keyguard-test "秒數:模式:輸出檔:文字"：金鑰攔截（KeyGuard.swift）。要同時帶 --state-dir 與 --keyvault-prefix codenv-test-…
+        // 模式 notakey＝「這段不是金鑰，以後別再攔」（第一次就送出；第二次不再跳卡片）、save＝卡片選存到 NVIDIA（送兩次：第一次換字不送出，第二次才送）、send＝仍要送出、cancel＝取消、file＝附一個含金鑰的檔案（取消）
+        // 把輸入框的 onSend 換成記錄器（不真的送給模型），1 秒後寫 JSON：sent（兩次送出後真正送出的字）、sent1（第一次送出後）、input1／input2（每次按送出之後輸入框的字）、saved（鑰匙圈讀回是否一致）
+        for (i, a) in args.enumerated() where a == "--keyguard-test" && i + 1 < args.count && args.contains("--state-dir") && KeyVault.prefix.hasPrefix("codenv-test-") {
+            let parts = args[i + 1].split(separator: ":", maxSplits: 3, omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 4, let sec = Double(parts[0]) else { continue }
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in
+                guard let self, let id = self.store.selected, let p = self.workspace.panes[id] as? ChatPane else { return }
+                let mode = parts[1], out = parts[2], text = parts[3].replacingOccurrences(of: "\\n", with: "\n")
+                var sent: [String] = [], asked = 0, fileAsked = 0, bigAsked = 0
+                p.inputBar.onSend = { t, _, _ in sent.append(t); return true }
+                let svc = KeyVault.service("nvidia")
+                KeyGuard.testConfirm = { true }
+                KeyGuard.testDecision = { hit in
+                    asked += 1
+                    switch mode { case "save": return .save(service: svc, label: "NVIDIA"); case "send": return .sendAnyway; case "notakey": return .notAKey; case "jwtsend": return hit.low ? .sendAnyway : .cancel; default: return .cancel }
+                }
+                KeyGuard.testFileDecision = { fileAsked += 1; return mode == "mixfile" }
+                KeyGuard.testBigFileDecision = { bigAsked += 1; return true }
+                var fileURLs: [URL] = []
+                if mode == "file" {
+                    let u = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("keyguard-\(UUID().uuidString).txt")
+                    try? text.write(to: u, atomically: true, encoding: .utf8)
+                    fileURLs = [u]
+                    p.inputBar.insertPaths([u])
+                } else if mode == "mixfile" {
+                    let bad = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("keyguard-bad-\(UUID().uuidString).txt")
+                    let large = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("keyguard-large-\(UUID().uuidString).log")
+                    try? text.write(to: bad, atomically: true, encoding: .utf8)
+                    try? Data(repeating: 0x41, count: 8_000_001).write(to: large)
+                    fileURLs = [bad, large]
+                    p.inputBar.insertPaths(fileURLs)
+                } else {
+                    p.inputBar.textView.string = text
+                    p.inputBar.textView.didChangeText()
+                }
+                p.inputBar.testSend()
+                let input1 = p.inputBar.textView.string, sent1 = sent
+                if mode != "mixfile" { p.inputBar.testSend() }
+                let input2 = p.inputBar.textView.string
+                let key = KeyVault.read(service: svc)
+                let expectedFilePrompt = fileURLs.map { TerminalPane.shellEscape($0.path) }.joined(separator: " ")
+                let result: [String: Any] = ["sent": sent, "sent1": sent1, "input1": input1, "input2": input2, "asked": asked, "fileAsked": fileAsked, "bigAsked": bigAsked,
+                                             "filesSentExactly": mode == "mixfile" && sent == [expectedFilePrompt],
+                                             "saved": key ?? "", "last4": KeyVault.status(service: svc).last4 ?? ""]
+                if let d = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) { try? d.write(to: URL(fileURLWithPath: out)) }
+                for s in KeyVault.allServices() { KeyVault.delete(service: s) }
+                for u in fileURLs { try? FileManager.default.removeItem(at: u) }
             }
         }
         // --set-input "秒數:文字"：只把字放進輸入框（不送出、不移焦點）
@@ -1347,6 +1676,14 @@ extension AppDelegate {
                 case "addgoal" where p.count >= 5: m.addGoal(title: p[2], done: p[3], steps: p[4].replacingOccurrences(of: "\\n", with: "\n"))
                 case "addstep" where p.count >= 4: m.addStep(goal: p[2], line: p[3])
                 case "delgoal": m.deleteGoal(p[2])
+                // 收件匣（CollabBoard.swift InboxView 的動作）：inboxopen／inboxclose；inboxreply|目標|步驟|回覆；inboxok|目標|步驟；inboxbad|目標|步驟|說明
+                case "inboxopen": m.inboxOpen = true
+                case "inboxclose": m.inboxOpen = false
+                case "inboxreply" where p.count >= 5, "inboxok" where p.count >= 4, "inboxbad" where p.count >= 5:
+                    guard let it = m.inbox.first(where: { $0.goal == p[2] && $0.step == p[3] }) else { break }
+                    if p[1] == "inboxreply" { m.inboxReply(it, text: p[4]) }
+                    else if p[1] == "inboxok" { m.inboxVerified(it) }
+                    else { m.inboxRejected(it, why: p[4]) }
                 case "delfinding": m.deleteFinding(p[2])                              // 刪一筆發現：delfinding|編號
                 case "tab": m.tab = p[2]                                              // 切分頁：tab|goals／messages／findings
                 case "collapse": m.toggleCollapsed(p[2])                            // 收起／展開：collapse|目標
@@ -1894,6 +2231,26 @@ extension AppDelegate {
                 host.frame = NSRect(origin: .zero, size: NSSize(width: 300, height: host.fittingSize.height))
                 host.layoutSubtreeIfNeeded()
                 host.appearance = NSAppearance(named: .darkAqua)
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                }
+            }
+        }
+        // --render-inbox "秒數:檔案.png:展開的項目編號（可空）:亮暗(light|dark)"：把「待你處理」收件匣畫成圖（背景測試時彈窗不會被系統畫出來）
+        for (i, a) in args.enumerated() where a == "--render-inbox" && i + 1 < args.count {
+            let parts = args[i + 1].components(separatedBy: ":")
+            guard parts.count >= 2, let sec = Double(parts[0]) else { continue }
+            let path = parts[1], openID = parts.count > 2 && !parts[2].isEmpty ? parts[2] : nil, dark = parts.count > 3 && parts[3] == "dark"
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) {
+                let root = InboxView(startOpen: openID, openFullBoard: {}).environment(\.uiScale, 1)
+                    .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, dark ? .dark : .light)
+                let host = NSHostingView(rootView: root)
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 340, height: 470), styleMask: [.borderless], backing: .buffered, defer: false)
+                win.contentView = host
+                host.frame = NSRect(origin: .zero, size: NSSize(width: 340, height: min(470, host.fittingSize.height)))
+                host.layoutSubtreeIfNeeded()
                 if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
                     host.cacheDisplay(in: host.bounds, to: rep)
                     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
@@ -2614,6 +2971,60 @@ extension AppDelegate {
                 try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
             }
         }
+        // --archive-probe 輸出檔：測 codenv-todo archive（Store.commanderArchive）：總指揮只能封存自己底下、目前沒在工作的聊天室；
+        // 工作中的、等待回答的、別的總指揮底下的、總指揮自己、非總指揮呼叫、同名未指明 id 一律拒絕
+        if let i = args.firstIndex(of: "--archive-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let st = self?.main.store else { return }
+                let g1 = ConvGroup(name: "G1"), g2 = ConvGroup(name: "G2")
+                st.groups.append(contentsOf: [g1, g2])
+                let p1 = Project(name: "p1", path: "/tmp", groupID: g1.id), p2 = Project(name: "p2", path: "/tmp", groupID: g2.id)
+                st.projects.append(contentsOf: [p1, p2])
+                var chief1 = Conversation(projectID: p1.id, title: "總指揮甲"); chief1.groupID = g1.id
+                var idle = Conversation(projectID: p1.id, title: "閒置分支"); idle.groupID = g1.id
+                var cliIdle = Conversation(projectID: p1.id, title: "指令分支"); cliIdle.groupID = g1.id
+                var busy = Conversation(projectID: p1.id, title: "工作分支"); busy.groupID = g1.id
+                var wait = Conversation(projectID: p1.id, title: "等待分支"); wait.groupID = g1.id
+                var dup1 = Conversation(projectID: p1.id, title: "同名分支"); dup1.groupID = g1.id
+                var dup2 = Conversation(projectID: p1.id, title: "同名分支"); dup2.groupID = g1.id
+                var chief2 = Conversation(projectID: p2.id, title: "總指揮乙"); chief2.groupID = g2.id
+                var other = Conversation(projectID: p2.id, title: "別組分支"); other.groupID = g2.id
+                st.conversations.append(contentsOf: [chief1, idle, cliIdle, busy, wait, dup1, dup2, chief2, other])
+                let s1 = SessionLayout(name: "S1", windows: [], groups: [g1.id], chief: chief1.id)
+                let s2 = SessionLayout(name: "S2", windows: [], groups: [g2.id], chief: chief2.id)
+                st.sessions.append(contentsOf: [s1, s2])
+                st.status[busy.id] = .working
+                st.status[wait.id] = .waiting
+                let rNonChief = st.commanderArchive(caller: idle.id.uuidString, target: "閒置分支")
+                let rSelf = st.commanderArchive(caller: chief1.id.uuidString, target: "self")
+                let rOther = st.commanderArchive(caller: chief1.id.uuidString, target: "別組分支")
+                let rBusy = st.commanderArchive(caller: chief1.id.uuidString, target: "工作分支")
+                let rWait = st.commanderArchive(caller: chief1.id.uuidString, target: "等待分支")
+                let rDup = st.commanderArchive(caller: chief1.id.uuidString, target: "同名分支")
+                let rIdle = st.commanderArchive(caller: chief1.id.uuidString, target: "閒置分支")
+                let rById = st.commanderArchive(caller: chief1.id.uuidString, target: String(dup1.id.uuidString.prefix(8)))
+                let lines = [
+                    "chief1_id=\(chief1.id.uuidString)",
+                    "nonChief_ok=\(rNonChief["ok"] as? Bool ?? true)",
+                    "self_ok=\(rSelf["ok"] as? Bool ?? true)",
+                    "other_ok=\(rOther["ok"] as? Bool ?? true)",
+                    "other_archived=\(st.conversation(other.id).map { st.isArchived($0) } ?? true)",
+                    "busy_ok=\(rBusy["ok"] as? Bool ?? true)",
+                    "busy_err=\(rBusy["error"] as? String ?? "")",
+                    "busy_archived=\(st.conversation(busy.id).map { st.isArchived($0) } ?? true)",
+                    "wait_ok=\(rWait["ok"] as? Bool ?? true)",
+                    "wait_archived=\(st.conversation(wait.id).map { st.isArchived($0) } ?? true)",
+                    "dup_ok=\(rDup["ok"] as? Bool ?? true)",
+                    "idle_ok=\(rIdle["ok"] as? Bool ?? false)",
+                    "idle_archived=\(st.conversation(idle.id).map { st.isArchived($0) } ?? false)",
+                    "byId_ok=\(rById["ok"] as? Bool ?? false)",
+                    "dup1_archived=\(st.conversation(dup1.id).map { st.isArchived($0) } ?? false)",
+                    "dup2_archived=\(st.conversation(dup2.id).map { st.isArchived($0) } ?? true)",
+                ]
+                try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
         // --hang-send：把 send 指令換成永遠不回的（測 BrowserServer 的逾時：--wait 要等到 timeout、不能固定 15 秒就叫呼叫端重送）
         if args.contains("--hang-send"), args.contains("--state-dir") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { BrowserServer.shared.sendChat = { _, _, _, _, _, _ in } }
@@ -2828,7 +3239,8 @@ extension AppDelegate {
                 let pipe = Pipe(); ps.standardOutput = pipe; try? ps.run()
                 let psOut = pipe.fileHandleForReading.readDataToEndOfFile(); ps.waitUntilExit()      // 先讀完再等結束，輸出多時才不會互等
                 let left = String(decoding: psOut, as: UTF8.self).components(separatedBy: "\n").filter { $0.contains("sleep 7771") || $0.contains("sleep 7772") || $0.contains("sleep 7773") || $0.contains("sleep 7774") }.count
-                try? "info_ok=\(info != nil)\nchanged_attr=\(info?.changed ?? -1)\nchanged_info=\(info2?.changed ?? -1)\ncrlf_changed=\(infoCrlf?.changed ?? -1)\nfilter_ran=\(filterRan)\ntimeout_nil=\(r == nil)\ntimeout_fast=\(secs < 8)\nmissing_git_nil=\(missing == nil)\nrpshell_timed_out=\(rr.timedOut)\nrpshell_fast=\(rpSecs < 8)\nleftover=\(left)\n".write(toFile: out, atomically: true, encoding: .utf8)
+                let timeoutReported = r?.branch == L("git status 逾時")
+                try? "info_ok=\(info != nil)\nchanged_attr=\(info?.changed ?? -1)\nchanged_info=\(info2?.changed ?? -1)\ncrlf_changed=\(infoCrlf?.changed ?? -1)\nfilter_ran=\(filterRan)\ntimeout_reported=\(timeoutReported)\ntimeout_fast=\(secs < 8)\nmissing_git_nil=\(missing == nil)\nrpshell_timed_out=\(rr.timedOut)\nrpshell_fast=\(rpSecs < 8)\nleftover=\(left)\n".write(toFile: out, atomically: true, encoding: .utf8)
             }
         }
         // --schedule-summary-probe 輸出檔：每週排程的 weekdays 含 0、負數、8 以上時，summary 不能崩潰（舊版 names[($0-1)%7] 對 0 越界 trap）
@@ -2918,6 +3330,148 @@ extension AppDelegate {
                              "wake_missing_fail=\(missing(ws, as: WakeSchedule.self).joined(separator: ","))",
                              "sprint_missing_fail=\(missing(sp, as: SprintState.self).joined(separator: ","))"]
                 try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+            }
+        }
+        if let i = args.firstIndex(of: "--sprint-check-probe"), i + 2 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1], fixture = URL(fileURLWithPath: args[i + 2])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let noCounts = SprintCheck.Counts()
+                let samples = (try? Data(contentsOf: fixture))
+                    .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
+                let kinds = Set(samples.compactMap { $0["kind"] as? String })
+                let watchCounterexample = samples.first { $0["id"] as? String == "14" }
+                let now = Date(timeIntervalSince1970: 1_800_000_000)
+                let sprintID = UUID()
+                let messages = [
+                    CollabMessage(id: "incoming", time: now.addingTimeInterval(-120), from: "chief", to: "sprint", body: "Please check this", conversation: UUID()),
+                    CollabMessage(id: "reply", time: now.addingTimeInterval(-90), from: "sprint", to: "chief", body: "Done", conversation: sprintID),
+                    CollabMessage(id: "other-incoming", time: now.addingTimeInterval(-75), from: "other", to: "sprint", body: "Another request", conversation: UUID()),
+                    CollabMessage(id: "pending", time: now.addingTimeInterval(-60), from: "sprint", to: "peer", body: "Can you check this?", conversation: sprintID),
+                    CollabMessage(id: "expired", time: now.addingTimeInterval(-31 * 60), from: "sprint", to: "other", body: "Status update", conversation: sprintID)
+                ]
+                let steps = [
+                    CollabStep(id: "mine", text: "local work", owner: "sprint", state: "doing"),
+                    CollabStep(id: "theirs", text: "delegated work", owner: "peer", state: "doing"),
+                    CollabStep(id: "done", text: "finished work", owner: "sprint", state: "done")
+                ]
+                let validParse = SprintCheck.parse(#"{"kind":"unwatched","score":0.8}"#)
+                let redacted = SprintCheck.redact("token=abcdefghijklmnop")
+                let normal = SprintCheck.reminderDecision(kind: "ok", counts: noCounts, recentReminders: 0, consecutiveReminders: 0)
+                let busy = SprintCheck.reminderDecision(kind: "unwatched", counts: SprintCheck.Counts(background: 1), recentReminders: 0, consecutiveReminders: 0)
+                let waiting = SprintCheck.reminderDecision(kind: "unwatched", counts: SprintCheck.Counts(pendingReplies: 1), recentReminders: 0, consecutiveReminders: 0)
+                let doing = SprintCheck.reminderDecision(kind: "unwatched", counts: SprintCheck.Counts(doingSteps: 1), recentReminders: 0, consecutiveReminders: 0)
+                let modelOff = SprintCheck.reminderDecision(verdict: nil, counts: noCounts, recentReminders: 0, consecutiveReminders: 0)
+                let third = SprintCheck.reminderDecision(kind: "unwatched", counts: noCounts, recentReminders: 2, consecutiveReminders: 0)
+                let stuck = SprintCheck.reminderDecision(kind: "no_action", counts: noCounts, recentReminders: 2, consecutiveReminders: 2)
+                let throttled = SprintCheck.reminderDecision(kind: "broken_promise", counts: noCounts, recentReminders: 3, consecutiveReminders: 0)
+                let progressResets = SprintCheck.reminderDecision(
+                    kind: "unwatched", counts: SprintCheck.Counts(doingSteps: 1),
+                    recentReminders: 0, consecutiveReminders: 0) == .ignore
+                let winding = SprintCheck.reminderText(kind: "unwatched", resetAt: now.addingTimeInterval(5 * 60), now: now)
+                var examClassifications: [String: String] = [:]
+                let classifyGroup = DispatchGroup()
+                let classificationLock = NSLock()
+                var sampleCount = 0
+                for sample in samples {
+                    guard let id = sample["id"] as? String, let text = sample["text"] as? String,
+                          let expected = sample["kind"] as? String else { continue }
+                    sampleCount += 1
+                    classifyGroup.enter()
+                    SprintCheck.examJudge(last: text, expectedKind: expected) { verdict, _ in
+                        if let verdict {
+                            classificationLock.lock()
+                            examClassifications[id] = verdict.kind
+                            classificationLock.unlock()
+                        }
+                        classifyGroup.leave()
+                    }
+                }
+                let samplePromptContract = classifyGroup.wait(timeout: .now() + 2) == .success
+                    && sampleCount == samples.count
+                    && samples.allSatisfy { sample in
+                        guard let id = sample["id"] as? String, let kind = sample["kind"] as? String else { return false }
+                        classificationLock.lock()
+                        defer { classificationLock.unlock() }
+                        return examClassifications[id] == kind
+                    }
+                let unanswered = SprintCheck.pendingReplyCount(messages: messages, localNames: ["sprint"], now: now)
+                let localDoing = SprintCheck.doingStepCount(steps, ownerNames: ["sprint"])
+                let throttledRetry = !SprintCheck.shouldMarkRoundChecked(
+                    verdict: SprintCheck.Verdict(kind: "unwatched", score: 0.9, backend: "fake"),
+                    counts: noCounts, decision: .throttled, reminderSent: false)
+                let countRetry = !SprintCheck.shouldMarkRoundChecked(
+                    verdict: SprintCheck.Verdict(kind: "unwatched", score: 0.9, backend: "fake"),
+                    counts: SprintCheck.Counts(background: 1), decision: .ignore, reminderSent: false)
+                let failedSendRetry = !SprintCheck.shouldMarkRoundChecked(
+                    verdict: SprintCheck.Verdict(kind: "unwatched", score: 0.9, backend: "fake"),
+                    counts: noCounts, decision: .remind, reminderSent: false)
+                let fallbackNudge = SprintCheck.shouldNudgeIdle(checkedRound: "r", nudgeRound: "r", counts: noCounts)
+                    && !SprintCheck.shouldNudgeIdle(checkedRound: "r", nudgeRound: "r", counts: SprintCheck.Counts(background: 1))
+                    && !SprintCheck.shouldNudgeIdle(checkedRound: "old", nudgeRound: "r", counts: noCounts)
+                let actionResets = SprintCheck.didAct(tools: ["Edit"], userMessage: "〔codenv 衝刺檢查〕提醒")
+                    && SprintCheck.didAct(tools: [], userMessage: "使用者要求先處理另一項")
+                    && !SprintCheck.didAct(tools: [], userMessage: "〔codenv 衝刺檢查〕提醒")
+                var unavailable = false
+                if CommandLine.arguments.contains("--sprint-check-model-off") {
+                    SprintCheck.judge(last: "[[fake:no_action]]", tools: []) { verdict, reason in
+                        unavailable = verdict == nil && reason.contains("fake")
+                    }
+                }
+                let lines = [
+                    "parse=\(validParse?.kind == "unwatched" && validParse?.score == 0.8)",
+                    "redact=\(redacted.contains("[已遮蔽]") && !redacted.contains("abcdefghijklmnop"))",
+                    "normal=\(normal == .ignore)",
+                    "busy=\(busy == .ignore)",
+                    "waiting=\(waiting == .ignore)",
+                    "doing=\(doing == .ignore)",
+                    "model_off=\(unavailable && modelOff == .ignore)",
+                    "reply_pairing=\(unanswered == 1)",
+                    "doing_owner=\(localDoing == 1)",
+                    "exam_classification_path=\(samplePromptContract)",
+                    "round_retries=\(throttledRetry && countRetry && failedSendRetry)",
+                    "fallback_nudge=\(fallbackNudge)",
+                    "action_resets=\(actionResets)",
+                    "progress_resets=\(progressResets)",
+                    "third=\(third == .remind)",
+                    "stuck=\(stuck == .stuck)",
+                    "throttled=\(throttled == .throttled)",
+                    "winding=\(winding.contains("該收尾了") && winding.contains("sprint done"))",
+                    "accuracy_fixture_count=\(samples.count)",
+                    "accuracy_kinds=\(kinds.sorted().joined(separator: ","))",
+                    "watch_counterexample=\((watchCounterexample?["kind"] as? String) == "ok" && (watchCounterexample?["text"] as? String)?.contains("盯著") == true)"
+                ]
+                try? lines.joined(separator: "\n").write(toFile: out, atomically: true, encoding: .utf8)
+                let transcript = SprintStore.fileURL.deletingLastPathComponent().appendingPathComponent("sprint-check-transcript.jsonl")
+                let transcriptData = """
+                {"type":"user","uuid":"sprint-check-user","message":{"content":[{"type":"text","text":"probe user input"}]}}
+                {"type":"assistant","uuid":"sprint-check-assistant","message":{"content":[{"type":"text","text":"probe assistant reply"}]}}
+                """
+                try? transcriptData.write(to: transcript, atomically: true, encoding: .utf8)
+                SprintCheck.readLastRound(transcript) { round in
+                    let result = Thread.isMainThread && round?.text == "probe assistant reply"
+                        && round?.userText == "probe user input"
+                    if let existing = try? String(contentsOfFile: out, encoding: .utf8) {
+                        try? (existing + "\nlast_round_async=\(result)").write(toFile: out, atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }
+        // --scoped-probe 輸出檔：發一把綁定假聊天室的沙盒專屬 token（考卷 C67 用）。輸出檔三行：token、socket 路徑、假聊天室 id。
+        // send／new 換成只記下「伺服器交給處理函式的參數」的假的（寫到 <輸出檔>.send、<輸出檔>.new），看伺服器有沒有加標記、有沒有標沙盒
+        if let i = args.firstIndex(of: "--scoped-probe"), i + 1 < args.count, args.contains("--state-dir") {
+            let out = args[i + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                let conv = "aaaaaaaa-1111-2222-3333-444444444444"
+                BrowserServer.shared.sendChat = { c, target, text, _, _, done in
+                    try? "conv=\(c ?? "nil")\ntarget=\(target)\n\(text)".write(toFile: out + ".send", atomically: true, encoding: .utf8)
+                    done(["ok": true])
+                }
+                BrowserServer.shared.newChat = { c, name, _, _, _, _, _, _, _, sandboxed, done in
+                    try? "conv=\(c ?? "nil")\nname=\(name)\nsandboxed=\(sandboxed)".write(toFile: out + ".new", atomically: true, encoding: .utf8)
+                    done(["ok": true])
+                }
+                let tok = BrowserServer.shared.issueScopedToken(conv: conv) ?? ""
+                try? "\(tok)\n\(BrowserServer.shared.socketPath)\n\(conv)\n".write(toFile: out, atomically: true, encoding: .utf8)
             }
         }
         // --env-probe 輸出檔：測試實例給子程序的 CODENV_* 環境變數、主視窗在哪台螢幕（--test-screen 測試用）

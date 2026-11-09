@@ -24,10 +24,13 @@ def die(msg):
 
 
 def ask(req, timeout=30):
-    try:
+    if os.environ.get("CODENV_SCOPED_TOKEN") and os.environ.get("CODENV_SOCKET"):
+        token, path = os.environ["CODENV_SCOPED_TOKEN"], os.environ["CODENV_SOCKET"]      # 沙盒聊天室：專屬 token（讀不到 AI 工作台資料夾）
+    else:
+      try:
         token = open(os.path.join(DIR, "token")).read().strip()
         path = open(os.path.join(DIR, "socket")).read().strip()
-    except OSError:
+      except OSError:
         die("找不到 codenv 的瀏覽器通道：codenv 沒開，或還沒更新到有瀏覽器格子的版本")
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)

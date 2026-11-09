@@ -22,14 +22,27 @@ extension MainWindowController {
         let keeper = LidKeeper(env: sim ?? RealLidEnv(), logURL: paths.log, markerURL: paths.marker)
         sim?.onCall = { [weak keeper] s in keeper?.log(s) }
         keeper.enabled = { Prefs.shared.lidKeepWorking }
+        keeper.resumeEnabled = { Prefs.shared.lidResumeNotifyEnabled }
         keeper.workingIDs = { [weak self] in
             guard let self else { return [] }
             return self.store.conversations.filter { Store.isChat($0) && self.store.status[$0.id] == .working }.map(\.id)
         }
         keeper.workingCount = { [weak keeper] in keeper?.workingIDs().count ?? 0 }
         keeper.sendStop = { [weak self] id in
+            guard let pane = self?.workspace.panes[id] as? ChatPane else { return false }
+            return pane.sendText(LidKeeper.stopMessage)
+        }
+        keeper.sessionIsAvailable = { [weak self] id in
+            guard let self, let conversation = self.store.conversation(id), Store.isChat(conversation) else { return false }
+            return self.workspace.panes[id] is ChatPane
+        }
+        keeper.sessionIsArchived = { [weak self] id in
+            guard let self, let conversation = self.store.conversation(id) else { return true }
+            return self.store.isArchived(conversation)
+        }
+        keeper.sendResume = { [weak self] id in
             guard let pane = self?.workspace.panes[id] as? ChatPane else { return }
-            _ = pane.sendText(LidKeeper.stopMessage)
+            _ = pane.sendText(LidKeeper.resumeMessage)
         }
         keeper.notify = { [weak self] title, detail in
             // 測試實例不跳視窗，只記一行

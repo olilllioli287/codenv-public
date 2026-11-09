@@ -37,6 +37,7 @@ final class LidKeeper {
     }
 
     static let stopMessage = "使用者闔上螢幕了：做完目前這一段就停，不要開始下一段，等他回來再繼續。"
+    static let resumeMessage = "使用者打開螢幕回來了：可以繼續剛才停下的工作。"
 
     let env: LidEnv
     var limits = Limits()
@@ -45,7 +46,13 @@ final class LidKeeper {
     /// 目前「工作中」的聊天室數（假事件測試可以覆蓋）
     var workingCount: () -> Int = { 0 }
     var workingIDs: () -> [UUID] = { [] }
-    var sendStop: (UUID) -> Void = { _ in }
+    var sendStop: (UUID) -> Bool = { _ in false }
+    /// 螢幕打開後恢復先前實際收到 stop 的聊天室。
+    var resumeEnabled: () -> Bool = { true }
+    var sendResume: (UUID) -> Void = { _ in }
+    var sessionIsAvailable: (UUID) -> Bool = { _ in false }
+    var sessionIsArchived: (UUID) -> Bool = { _ in true }
+    var resumeDelay: TimeInterval = 3
     /// 打開螢幕後只有出事才提醒：標題、內文
     var notify: (String, String) -> Void = { _, _ in }
     let logURL: URL
@@ -117,6 +124,8 @@ final class LidKeeper {
     private var lastTickAt: Date?
     private var lastRetry = Date.distantPast
     private var retryFailLogged = false
+    private(set) var stoppedSessionIDs: Set<UUID> = []
+    private var resumeGeneration = 0
 
     private func turnOn(_ t: Date) -> NoSleepResult {
         if noSleepOn { return .ok }
@@ -194,13 +203,19 @@ final class LidKeeper {
         }
 
         // 螢幕打開了：正式撐著的結束（還在工作中就退回預擋，不切 pmset）
+        if closed {
+            cancelPendingResume()
+        }
         if !closed, wasClosed {
             wasClosed = false; handledThisClosure = false
             if isHolding { endHold(reason: "螢幕打開了", problem: false, keepNoSleep: true) }
+            scheduleResume()
         }
         if closed { wasClosed = true }
 
         if !on {
+            cancelPendingResume()
+            stoppedSessionIDs.removeAll()
             if isHolding { endHold(reason: "設定關閉了這個功能", problem: false, keepNoSleep: false) }
             if noSleepOn { turnOff(); log("結束預擋：設定關閉了這個功能") }
             flushPending(closed: closed)
@@ -319,7 +334,9 @@ final class LidKeeper {
                 holdingSince = t; lastLog = t; hotSince = nil; maxTempSeen = env.maxTemperature(); windowMaxTemp = maxTempSeen; idleSince = nil
                 let ids = workingIDs()
                 log("闔蓋，撐著讓它做完這一段：工作中 \(working) 段，已通知 \(ids.count) 個聊天室；最久 \(Int(limits.maxHold / 60)) 分鐘")
-                ids.forEach(sendStop)
+                for id in ids {
+                    if sendStop(id) { stoppedSessionIDs.insert(id) }
+                }
             case .unsupported:
                 log("闔蓋時有 \(working) 段工作中，但 Battery 的小幫手還沒支援 nosleep（要 v6），照常睡眠")
             case .failed(let why):
@@ -330,6 +347,25 @@ final class LidKeeper {
             turnOff(); log("闔蓋時聊天室都已做完，結束預擋，蓋子闔著，主動讓 Mac 睡"); env.sleepNow()
         }
         flushPending(closed: true)
+    }
+
+    private func cancelPendingResume() { resumeGeneration += 1 }
+
+    private func scheduleResume() {
+        guard !stoppedSessionIDs.isEmpty else { return }
+        guard enabled(), resumeEnabled() else { stoppedSessionIDs.removeAll(); return }
+        resumeGeneration += 1
+        let generation = resumeGeneration
+        let delay = resumeDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.resumeGeneration == generation, !self.env.lidClosed() else { return }
+            guard self.enabled(), self.resumeEnabled() else { self.stoppedSessionIDs.removeAll(); return }
+            let ids = self.stoppedSessionIDs
+            for id in ids where self.sessionIsAvailable(id) && !self.sessionIsArchived(id) {
+                self.sendResume(id)
+            }
+            self.stoppedSessionIDs.removeAll()
+        }
     }
 
     private func endHold(reason: String, problem: Bool, keepNoSleep: Bool, sleep: Bool = false) {

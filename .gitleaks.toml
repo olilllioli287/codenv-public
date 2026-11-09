@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Random fake credentials used by exam fixtures"
+paths = [
+  '''scripts/exam/.*''',
+]

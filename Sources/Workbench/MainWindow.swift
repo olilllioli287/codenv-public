@@ -25,6 +25,7 @@ final class MainWindowController: NSWindowController {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                          backing: .buffered, defer: false)
+        w.isRestorable = false
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         // 上緣不能拖視窗（系統會在 App 收到之前就接走，分頁就拖不了）；只有分頁列左邊那塊空白能拖（TabBar 的 DragHandle）
@@ -91,6 +92,14 @@ final class MainWindowController: NSWindowController {
         boardItem.isCollapsed = !collab.open
         split.addSplitViewItem(boardItem)
         collab.sources = { [weak self] in self?.collabSources() ?? [] }
+        // 收件匣的回覆／退回：直接送進開目標的聊天室（跟 codenv-todo send 同一條路；送不出去由 CollabBoardModel 排隊）
+        CollabBoardModel.sendToConversation = { [weak self] id, text in
+            guard let self, let c = self.store.conversation(id), let pane = self.workspace.pane(for: c) as? ChatPane else { return false }
+            self.workspace.woken.insert(id)
+            if pane.sendText(QuoteText.neutralize(text)) { return true }
+            self.workspace.woken.remove(id)
+            return false
+        }
         collab.start()
         setUpSchedules()
         // 聊天室被拿出取過名字的 Window、或 Window 改回預設名字／被關：它在 Window 框上的記號清掉（Bundles.swift syncWindowBundles）
@@ -206,9 +215,9 @@ final class MainWindowController: NSWindowController {
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
             done(self.store.commanderRename(caller: conv, target: target, name: name))
         }
-        BrowserServer.shared.newChat = { [weak self] conv, name, dir, project, model, effort, mcp, topic, area, done in
+        BrowserServer.shared.newChat = { [weak self] conv, name, dir, project, model, effort, mcp, topic, area, sandboxed, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
-            self.commanderNewChat(caller: conv, name: name, dir: dir, project: project, model: model, effort: effort, mcp: mcp, topic: topic, area: area, done: done)
+            self.commanderNewChat(caller: conv, name: name, dir: dir, project: project, model: model, effort: effort, mcp: mcp, topic: topic, area: area, sandboxed: sandboxed, done: done)
         }
         BrowserServer.shared.areaCmd = { [weak self] req, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
@@ -223,6 +232,10 @@ final class MainWindowController: NSWindowController {
         BrowserServer.shared.setTopicChat = { [weak self] conv, target, topic, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
             self.commanderSetTopicChat(caller: conv, target: target, topic: topic, done: done)
+        }
+        BrowserServer.shared.archiveChat = { [weak self] conv, target, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            done(self.store.commanderArchive(caller: conv, target: target))
         }
         BrowserServer.shared.newEngineChat = { [weak self] conv, name, engine, dir, project, model, effort, topic, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
@@ -621,7 +634,7 @@ final class MainWindowController: NSWindowController {
         if inCodeLab(c, w.firstResponder as? NSView) { return false }   // 在程式碼區按 ⌃ C 不能停掉聊天室
         if let t = w.firstResponder as? NSTextView, t.isEditable { return false }
         if let v = w.firstResponder as? NSView, sequence(first: v, next: { $0.superview }).contains(where: { $0 is TerminalPane }) { return false }
-        if sendNow { c.inputBar.sendNowFromOutside() } else { c.inputBar.interruptAndRestore() }
+        if sendNow { c.inputBar.sendNowFromOutside() } else { return c.inputBar.stopFromInput() }
         return true
     }
 
@@ -772,6 +785,9 @@ final class MainWindowController: NSWindowController {
                 do { file = try Handoff.save(text, conversation: c.id, directory: self.store.directory) }
                 catch {
                     self.handoffNotice(c.id, L("交接文字存檔失敗，沒有切換或封存：\(error.localizedDescription)")); return
+                }
+                if background, Prefs.shared.e4bDailyReviewEnabled {
+                    E4BReview.review(handoffFile: file, conversationTitle: c.title)
                 }
                 // 一定先存檔再檢查：即使舊對話已被刪掉、程序剛開始下一輪，寫好的文字也留得住。
                 guard self.handoffSourceUnchanged(c, directory: directory, version: version),
@@ -959,7 +975,12 @@ final class MainWindowController: NSWindowController {
 
     /// 刪對話（側欄、清空草稿）：程式碼區有沒存的修改先存（刪的是對話，不是你寫的程式），存不了就不刪（Codex 11/6）
     func deleteConversation(_ id: UUID) {
-        saveCodeLabs([id]) { [weak self] ok in if ok { self?.reallyDeleteConversation(id) } }
+        guard let c = store.conversation(id) else { return }
+        let running = store.status[id].map { $0 != .idle } == true || ClaudeSessions.live()[c.claudeSession] != nil
+        let detail = running ? L("\n\n這段對話目前有程序在跑；確認後會關掉它再移除。") : ""
+        confirm(L("刪除「\(c.title)」？"), L("聊天室的 Claude 紀錄仍會保留。\(detail)"), button: L("刪除")) { [weak self] in
+            self?.saveCodeLabs([id]) { ok in if ok { self?.reallyDeleteConversation(id) } }
+        }
     }
 
     /// 這幾段對話的程式碼區有沒存的修改：一個一個存（可能跳衝突視窗），全部存好才 done(true)
@@ -1093,7 +1114,13 @@ final class MainWindowController: NSWindowController {
 
     func removeProject(_ id: UUID) {
         // 從側欄移除（資料夾不刪）：程式碼區有沒存的修改先存，存不了就不移除（Codex 11/6）
-        saveCodeLabs(store.conversations(in: id).map(\.id)) { [weak self] ok in if ok { self?.reallyRemoveProject(id) } }
+        guard let p = store.project(id) else { return }
+        let convs = store.conversations(in: id)
+        let busy = convs.filter { store.status[$0.id].map { $0 != .idle } == true || ClaudeSessions.live()[$0.claudeSession] != nil }
+        let detail = busy.isEmpty ? "" : L("\n\n有 \(busy.count) 段對話正在跑；確認後會關閉它們。")
+        confirm(L("移除專案「\(p.name)」？"), L("只從工作台清單移除，不會刪除資料夾。\(detail)"), button: L("移除")) { [weak self] in
+            self?.saveCodeLabs(convs.map(\.id)) { ok in if ok { self?.reallyRemoveProject(id) } }
+        }
     }
 
     private func reallyRemoveProject(_ id: UUID) {

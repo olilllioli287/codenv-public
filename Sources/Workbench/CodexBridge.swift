@@ -19,9 +19,10 @@ final class CodexBridge {
     static let defaultLevel = "medium"
     static func name(_ model: String) -> String { models.first { $0.id == model }?.name ?? model }
 
-    /// 有沒有裝 codex（brew 裝在 /opt/homebrew/bin）
+    /// 有沒有裝 codex（Homebrew 或使用者 PATH）
     static var installed: Bool {
-        ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].contains { FileManager.default.isExecutableFile(atPath: $0) }
+        let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        return (paths + ["/opt/homebrew/bin", "/usr/local/bin"]).contains { FileManager.default.isExecutableFile(atPath: ($0 as NSString).appendingPathComponent("codex")) }
     }
 
     /// 工作台的對話編號 → Codex 的 thread id（第一次開的時候它給）
@@ -237,16 +238,16 @@ final class CodexBridge {
         switch method {
         case "item/commandExecution/requestApproval":
             let rid = "codex-\(UUID().uuidString.prefix(8))"
-            approvals[rid] = id
             let cmd = Self.unwrap(p["command"] as? String ?? "")
             var input: [String: Any] = ["command": cmd]
             if let r = p["reason"] as? String { input["description"] = r }
+            approvals[rid] = id
             emit?(["type": "control_request", "request_id": rid,
                    "request": ["subtype": "can_use_tool", "tool_name": "Bash", "input": input, "tool_use_id": item]])
         case "item/fileChange/requestApproval":
             let rid = "codex-\(UUID().uuidString.prefix(8))"
-            approvals[rid] = id
             let (name, input) = pendingChange[item] ?? ("Edit", ["file_path": p["grantRoot"] as? String ?? ""])
+            approvals[rid] = id
             emit?(["type": "control_request", "request_id": rid,
                    "request": ["subtype": "can_use_tool", "tool_name": name, "input": input, "tool_use_id": item]])
         default:
@@ -254,6 +255,7 @@ final class CodexBridge {
             send?(["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "codenv 不支援 \(method)"]])
         }
     }
+
     private var pendingChange: [String: (String, [String: Any])] = [:]
 
     private func notification(_ m: String, _ p: [String: Any]) {
@@ -451,7 +453,7 @@ final class CodexBridge {
             msg["content"] = blocks
             obj["message"] = msg
         }
-        guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        guard let d = Transcripts.redactedJSON(obj) else { return }
         Transcripts.append(d + Data([0x0a]), to: transcriptURL)      // 寫不進去會記進事件紀錄（Transcripts.append）
     }
 }

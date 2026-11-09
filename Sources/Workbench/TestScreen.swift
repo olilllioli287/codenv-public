@@ -7,9 +7,16 @@ enum TestScreen {
         let a = CommandLine.arguments
         guard a.contains("--state-dir") || a.contains("--background"),
               let i = a.firstIndex(of: "--test-screen"), i + 1 < a.count else { return nil }
-        let key = a[i + 1].lowercased()
+        let key = normalized(a[i + 1])
         guard !key.isEmpty else { return nil }
-        return NSScreen.screens.first { $0.localizedName.lowercased().contains(key) }
+        return NSScreen.screens.first { normalized($0.localizedName).contains(key) }
+    }
+
+    /// Screen names vary by punctuation and Unicode dash style across macOS/display drivers.
+    private static func normalized(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }
+            .map(String.init).joined()
     }
 
     static func fit(_ w: NSWindow) {

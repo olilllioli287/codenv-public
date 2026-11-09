@@ -1,6 +1,15 @@
 import Foundation
 import Darwin
 
+/// 右欄聊天室列表共用欄寬（以 1x UI 點數為準，由各 View 乘上 uiScale）。
+enum RightPanelLayout {
+    static let memoryColumnWidth: CGFloat = 42
+    static let contextColumnWidth: CGFloat = 36
+    static let toggleButtonsWidth: CGFloat = 42 // 兩顆 20pt 按鈕、2pt 間距
+    static let chatColumnTrailingInset: CGFloat = 10
+    static let dividerHitHeight: CGFloat = 8
+}
+
 // 右欄（RightPanelView.swift）背後的資料來源：跑外部指令、監聽中的連接埠、檔案樹與搜尋、git 狀態、歷史全文搜尋。
 // 全部在背景執行、有逾時；畫面只讀這些物件的 @Published 欄位。
 
@@ -158,12 +167,13 @@ final class FileTreeModel: ObservableObject {
         let fm = FileManager.default
         let names = ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).filter { !Self.skipped.contains($0) }
         var items: [(name: String, isDir: Bool)] = []
-        for n in names.prefix(2000) {
+        for n in names {
             var d: ObjCBool = false
             fm.fileExists(atPath: (dir as NSString).appendingPathComponent(n), isDirectory: &d)
             items.append((n, d.boolValue))
         }
         items.sort { a, b in a.isDir != b.isDir ? a.isDir : a.name.localizedStandardCompare(b.name) == .orderedAscending }
+        if items.count > 2000 { items = Array(items.prefix(2000)) }
         cache[dir] = items
         return items
     }
@@ -333,6 +343,13 @@ final class GitPanelModel: ObservableObject {
             }
             let st = RPShell.git(["status", "--porcelain=v1", "-b"], cwd: topDir)
             let wt = RPShell.git(["worktree", "list", "--porcelain"], cwd: topDir, timeout: 5)
+            if st.timedOut {
+                DispatchQueue.main.async {
+                    guard let self, self.generation == gen else { return }
+                    self.isRepo = true; self.branch = L("git status 逾時"); self.changes = []; self.worktrees = []; self.top = topDir; self.loading = false
+                }
+                return
+            }
             let (branch, changes) = Self.parseStatus(st.out)
             let trees = Self.parseWorktrees(wt.out, current: topDir)
             DispatchQueue.main.async {

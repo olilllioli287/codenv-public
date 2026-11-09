@@ -5,11 +5,13 @@ token=open(d+"/token").read().strip(); path=open(d+"/socket").read().strip()
 s=socket.socket(socket.AF_UNIX); s.settimeout(30); s.connect(path)
 try:
     s.sendall((json.dumps({"cmd":"ls","token":token,"pad":"中"*n}, ensure_ascii=False)+"\n").encode())
-    b=b""
+    b=bytearray()
     while True:
         c=s.recv(65536)
         if not c: break
-        b+=c
-    r=json.loads(b.decode()); print("ok=%s" % r.get("ok"), r.get("error",""))
-except Exception as e:      # 舊版：伺服器讀到 64 KB 就關線，這裡會 BrokenPipe／回看不懂
+        b.extend(c)
+    r=json.loads(b.decode("utf-8")); print("ok=%s" % r.get("ok"), r.get("error",""))
+except Exception as e:
     print("ok=False", type(e).__name__)
+finally:
+    s.close()

@@ -1,0 +1,169 @@
+[
+ {
+  "agent": "antigravity",
+  "user": "account1@example.com",
+  "plan": "Google AI Pro",
+  "active": true,
+  "on": true,
+  "windows": [
+   {
+    "name": "Gemini 4 Argon (High)",
+    "used": 0.4714549999999984,
+    "remaining": 99.52854500000001,
+    "resetsAt": "2026-11-16T04:46:00Z",
+    "pool": "Gemini 4 Argon"
+   },
+   {
+    "name": "Gemini 4 Argon (Low)",
+    "used": 0.4714549999999984,
+    "remaining": 99.52854500000001,
+    "resetsAt": "2026-11-16T04:46:00Z",
+    "pool": "Gemini 4 Argon"
+   },
+   {
+    "name": "Gemini 4 Argon (Medium)",
+    "used": 0.4714549999999984,
+    "remaining": 99.52854500000001,
+    "resetsAt": "2026-11-16T04:46:00Z",
+    "pool": "Gemini 4 Argon"
+   },
+   {
+    "name": "Gemini · 7 days",
+    "used": 0.775440000000005,
+    "remaining": 99.22456,
+    "resetsAt": "2026-11-15T15:41:10Z",
+    "pool": "Gemini"
+   },
+   {
+    "name": "Gemini · 5 hours",
+    "used": 0,
+    "remaining": 100,
+    "resetsAt": "2026-11-09T13:25:14Z",
+    "pool": "Gemini"
+   },
+   {
+    "name": "Claude & GPT · 7 days",
+    "used": 0,
+    "remaining": 100,
+    "resetsAt": "2026-11-16T08:25:14Z",
+    "pool": "Claude & GPT"
+   },
+   {
+    "name": "Claude & GPT · 5 hours",
+    "used": 0,
+    "remaining": 100,
+    "resetsAt": "2026-11-09T13:25:14Z",
+    "pool": "Claude & GPT"
+   },
+   {
+    "name": "Gemini 4 Argon · 7 days",
+    "used": 0.4714549999999984,
+    "remaining": 99.52854500000001,
+    "resetsAt": "2026-11-16T04:46:00Z",
+    "pool": "Gemini 4 Argon"
+   }
+  ],
+  "readAt": "2026-11-09T16:25:14.861577+08:00"
+ },
+ {
+  "agent": "antigravity",
+  "user": "account2@example.com",
+  "plan": "Google AI Pro",
+  "active": false,
+  "on": true,
+  "windows": [
+   {
+    "name": "Claude Opus 5.5 (High)",
+    "used": 100,
+    "remaining": 0,
+    "resetsAt": "2026-11-12T04:54:39Z"
+   },
+   {
+    "name": "Claude Opus 5.5 (Low)",
+    "used": 100,
+    "remaining": 0,
+    "resetsAt": "2026-11-12T04:54:39Z"
+   },
+   {
+    "name": "Claude Opus 5.5 (Medium)",
+    "used": 100,
+    "remaining": 0,
+    "resetsAt": "2026-11-12T04:54:39Z"
+   },
+   {
+    "name": "Claude Sonnet 5.5 (High)",
+    "used": 100,
+    "remaining": 0,
+    "resetsAt": "2026-11-12T04:54:39Z"
+   },
+   {
+    "name": "Claude Sonnet 5.5 (Low)",
+    "used": 100,
+    "remaining": 0,
+    "resetsAt": "2026-11-12T04:54:39Z"
+   },
+   {
+    "name": "Claude Sonnet 5.5 (Medium)",
+    "used": 100,
+    "remaining": 0,
+    "resetsAt": "2026-11-12T04:54:39Z"
+   },
+   {
+    "name": "Gemini 4 Argon (High)",
+    "used": 70.027453,
+    "remaining": 29.972547000000006,
+    "resetsAt": "2026-11-14T15:58:28Z",
+    "pool": "Gemini 4 Argon"
+   },
+   {
+    "name": "Gemini 4 Argon (Low)",
+    "used": 70.027453,
+    "remaining": 29.972547000000006,
+    "resetsAt": "2026-11-14T15:58:28Z",
+    "pool": "Gemini 4 Argon"
+   },
+   {
+    "name": "Gemini 4 Argon (Medium)",
+    "used": 70.027453,
+    "remaining": 29.972547000000006,
+    "resetsAt": "2026-11-14T15:58:28Z",
+    "pool": "Gemini 4 Argon"
+   },
+   {
+    "name": "GPT-OSS 120B (Medium)",
+    "used": 100,
+    "remaining": 0,
+    "resetsAt": "2026-11-12T04:54:39Z"
+   },
+   {
+    "name": "Gemini · 7 days",
+    "used": 18.981826,
+    "remaining": 81.018174,
+    "resetsAt": "2026-11-14T07:46:02Z",
+    "pool": "Gemini"
+   },
+   {
+    "name": "Gemini · 5 hours",
+    "used": 3.6668840000000036,
+    "remaining": 96.33311599999999,
+    "resetsAt": "2026-11-09T12:16:19Z",
+    "pool": "Gemini"
+   },
+   {
+    "name": "Claude & GPT · 7 days",
+    "used": 100,
+    "remaining": 0,
+    "resetsAt": "2026-11-12T04:54:39Z",
+    "pool": "Claude & GPT"
+   },
+   {
+    "name": "Gemini 4 Argon · 7 days",
+    "used": 70.027453,
+    "remaining": 29.972547000000006,
+    "resetsAt": "2026-11-14T15:58:28Z",
+    "pool": "Gemini 4 Argon"
+   }
+  ],
+  "readAt": "2026-11-09T16:25:14.822934+08:00"
+ }
+]

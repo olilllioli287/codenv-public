@@ -246,6 +246,7 @@ final class OrganizerWindowController: NSWindowController {
     let model = OrganizerModel()
     init(store: Store, open: @escaping (UUID) -> Void, delete: @escaping ([UUID]) -> Void, removeFolder: @escaping (UUID) -> Void) {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        w.isRestorable = false
         w.title = L("整理對話")
         w.isReleasedWhenClosed = false
         w.setFrameAutosaveName(appDefaults === UserDefaults.standard ? "OrganizerWindow" : "")

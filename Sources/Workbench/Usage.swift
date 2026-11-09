@@ -19,10 +19,235 @@ struct UsageBucket: Identifiable, Equatable {
     var remaining: Int { max(0, 100 - used) }
 }
 
+struct MagpieAccountQuota: Identifiable {
+    let id: String
+    let name: String
+    let buckets: [String: UsageBucket]
+}
+
+enum UsageLog {
+    struct Observation {
+        let pool: String
+        let kind: String
+        let remaining: Int
+        let total: Int?
+        let resetAt: Date?
+    }
+
+    private struct LatestValue {
+        let kind: String
+        let remaining: Int
+        let total: Int?
+        let resetAt: Date?
+    }
+
+    private static let queue = DispatchQueue(label: "codenv.usage-log")
+    private static let limit = 5 * 1024 * 1024
+    private static var latestByPool: [String: LatestValue]?
+
+    static func percentages(_ buckets: [UsageBucket], source: String) -> [Observation] {
+        buckets.map {
+            Observation(pool: "\(source) · \($0.label)", kind: "percent", remaining: $0.remaining, total: 100, resetAt: $0.resetAt)
+        }
+    }
+
+    static func record(_ observations: [Observation], at date: Date = Date()) {
+        guard !observations.isEmpty else { return }
+        queue.async {
+            do {
+                let url = try fileURL()
+                let directory = url.deletingLastPathComponent()
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                var previous = try latestByPool ?? latestValues(active: url, archive: archiveURL(for: url))
+                var lines: [Data] = []
+                let iso = ISO8601DateFormatter()
+                iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                for item in observations {
+                    if let last = previous[item.pool],
+                       last.kind == item.kind, last.remaining == item.remaining,
+                       last.total == item.total, last.resetAt == item.resetAt {
+                        continue
+                    }
+                    var row: [String: Any] = [
+                        "timestamp": iso.string(from: date),
+                        "pool": item.pool,
+                        "kind": item.kind,
+                        "remaining": item.remaining
+                    ]
+                    if let total = item.total { row["total"] = total }
+                    row["resetAt"] = item.resetAt.map(iso.string(from:)) ?? NSNull()
+                    var data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
+                    data.append(10)
+                    lines.append(data)
+                    previous[item.pool] = LatestValue(kind: item.kind, remaining: item.remaining, total: item.total, resetAt: item.resetAt)
+                }
+                if !lines.isEmpty && !FileManager.default.fileExists(atPath: url.path) {
+                    guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
+                        throw CocoaError(.fileWriteUnknown)
+                    }
+                }
+                if !lines.isEmpty {
+                    let handle = try FileHandle(forWritingTo: url)
+                    try handle.seekToEnd()
+                    for line in lines { try handle.write(contentsOf: line) }
+                    try handle.close()
+                }
+                if FileManager.default.fileExists(atPath: url.path) { try rotateIfNeeded(url) }
+                latestByPool = previous
+            } catch {
+                NSLog("codenv usage-log 寫入失敗：%@", String(describing: error))
+            }
+        }
+    }
+
+    static func flushForTesting() {
+        guard CommandLine.arguments.contains("--state-dir") else { return }
+        queue.sync {}
+    }
+
+    private static func fileURL() throws -> URL {
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--state-dir") {
+            guard i + 1 < args.count, !args[i + 1].isEmpty else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            return URL(fileURLWithPath: args[i + 1], isDirectory: true).appendingPathComponent("usage-log.jsonl")
+        }
+        return Edition.support("usage-log.jsonl")
+    }
+
+    private static func archiveURL(for url: URL) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent("usage-log.1.jsonl")
+    }
+
+    private static func latestValues(active: URL, archive: URL) throws -> [String: LatestValue] {
+        var result: [String: LatestValue] = [:]
+        // The archive is older. Scan the active tail first, then the archive tail only for pools
+        // that have no observation in the active file.
+        for url in [active, archive] where FileManager.default.fileExists(atPath: url.path) {
+            forEachTailLineReverse(url, maximumBytes: limit) { line in
+                guard let data = line.data(using: .utf8),
+                      let row = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                      let pool = row["pool"] as? String, result[pool] == nil,
+                      let kind = row["kind"] as? String,
+                      let remaining = row["remaining"] as? Int else { return true }
+                result[pool] = LatestValue(kind: kind, remaining: remaining, total: row["total"] as? Int, resetAt: date(row["resetAt"]))
+                return result.count < 1_000
+            }
+            if result.count >= 1_000 { break }
+        }
+        return result
+    }
+
+    /// Visit complete lines from the file tail backwards. Memory use is bounded by one chunk and
+    /// the largest line; no history-sized String or array is created.
+    private static func forEachTailLineReverse(_ url: URL, maximumBytes: Int, visit: (String) -> Bool) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd(), size > 0 else { return }
+        let startOffset = size > UInt64(maximumBytes) ? size - UInt64(maximumBytes) : 0
+        var scanStart = startOffset
+        if startOffset > 0 {
+            do {
+                try handle.seek(toOffset: startOffset - 1)
+                if try handle.read(upToCount: 1)?.first == 10 { scanStart = startOffset }
+            } catch { return }
+        }
+        var cursor = size
+        var trailing = Data()
+        while cursor > scanStart {
+            let count = Int(min(UInt64(64 * 1024), cursor - scanStart))
+            cursor -= UInt64(count)
+            do { try handle.seek(toOffset: cursor) } catch { return }
+            guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else { return }
+            let data = chunk + trailing
+            var end = data.count
+            while let newline = data[..<end].lastIndex(of: 10) {
+                let line = data[(newline + 1)..<end]
+                if !line.isEmpty, !visit(String(decoding: line, as: UTF8.self)) { return }
+                end = newline
+            }
+            trailing = Data(data[..<end])
+            if cursor == scanStart {
+                // If the scan starts at the file beginning, the remaining bytes are a complete line.
+                if scanStart == 0, !trailing.isEmpty { _ = visit(String(decoding: trailing, as: UTF8.self)) }
+                // Otherwise trailing is a partial first record and is intentionally discarded.
+            }
+        }
+    }
+
+    private static func date(_ value: Any?) -> Date? {
+        guard let value = value as? String else { return nil }
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value)
+    }
+
+    private static func rotateIfNeeded(_ url: URL) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard (attributes[.size] as? NSNumber)?.intValue ?? 0 > limit else { return }
+        let archive = archiveURL(for: url)
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let size = try handle.seekToEnd()
+        guard size > 1 else { return }
+        let midpoint = size / 2
+        var splitOffset = midpoint
+        try handle.seek(toOffset: midpoint)
+        // Finish the line intersecting the midpoint. offset() is the exact byte split, even
+        // when the line spans multiple chunks.
+        while splitOffset < size {
+            let chunk = try handle.read(upToCount: 64 * 1024) ?? Data()
+            if chunk.isEmpty { break }
+            if let newline = chunk.firstIndex(of: 10) {
+                splitOffset += UInt64(newline + 1)
+                break
+            }
+            splitOffset += UInt64(chunk.count)
+        }
+        guard splitOffset > 0, splitOffset < size else { return }
+        let archiveTemp = archive.deletingLastPathComponent().appendingPathComponent(".usage-log.1.\(UUID().uuidString).tmp")
+        let activeTemp = url.deletingLastPathComponent().appendingPathComponent(".usage-log.\(UUID().uuidString).tmp")
+        try? FileManager.default.removeItem(at: archiveTemp)
+        try? FileManager.default.removeItem(at: activeTemp)
+        try streamRange(handle, from: 0, to: splitOffset, into: archiveTemp)
+        try streamRange(handle, from: splitOffset, to: size, into: activeTemp)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: archiveTemp.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: activeTemp.path)
+        // Publish the older half as the single archive, then atomically trim the active file.
+        if FileManager.default.fileExists(atPath: archive.path) {
+            _ = try FileManager.default.replaceItem(at: archive, withItemAt: archiveTemp, backupItemName: nil, options: [], resultingItemURL: nil)
+        } else {
+            try FileManager.default.moveItem(at: archiveTemp, to: archive)
+        }
+        _ = try FileManager.default.replaceItem(at: url, withItemAt: activeTemp, backupItemName: nil, options: [], resultingItemURL: nil)
+    }
+
+    private static func streamRange(_ handle: FileHandle, from start: UInt64, to end: UInt64, into destination: URL) throws {
+        guard FileManager.default.createFile(atPath: destination.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let output = try FileHandle(forWritingTo: destination)
+        defer { try? output.close() }
+        try handle.seek(toOffset: start)
+        var remaining = end - start
+        while remaining > 0 {
+            let count = Int(min(UInt64(64 * 1024), remaining))
+            let chunk = try handle.read(upToCount: count) ?? Data()
+            guard !chunk.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+            try output.write(contentsOf: chunk)
+            remaining -= UInt64(chunk.count)
+        }
+    }
+}
+
 final class UsageMonitor: ObservableObject {
     static let shared = UsageMonitor()
     @Published var buckets: [UsageBucket] = []
     @Published var agyBuckets: [UsageBucket] = []
+    @Published var magpieQuotaTips: [String: String] = [:]
+    @Published var magpieAccounts: [MagpieAccountQuota] = []
     @Published var codexBuckets: [UsageBucket] = []
     @Published var codexResets = 0      // Codex 送的「全部重置」還有幾次沒用
     @Published var codexResetExpiries: [Date] = []   // 每一張重置券什麼時候過期（早的在前；後端有給明細才有，不會過期的不列）
@@ -34,6 +259,9 @@ final class UsageMonitor: ObservableObject {
     @Published var loading = false
     @Published var error: String?
     private var timer: Timer?
+    private var magpieQuotaCheckedAt = Date.distantPast
+    private let magpieQuotaLock = NSLock()
+    private var cachedMagpieQuota: (buckets: [UsageBucket], tips: [String: String], accounts: [MagpieAccountQuota])?
 
     private init() {
         refresh()
@@ -77,6 +305,7 @@ final class UsageMonitor: ObservableObject {
         guard CommandLine.arguments.contains("--state-dir"), let s = Double(ProcessInfo.processInfo.environment["CODENV_SPRINT_FAKE_RESET_AFTER"] ?? "") else { return nil }
         return Date().addingTimeInterval(s)
     }()
+    private static let fakeUsageStartedAt = Date()
     private var sink: AnyCancellable?
     private func restartTimer() {
         timer?.invalidate()
@@ -92,7 +321,8 @@ final class UsageMonitor: ObservableObject {
         }
         // 測試用：CODENV_USAGE_FAKE=1 不查任何真的用量，直接放一組假資料（五家都有，Codex 有免費重置、Copilot 有剩餘次數）。
         // CODENV_USAGE_FAKE_DELAY=<秒>：假的查詢要這麼久才回來（測重置後讀回新次數之前按鈕要維持停用）
-        if ProcessInfo.processInfo.environment["CODENV_USAGE_FAKE"] == "1" {
+        if ProcessInfo.processInfo.environment["CODENV_USAGE_FAKE"] == "1"
+            || (CommandLine.arguments.contains("--state-dir") && CommandLine.arguments.contains("--usage-fake")) {
             let apply = { [weak self] in
                 guard let self else { return }
                 if self.resetSettledAt != nil, Self.fakeReadFailsLeft > 0 {
@@ -102,28 +332,37 @@ final class UsageMonitor: ObservableObject {
                     return
                 }
                 // 假資料的重置時間一律相對現在（寫死日期會被當成明年，倒數變成「356d」）
-                func h(_ hours: Int, _ minutes: Int) -> String { Self.when(Date().addingTimeInterval(TimeInterval(hours * 3600 + minutes * 60))) }
+                func r(_ hours: Int, _ minutes: Int) -> Date { Self.fakeUsageStartedAt.addingTimeInterval(TimeInterval(hours * 3600 + minutes * 60)) }
+                func h(_ hours: Int, _ minutes: Int) -> String { Self.when(r(hours, minutes)) }
                 // 測試用（要有 --state-dir）：CODENV_SPRINT_FAKE_RESET_AFTER=<秒>：開機後這麼久「5 小時」額度重置（用量掉到 2、下次重置延後 5 小時）
-                var five = UsageBucket(label: "5 小時", used: 34, resets: h(2, 13), resetAt: Date().addingTimeInterval(2 * 3600 + 13 * 60))
+                var five = UsageBucket(label: "5 小時", used: 34, resets: h(2, 13), resetAt: r(2, 13))
                 if let at = Self.fakeSprintReset {
                     let done = Date() >= at
                     let next = done ? at.addingTimeInterval(5 * 3600) : at
                     five = UsageBucket(label: "5 小時", used: done ? 2 : 34, resets: Self.when(next), resetAt: next)
                 }
-                self.buckets = [five, UsageBucket(label: "每週", used: 61, resets: h(4*24+6, 0)), UsageBucket(label: "Opus 每週", used: 12, resets: h(4*24+6, 0))]
+                self.buckets = [five, UsageBucket(label: "每週", used: 61, resets: h(4*24+6, 0), resetAt: r(4*24+6, 0)), UsageBucket(label: "Opus 每週", used: 12, resets: h(4*24+6, 0), resetAt: r(4*24+6, 0))]
                 // 跟真的 parseAgy 結果同一種標籤（11/7 實際：Gemini 5 小時／每週、Claude 5 小時／每週、Argon 只有每週）
-                self.agyBuckets = [UsageBucket(label: "Gemini 5 小時", used: 6, resets: h(3, 41)), UsageBucket(label: "Gemini 每週", used: 2, resets: h(6*24+21, 5)),
-                                   UsageBucket(label: "Claude 5 小時", used: 0, resets: h(3, 41)), UsageBucket(label: "Claude 每週", used: 55, resets: h(4*24+18, 30)),
-                                   UsageBucket(label: "Argon 每週", used: ProcessInfo.processInfo.environment["CODENV_USAGE_FAKE_ARGON_LOW"] == "1" ? 85 : 0, resets: h(6*24+23, 12))]
+                self.agyBuckets = [UsageBucket(label: "Gemini 5 小時", used: 6, resets: h(3, 41), resetAt: r(3, 41)), UsageBucket(label: "Gemini 每週", used: 2, resets: h(6*24+21, 5), resetAt: r(6*24+21, 5)),
+                                   UsageBucket(label: "Claude 5 小時", used: 0, resets: h(3, 41), resetAt: r(3, 41)), UsageBucket(label: "Claude 每週", used: 55, resets: h(4*24+18, 30), resetAt: r(4*24+18, 30)),
+                                   UsageBucket(label: "Argon 每週", used: ProcessInfo.processInfo.environment["CODENV_USAGE_FAKE_ARGON_LOW"] == "1" ? 85 : 0, resets: h(6*24+23, 12), resetAt: r(6*24+23, 12))]
                 // CODENV_USAGE_FAKE_CODEX_HIGH=1：用量比較高的版本（測「用量還不高」那句不出現）
                 let hi = ProcessInfo.processInfo.environment["CODENV_USAGE_FAKE_CODEX_HIGH"] == "1"
-                self.codexBuckets = [UsageBucket(label: "5 小時", used: hi ? 72 : 5, resets: h(1, 48)), UsageBucket(label: "每週", used: hi ? 88 : 47, resets: h(5*24+9, 20))]
+                self.codexBuckets = [UsageBucket(label: "5 小時", used: hi ? 72 : 5, resets: h(1, 48), resetAt: r(1, 48)), UsageBucket(label: "每週", used: hi ? 88 : 47, resets: h(5*24+9, 20), resetAt: r(5*24+9, 20))]
                 self.codexResets = Self.fakeResetsLeft
                 self.codexResetExpiries = Array([Date().addingTimeInterval(2 * 86400), Date().addingTimeInterval(26 * 86400), Date().addingTimeInterval(27 * 86400)].prefix(Self.fakeResetsLeft))
                 self.reconcilePendingKey()
-                self.copilotBuckets = [UsageBucket(label: "每月", used: 3, resets: h(23*24+4, 0))]
+                self.copilotBuckets = [UsageBucket(label: "每月", used: 3, resets: h(23*24+4, 0), resetAt: r(23*24+4, 0))]
                 self.copilotNote = "剩 194／200 次"
                 self.updated = Date(); self.error = nil
+                if CommandLine.arguments.contains("--state-dir") {
+                    UsageLog.record(
+                        UsageLog.percentages(self.buckets, source: "Claude Code")
+                            + UsageLog.percentages(self.agyBuckets, source: "agy")
+                            + UsageLog.percentages(self.codexBuckets, source: "Codex")
+                            + [UsageLog.Observation(pool: "Copilot · Chat / 每月", kind: "count", remaining: 194, total: 200, resetAt: self.copilotBuckets.first?.resetAt)]
+                    )
+                }
                 self.loading = false
                 self.codexReadFinished(startedAt: startedAt, success: true)
             }
@@ -137,9 +376,37 @@ final class UsageMonitor: ObservableObject {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             // 三邊同時查（各自最多 60 秒）
             var agyOut: String?
+            var magpieQuota: (buckets: [UsageBucket], tips: [String: String], accounts: [MagpieAccountQuota])?
             var codexOut: [String: Any]?
             var copilotOut: String?
             let g = DispatchGroup()
+            var shouldReadMagpie = false
+            self?.magpieQuotaLock.lock()
+            if Prefs.shared.agyMagpie, let self {
+                if Date().timeIntervalSince(self.magpieQuotaCheckedAt) >= 60 {
+                    self.magpieQuotaCheckedAt = Date()
+                    shouldReadMagpie = true
+                } else {
+                    magpieQuota = self.cachedMagpieQuota
+                }
+            }
+            self?.magpieQuotaLock.unlock()
+            if shouldReadMagpie {
+                if CommandLine.arguments.contains("--state-dir") {
+                    if let fake = ProcessInfo.processInfo.environment["CODENV_MAGPIE_ACCOUNTS_FAKE"],
+                       let data = fake.data(using: .utf8) {
+                        magpieQuota = Self.parseMagpieAccounts(data)
+                    }
+                } else {
+                    let output = Self.run("/Applications/magpie.app/Contents/MacOS/magpie", ["accounts", "antigravity", "--json"])
+                    if let output, let data = output.data(using: .utf8) { magpieQuota = Self.parseMagpieAccounts(data) }
+                }
+                if let magpieQuota {
+                    self?.magpieQuotaLock.lock()
+                    self?.cachedMagpieQuota = magpieQuota
+                    self?.magpieQuotaLock.unlock()
+                }
+            }
             // 連不上 Google 就不查 agy：斷網時 agy 會一直開瀏覽器登入頁（AgyNet.canCall）
             if AgyBridge.enabled, AgyBridge.executable != "agy", AgyNet.canCall() {
                 g.enter()
@@ -164,24 +431,54 @@ final class UsageMonitor: ObservableObject {
                 guard let self else { return }
                 self.loading = false
                 var gotNew = false
-                if let agyOut { let a = Self.parseAgy(agyOut); if !a.isEmpty { self.agyBuckets = a; gotNew = true } }
+            let recordedAt = Date()
+            var observations: [UsageLog.Observation] = []
+                if let magpieQuota, !magpieQuota.buckets.isEmpty {
+                    self.agyBuckets = magpieQuota.buckets
+                    self.magpieQuotaTips = magpieQuota.tips
+                    self.magpieAccounts = magpieQuota.accounts
+                    observations += UsageLog.percentages(magpieQuota.buckets, source: "agy")
+                    gotNew = true
+                } else if let agyOut {
+                    let a = Self.parseAgy(agyOut)
+                    if !a.isEmpty { self.agyBuckets = a; self.magpieQuotaTips = [:]; self.magpieAccounts = []; gotNew = true }
+                    if !a.isEmpty { observations += UsageLog.percentages(a, source: "agy") }
+                }
                 var codexOK = false
                 if let codexOut {
                     let c = Self.parseCodex(codexOut)
-                    if !c.buckets.isEmpty { self.codexBuckets = c.buckets; self.codexResets = c.resets; self.codexResetExpiries = c.expiries; codexOK = true; gotNew = true; self.reconcilePendingKey() }
+                    if !c.buckets.isEmpty {
+                        self.codexBuckets = c.buckets
+                        self.codexResets = c.resets
+                        self.codexResetExpiries = c.expiries
+                        observations += UsageLog.percentages(c.buckets, source: "Codex")
+                        codexOK = true
+                        gotNew = true
+                        self.reconcilePendingKey()
+                    }
                 }
                 // 成功或失敗都結束「重置後等新次數」的等待（失敗時顯示讀不到、按鈕維持停用，下一次成功的讀取才解鎖）
                 self.codexReadFinished(startedAt: startedAt, success: codexOK)
-                if let copilotOut, let c = Self.parseCopilot(copilotOut) { self.copilotBuckets = c.buckets; self.copilotNote = c.note; gotNew = true }
+                if let copilotOut, let c = Self.parseCopilot(copilotOut) {
+                    self.copilotBuckets = c.buckets
+                    self.copilotNote = c.note
+                    observations.append(UsageLog.Observation(pool: "Copilot · Chat / 每月", kind: "count", remaining: c.remaining, total: c.total, resetAt: c.buckets.first?.resetAt))
+                    gotNew = true
+                }
                 let parsed = out.map(Self.parse) ?? []
                 if parsed.isEmpty && !gotNew {
                     self.error = L("查不到用量")
                 } else {
                     // Claude 這次沒讀到、只有別的來源讀到：Claude 那組留著舊數字，要標出來，不能顯示成剛更新
-                    if !parsed.isEmpty { self.buckets = parsed; self.error = nil }
+                    if !parsed.isEmpty {
+                        self.buckets = parsed
+                        observations += UsageLog.percentages(parsed, source: "Claude Code")
+                        self.error = nil
+                    }
                     else { self.error = L("Claude 用量這次查不到") }
                     self.updated = Date()
                 }
+                UsageLog.record(observations, at: recordedAt)
             }
         }
     }
@@ -621,16 +918,21 @@ final class UsageMonitor: ObservableObject {
     static let ghPath: String? = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) }
 
     /// gh api /copilot_internal/user：quota_snapshots.chat 是對話的額度（免費方案 200 次／月），quota_reset_date_utc 什麼時候重置
-    static func parseCopilot(_ text: String) -> (buckets: [UsageBucket], note: String)? {
+    static func parseCopilot(_ text: String) -> (buckets: [UsageBucket], note: String, remaining: Int, total: Int)? {
         guard let d = text.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
               let chat = (o["quota_snapshots"] as? [String: Any])?["chat"] as? [String: Any],
               chat["unlimited"] as? Bool != true, let total = (chat["entitlement"] as? NSNumber)?.intValue, total > 0 else { return nil }
         let left = (chat["remaining"] as? NSNumber)?.intValue ?? 0
         let pct = (chat["percent_remaining"] as? NSNumber)?.doubleValue ?? Double(left) / Double(total) * 100
+        let resetRaw = o["quota_reset_date_utc"] as? String ?? o["quota_reset_date"] as? String
         let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let resets = (o["quota_reset_date_utc"] as? String).flatMap { iso.date(from: $0) }.map(when) ?? (o["quota_reset_date"] as? String ?? "")
-        return ([UsageBucket(label: L("每月"), used: Int((100 - pct).rounded()), resets: resets)], L("剩 \(left)／\(total) 次"))
+        var resetAt = resetRaw.flatMap { iso.date(from: $0) }
+        if resetAt == nil {
+            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            resetAt = resetRaw.flatMap { iso.date(from: $0) }
+        }
+        let resets = resetAt.map(when) ?? (resetRaw ?? "")
+        return ([UsageBucket(label: L("每月"), used: Int((100 - pct).rounded()), resets: resets, resetAt: resetAt)], L("剩 \(left)／\(total) 次"), left, total)
     }
 
     /// 重置時間：今天、明天寫字，其他寫日期
@@ -680,6 +982,76 @@ final class UsageMonitor: ObservableObject {
         // 跟上面 Claude Code 那組一樣：同一組 5 小時在前、每週在後
         let rank = { (b: UsageBucket) -> Int in (b.label.hasPrefix("Gemini") ? 0 : b.label.hasPrefix("Claude") ? 10 : 20) + (b.label.hasSuffix("5 小時") ? 0 : 1) }
         return out.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
+    }
+
+    /// Magpie accounts JSON：相同 pool 的 remaining 在帳號間等權平均；只接受完整、可解析的帳號集合。
+    static func parseMagpieAccounts(_ data: Data) -> (buckets: [UsageBucket], tips: [String: String], accounts: [MagpieAccountQuota])? {
+        guard let accounts = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], !accounts.isEmpty else { return nil }
+        guard accounts.allSatisfy({ $0["windows"] is [[String: Any]] }) else { return nil }
+        struct Entry { let account: String; let remaining: Double; let reset: Date? }
+        var grouped: [String: [String: Entry]] = [:]
+        var accountValues: [String: [String: UsageBucket]] = [:]
+        let labels = ["gemini5": "Gemini 5 小時", "geminiWeek": "Gemini 每週", "argonWeek": "Argon 每週"]
+        let iso = ISO8601DateFormatter()
+        for (index, account) in accounts.enumerated() {
+            let accountName = (account["email"] as? String) ?? (account["name"] as? String) ?? (account["id"] as? String) ?? "帳號 \(index + 1)"
+            let accountID = (account["email"] as? String) ?? (account["id"] as? String) ?? "\(index)"
+            guard let windows = account["windows"] as? [[String: Any]] else { continue }
+            for window in windows {
+                // pool 在 Claude／GPT-OSS 個別模型視窗可能為 null；名稱不相關時直接略過。
+                guard let name = window["name"] as? String,
+                      let raw = window["remaining"], let remaining = (raw as? NSNumber)?.doubleValue ?? Double(String(describing: raw).replacingOccurrences(of: "%", with: "")) else { continue }
+                let pool = window["pool"] as? String ?? ""
+                let model = (window["model"] as? String) ?? (window["modelName"] as? String) ?? (window["label"] as? String) ?? ""
+                let key = magpiePoolKey(pool: pool + " " + model, name: name)
+                guard let key else { continue }
+                let resetText = (window["resetsAt"] as? String) ?? (window["resetAt"] as? String) ?? (window["reset"] as? String)
+                let reset = resetText.flatMap { iso.date(from: $0) }
+                let clamped = min(100, max(0, remaining))
+                grouped[key, default: [:]][accountID] = Entry(account: accountName, remaining: clamped, reset: reset)
+                let label = labels[key]!
+                accountValues[accountID, default: [:]][label] = UsageBucket(label: label, used: 100 - Int(clamped.rounded()), resets: reset.map(when) ?? "", resetAt: reset)
+            }
+        }
+        guard !grouped.isEmpty else { return nil }
+        var buckets: [UsageBucket] = []
+        var tips: [String: String] = [:]
+        for key in ["gemini5", "geminiWeek", "argonWeek"] {
+            guard let rowsByAccount = grouped[key], !rowsByAccount.isEmpty else { continue }
+            let rows = rowsByAccount.values.sorted { $0.account < $1.account }
+            let left = Int((rows.map(\.remaining).reduce(0, +) / Double(rows.count)).rounded())
+            let resets = rows.compactMap(\.reset).min()
+            let label = labels[key]!
+            buckets.append(UsageBucket(label: label, used: 100 - left, resets: resets.map(when) ?? "", resetAt: resets))
+            tips[label] = rows.map { row in
+                "\(row.account)：剩 \(Int(row.remaining.rounded()))%" + (row.reset.map { "，\(when($0)) 重置" } ?? "")
+            }.joined(separator: "\n")
+        }
+        let accountDetails = accounts.enumerated().map { index, account in
+            let id = (account["email"] as? String) ?? (account["id"] as? String) ?? "\(index)"
+            let name = (account["email"] as? String) ?? (account["name"] as? String) ?? (account["id"] as? String) ?? "帳號 \(index + 1)"
+            return MagpieAccountQuota(id: id, name: name, buckets: accountValues[id] ?? [:])
+        }
+        return buckets.isEmpty ? nil : (buckets, tips, accountDetails)
+    }
+
+    /// 三欄的整體用量文字（供狀態列與純邏輯考卷共用）。
+    static func magpieGlanceText(_ buckets: [UsageBucket]) -> String {
+        func remaining(_ label: String) -> String {
+            guard let bucket = buckets.first(where: { $0.label == label }) else { return "—" }
+            return "\(bucket.remaining)%"
+        }
+        return "\(remaining("Gemini 5 小時"))  \(remaining("Gemini 每週"))  阿公 \(remaining("Argon 每週"))"
+    }
+
+    private static func magpiePoolKey(pool: String, name: String) -> String? {
+        // Magpie 使用中點分隔模型名稱與週期（例如「Gemini 4 Argon · 7 days」）。
+        let s = (pool + " " + name).lowercased().replacingOccurrences(of: "·", with: " ")
+        if s.contains("argon") || s.contains("gemini 4") || s.contains("gemini4") { return s.contains("week") || s.contains("weekly") || s.contains("每週") ? "argonWeek" : nil }
+        if s.contains("five hour") || s.contains("5 hour") || s.contains("5 小時") || s.contains("5h") || s.contains("session") { return "gemini5" }
+        if s.contains("weekly") || s.contains("week") || s.contains("每週") { return "geminiWeek" }
+        if s.contains("gemini") { return "geminiWeek" }
+        return nil
     }
 
     /// 「Oct 22 at 10pm」→「今天 22:00」；「Oct 24 at 1am」→「10/24 01:00」
@@ -1012,6 +1384,21 @@ struct UsageFullPage: View {
                 Text(p.title).font(.system(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)
             }
             ForEach(m.rows(p)) { r in UsageRowView(row: r) }
+            if p == .gemini && !m.magpieAccounts.isEmpty {
+                VStack(alignment: .leading, spacing: 5 * s) {
+                    ForEach(m.magpieAccounts) { account in
+                        VStack(alignment: .leading, spacing: 2 * s) {
+                            Text(account.name).font(.system(size: 10.5 * s, weight: .medium)).foregroundStyle(.secondary)
+                            Text(["Gemini 5 小時", "Gemini 每週", "Argon 每週"].compactMap { label in
+                                guard let b = account.buckets[label] else { return nil }
+                                let short = label == "Gemini 5 小時" ? "5h" : label == "Gemini 每週" ? "週" : "阿公"
+                                return "\(short) \(b.remaining)%"
+                            }.joined(separator: " · "))
+                                .font(.system(size: 10 * s)).monospacedDigit().foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
             PoolNote(m: m, pool: p)
         }
         .padding(12 * s)
@@ -1024,12 +1411,45 @@ struct UsageFullPage: View {
 enum UsageSheet {
     private static weak var panel: FloatingPanel?
     private static var closedAt = Date.distantPast
+    private static weak var focusWindow: NSWindow?
+    private static weak var focusResponder: NSResponder?
+    private static var focusApp: NSRunningApplication?
+    private static var shouldRestoreExternalApp = false
+    private static var actionSequence: UInt64 = 0
+    private static var isClosing = false
 
-    static func toggle() {
-        if let p = panel, p.isVisible { p.close(); return }
+    static func toggle(preservingFocus: Bool = false, in sourceWindow: NSWindow? = nil, allowImmediateReopen: Bool = false) {
+        actionSequence &+= 1
+        let sequence = actionSequence
+        if let p = panel, p.isVisible {
+            if isClosing {
+                isClosing = false
+                p.alphaValue = 1
+                return
+            }
+            isClosing = true
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.18
+                p.animator().alphaValue = 0
+            }, completionHandler: {
+                guard actionSequence == sequence, isClosing, panel === p else { return }
+                isClosing = false
+                p.close()
+            })
+            return
+        }
         // 點「用量剩餘」想關掉：面板在按下時已經自己關了，放開時別又打開
-        if Date().timeIntervalSince(closedAt) < 0.4 { return }
-        guard let win = NSApp.mainWindow ?? NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && !($0 is NSPanel) }) else { return }
+        if !allowImmediateReopen && Date().timeIntervalSince(closedAt) < 0.4 { return }
+        guard let win = sourceWindow ?? NSApp.mainWindow ?? NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && !($0 is NSPanel) }) else { return }
+        if preservingFocus {
+            let priorApp = NSWorkspace.shared.frontmostApplication
+            focusApp = priorApp
+            shouldRestoreExternalApp = priorApp?.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            focusWindow = sourceWindow ?? NSApp.keyWindow ?? win
+            focusResponder = focusWindow?.firstResponder
+        } else {
+            clearFocusTarget()
+        }
         let scale = UIScale.shared.f
         // 一列三家；主視窗寬度（的 95%）放不下就退成兩欄、一欄。只看視窗寬度、不看現在有幾家有資料：
         // 剛開 App 用量還沒查回來時打開，欄數若按「現在有幾家」算會被鎖成一欄，資料到了也不會重排
@@ -1042,14 +1462,43 @@ enum UsageSheet {
         let size = NSSize(width: natural.width, height: min(natural.height, win.frame.height * 0.85))
         let f = win.frame
         let p = FloatingPanel(content: host)
-        p.onClose = { closedAt = Date() }
+        p.onClose = { [weak p] in
+            guard actionSequence == sequence, panel === p else { return }
+            panel = nil
+            isClosing = false
+            closedAt = Date()
+            if preservingFocus { restoreFocus(panelWasKey: p?.wasKeyBeforeClose == true) }
+            clearFocusTarget()
+        }
         p.setFrame(NSRect(x: f.midX - size.width / 2, y: f.midY - size.height / 2, width: size.width, height: size.height), display: true)
         win.addChildWindow(p, ordered: .above)
-        p.makeKeyAndOrderFront(nil)
+        if preservingFocus { p.orderFront(nil) }
+        else { p.makeKeyAndOrderFront(nil) }
         panel = p
+        isClosing = false
     }
+
+    private static func restoreFocus(panelWasKey: Bool) {
+        FocusRestoration.restore(window: focusWindow, responder: focusResponder, app: focusApp,
+                                 external: shouldRestoreExternalApp, panelWasKey: panelWasKey)
+    }
+
+    private static func clearFocusTarget() {
+        focusWindow = nil
+        focusResponder = nil
+        focusApp = nil
+        shouldRestoreExternalApp = false
+    }
+
+    static func toggleForShortcut(in window: NSWindow?) {
+        let wasOpen = panel?.isVisible == true
+        toggle(preservingFocus: true, in: window, allowImmediateReopen: true)
+        if !wasOpen, panel?.isVisible == true { UsageMonitor.shared.refresh() }
+    }
+
     /// 測試用：現在開著的那個
     static var current: NSPanel? { panel }
+    static func owns(_ window: NSWindow?) -> Bool { window === panel }
 }
 
 /// 一眼看完的用量
@@ -1059,6 +1508,7 @@ struct UsageGlanceItem {
     let tag: String?          // 數字前面的小字（只有「阿公」）
     let what: String          // 滑過說明用的全名
     let bucket: UsageBucket?  // nil＝查不到，顯示「—」
+    var detail: String? = nil
 }
 
 struct UsageGlanceGroup {
@@ -1074,7 +1524,8 @@ struct UsageGlanceGroup {
         for (i, it) in items.enumerated() {
             if i > 0 { out.append((compact ? "·" : " · ", false)) }
             if let t = it.tag { out.append((compact ? t : t + " ", false)) }
-            if let b = it.bucket { out.append(("\(b.remaining)" + (tight && i < items.count - 1 ? "" : "%"), UsageRowView.isLow(b.remaining))) } else { out.append(("—", false)) }
+            if let b = it.bucket { out.append(("\(b.remaining)" + (tight && i < items.count - 1 ? "" : "%"), UsageRowView.isLow(b.remaining))) }
+            else { out.append(("—", false)) }
         }
         return out
     }
@@ -1087,6 +1538,7 @@ struct UsageGlanceGroup {
             var t = it.what + L("：剩 \(b.remaining)%")
             if let c = SidebarFooter.countdown(b.resets) { t += L("，\(c) 後重置（\(b.resets)）") }
             else if !b.resets.isEmpty { t += L("，\(b.resets) 重置") }
+            if let detail = it.detail { t += "\n" + detail }
             return t
         }.joined(separator: "\n")
     }
@@ -1109,9 +1561,9 @@ extension UsageMonitor {
         }
         if AgyBridge.enabled || !agyBuckets.isEmpty {
             out.append(UsageGlanceGroup(key: "agy", name: "agy", symbol: "sparkle", items: [
-                UsageGlanceItem(tag: nil, what: L("agy Gemini 5 小時（3.8 Flash 等共用）"), bucket: find(agyBuckets) { $0.hasPrefix("Gemini") && $0.hasSuffix(five) }),
-                UsageGlanceItem(tag: nil, what: L("agy Gemini 每週"), bucket: find(agyBuckets) { $0.hasPrefix("Gemini") && $0.hasSuffix(week) }),
-                UsageGlanceItem(tag: L("阿公"), what: L("agy 阿公（Argon）每週"), bucket: find(agyBuckets) { $0.contains("Argon") && $0.hasSuffix(week) }),
+                UsageGlanceItem(tag: nil, what: L("agy Gemini 5 小時（3.8 Flash 等共用）"), bucket: find(agyBuckets) { $0.hasPrefix("Gemini") && $0.hasSuffix(five) }, detail: magpieQuotaTips["Gemini 5 小時"]),
+                UsageGlanceItem(tag: nil, what: L("agy Gemini 每週"), bucket: find(agyBuckets) { $0.hasPrefix("Gemini") && $0.hasSuffix(week) }, detail: magpieQuotaTips["Gemini 每週"]),
+                UsageGlanceItem(tag: L("阿公"), what: L("agy 阿公（Argon）每週"), bucket: find(agyBuckets) { $0.contains("Argon") && $0.hasSuffix(week) }, detail: magpieQuotaTips["Argon 每週"]),
             ]))
         }
         return out

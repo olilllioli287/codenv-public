@@ -224,20 +224,33 @@ final class Store: ObservableObject {
             // 讀不懂（檔案壞了、或是新版的格式）：先另存一份，不然等一下存檔會把整份清單蓋成空的
             let f = DateFormatter(); f.dateFormat = "MMdd-HHmmss"
             let bad = dir.appendingPathComponent("state.json.讀不到-\(f.string(from: Date()))")
-            do { try data.write(to: bad) } catch { protectOriginal = true }     // 連備份都寫不成：原檔是唯一一份，一律不覆蓋
+            let savedBadCopy: Bool
+            do { try data.write(to: bad); savedBadCopy = true } catch { savedBadCopy = false; protectOriginal = true }     // 連備份都寫不成：原檔是唯一一份，一律不覆蓋
             loadFailed = true
             // 原檔與備份都解不開：不能用空狀態開起來再存檔——空狀態會蓋掉 state.json，一小時後 .bak 也被輪替成空的。
             // 這次執行不存檔（保護原檔），並告訴使用者；另存的 讀不到- 副本也留著
             protectOriginal = true
-            startupProblem = L("codenv 的設定檔 state.json 讀不懂（檔案壞了，或是比這個版本更新的格式），備份也還原不了。為了不蓋掉它，這次執行不會存檔，改動關掉就沒了。原檔另存了一份「\(bad.lastPathComponent)」在 \(dir.path)，請先留著；可以改用較新版的 codenv 開，或把備份放回 state.json 再重開。")
-            NSLog("AI 工作台：state.json 讀不到，已另存成 \(bad.lastPathComponent)")
-            EventLog.log("檔案", "state.json 無法讀取，已備份為 \(bad.lastPathComponent)")
+            let copyNote = savedBadCopy ? L("原檔另存了一份「\(bad.lastPathComponent)」在 \(dir.path)，請先留著。") : L("原檔另存副本失敗，原檔仍保留在原位置；請先複製保存後再處理。")
+            startupProblem = L("codenv 的設定檔 state.json 讀不懂（檔案壞了，或是比這個版本更新的格式），備份也還原不了。為了不蓋掉它，這次執行不會存檔，改動關掉就沒了。\(copyNote)可以改用較新版的 codenv 開，或把備份放回 state.json 再重開。")
+            if savedBadCopy {
+                NSLog("AI 工作台：state.json 讀不到，已另存成 \(bad.lastPathComponent)")
+                EventLog.log("檔案", "state.json 無法讀取，已備份為 \(bad.lastPathComponent)")
+            } else {
+                NSLog("AI 工作台：state.json 讀不到，另存副本失敗；原檔仍保留")
+                EventLog.log("檔案", "state.json 無法讀取，另存副本失敗；原檔仍受保護")
+            }
         } else if raw == nil, FileManager.default.fileExists(atPath: url.path) {
-            // 檔案在但讀不出來（權限、暫時讀不到）：不能當成沒有檔案，不然下次存檔會蓋掉它。0 位元組的空檔不在這裡（沒東西可保護，照一般流程重建）
-            protectOriginal = true
-            loadFailed = true
-            startupProblem = L("codenv 讀不到設定檔 state.json（可能是權限或磁碟問題）。為了不蓋掉它，這次執行不會存檔，改動關掉就沒了。請先確認「\(url.path)」讀得到（權限、iCloud 或外接碟），再重開 codenv。")
-            EventLog.log("檔案", "state.json 存在但讀不出來，本次不存檔以保護原檔")
+            // 檔案在但讀不出來（權限、暫時讀不到）：只有確認為 0 byte 時才能當空檔重建；屬性也讀不到就保護原檔。
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            let size = (attributes?[.size] as? NSNumber)?.intValue
+            if size == 0 {
+                // 空檔沒有可保留的資料，照預設空狀態繼續；saveNow 會正常重建。
+            } else {
+                protectOriginal = true
+                loadFailed = true
+                startupProblem = L("codenv 讀不到設定檔 state.json（可能是權限或磁碟問題）。為了不蓋掉它，這次執行不會存檔，改動關掉就沒了。請先確認「\(url.path)」讀得到（權限、iCloud 或外接碟），再重開 codenv。")
+                EventLog.log("檔案", "state.json 存在但讀不出來，本次不存檔以保護原檔")
+            }
         }
         ensureLayout()
         refreshActivity()
@@ -398,7 +411,7 @@ final class Store: ObservableObject {
     func rename(_ id: UUID, to title: String, byUser: Bool) {
         guard let i = conversations.firstIndex(where: { $0.id == id }) else { return }
         if !byUser && conversations[i].renamed { return }
-        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = KeyScan.redact(title.trimmingCharacters(in: .whitespacesAndNewlines), strongOnly: true)      // 標題會寫進 state.json 與 Claude 的 sessions：金鑰樣式只留末四碼
         guard !t.isEmpty else { return }
         if byUser { conversations[i].namedByCommander = nil }   // 使用者動手改了：之後是他的名字，總指揮不能再改
         if conversations[i].title == t {      // 使用者確認了同一個名字：也算他定的，之後自動標題不能再蓋掉

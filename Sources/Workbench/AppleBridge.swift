@@ -295,7 +295,7 @@ final class AppleBridge {
     private func record(_ obj: [String: Any]) -> Bool {
         var obj = obj
         obj["timestamp"] = obj["timestamp"] ?? Transcripts.stamp()   // 跟 Claude 紀錄同欄位：md 和交接看得到時間
-        guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return false }
+        guard let d = Transcripts.redactedJSON(obj) else { return false }
         let fm = FileManager.default
         do {
             try fm.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)

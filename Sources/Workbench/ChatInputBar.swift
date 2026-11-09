@@ -32,7 +32,7 @@ final class ChatTextView: NSTextView {
     var onCycleMode: (() -> Void)?
     var onSendNow: (() -> Void)?
     /// ⌃ C：停止 Claude，剛送出的字放回輸入框
-    var onInterrupt: (() -> Void)?
+    var onInterrupt: (() -> Bool)?
     /// / 選單開著的時候先問它要不要這個按鍵（↑ ↓ Tab Enter Esc）
     var onMenuKey: ((NSEvent) -> Bool)?
     /// Claude 猜的下一句：輸入框空的時候用灰字顯示，Tab 採用
@@ -94,7 +94,8 @@ final class ChatTextView: NSTextView {
         if wasAfterCtrlX, mods == .control, e.keyCode == 1 { onSend?(); return }
         if mods == .control && e.keyCode == 7 { afterCtrlX = true; return }
         // 用 keyCode（c 鍵）判斷：注音模式下 charactersIgnoringModifiers 不一定是 c
-        if mods == .control && e.keyCode == 8 { onInterrupt?(); return }
+        // 反白文字時保留 NSTextView／系統的複製行為；沒有選取、且這輪可停止時才當中斷。
+        if mods == .control && e.keyCode == 8, selectedRange().length == 0, onInterrupt?() == true { return }
         if (e.keyCode == 36 || e.keyCode == 76) && mods == .command { onSend?(); return }
         if (e.keyCode == 36 || e.keyCode == 76) && mods == .control { onSendNow?(); return }
         // Tab：採用灰字的建議（變成真的文字，可以再改）
@@ -484,20 +485,21 @@ final class ContextStrip: NSView {
 
     override func layout() {
         super.layout()
-        let h: CGFloat = 14, y = (bounds.height - h) / 2
         title.sizeToFit(); value.sizeToFit()
-        title.frame = NSRect(x: 0, y: y, width: title.frame.width, height: h)
+        let th = title.frame.height, vh = value.frame.height
+        title.frame = NSRect(x: 0, y: ((bounds.height - th) / 2).rounded(), width: title.frame.width, height: th)
         // 「上下文」標籤字、「剩餘」標籤字和上下文進度條都拿掉；這一行是「561K / 640K」＋各家額度（圖示、細條、百分比），靠左對齊
         track.isHidden = true; fill.isHidden = true; title.isHidden = true
         let vx: CGFloat = 0
         var right = bounds.width
         if !trailing.isHidden {
             trailing.sizeToFit()
+            let rth = trailing.frame.height
             let tw = min(trailing.frame.width, max(0, bounds.width - vx - value.frame.width - 12))
-            trailing.frame = NSRect(x: bounds.width - tw, y: y, width: tw, height: h)
+            trailing.frame = NSRect(x: bounds.width - tw, y: ((bounds.height - rth) / 2).rounded(), width: tw, height: rth)
             right = trailing.frame.minX - 8
         }
-        value.frame = NSRect(x: vx, y: y, width: max(0, min(value.frame.width, right - vx)), height: h)
+        value.frame = NSRect(x: vx, y: ((bounds.height - vh) / 2).rounded(), width: max(0, min(value.frame.width, right - vx)), height: vh)
         let ux = value.frame.maxX + 16
         usage.frame = NSRect(x: ux, y: 0, width: max(0, right - ux), height: bounds.height)
     }
@@ -509,8 +511,8 @@ final class ContextStrip: NSView {
 final class UsageGlanceStrip: NSView, NSViewToolTipOwner {
     var fg: NSColor = .labelColor { didSet { rebuild() } }
     private var groups: [UsageGlanceGroup] = []
-    /// 每家一組：圖示＋每個數字各一條剩餘量細條（>50% 綠、20～50% 黃、<20% 紅，剩越少越短）＋數字
-    private struct Cell { let icon: NSImageView; let items: [(track: NSView, fill: NSView, text: NSTextField, frac: CGFloat?)] }
+    /// 每家一組：圖示＋每個數字各一條剩餘量細條（>50% 綠、20～50% 黃、<20% 紅，剩越少越短）＋數字（有標籤時拆成獨立標籤欄，避免中文撐高行高導致數字偏低）
+    private struct Cell { let icon: NSImageView; let items: [(tag: NSTextField?, track: NSView, fill: NSView, text: NSTextField, frac: CGFloat?)] }
     private var cells: [Cell] = []
     private let lead = NSTextField(labelWithString: L("剩餘"))
     private var sub: AnyCancellable?
@@ -537,9 +539,18 @@ final class UsageGlanceStrip: NSView, NSViewToolTipOwner {
 
     static func barColor(_ remaining: Int) -> NSColor { remaining > 50 ? .systemGreen : (remaining >= 20 ? .systemYellow : .systemRed) }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        rebuild()
+    }
+
     private func rebuild() {
         groups = UsageMonitor.shared.glance
-        for c in cells { c.icon.removeFromSuperview(); c.items.forEach { $0.track.removeFromSuperview(); $0.fill.removeFromSuperview(); $0.text.removeFromSuperview() } }
+        for c in cells {
+            c.icon.removeFromSuperview()
+            c.items.forEach { $0.tag?.removeFromSuperview(); $0.track.removeFromSuperview(); $0.fill.removeFromSuperview(); $0.text.removeFromSuperview() }
+        }
+        let textColor = fg.withAlphaComponent(0.5)
         cells = groups.map { g in
             let iv = NSImageView()
             // 圖示不自己畫：Claude／Codex 用面板那套（Resources/icons），agy 讀使用者裝的 Antigravity.app 去背；取不到就退回 SF Symbols
@@ -555,24 +566,33 @@ final class UsageGlanceStrip: NSView, NSViewToolTipOwner {
                 iv.contentTintColor = fg.withAlphaComponent(0.55)
             }
             addSubview(iv)
-            let items = g.items.map { it -> (track: NSView, fill: NSView, text: NSTextField, frac: CGFloat?) in
+            let items = g.items.map { it -> (tag: NSTextField?, track: NSView, fill: NSView, text: NSTextField, frac: CGFloat?) in
                 let track = NSView(), fill = NSView()
                 for v in [track, fill] { v.wantsLayer = true; v.layer?.cornerRadius = 1.5; addSubview(v) }
                 track.layer?.backgroundColor = fg.withAlphaComponent(0.12).cgColor
-                let t = NSTextField(labelWithString: "")
                 let r = it.bucket?.remaining
                 let low = r.map(UsageRowView.isLow) ?? false
-                let str = (it.tag.map { $0 + " " } ?? "") + (r.map { "\($0)%" } ?? "—")
-                t.attributedStringValue = NSAttributedString(string: str, attributes: [.font: Self.font,
-                    .foregroundColor: low ? NSColor.systemRed : fg.withAlphaComponent(0.5)])
+                let itemColor = low ? NSColor.systemRed : textColor
+                var tagField: NSTextField?
+                if let tagStr = it.tag, !tagStr.isEmpty {
+                    let tf = NSTextField(labelWithString: tagStr)
+                    tf.font = .systemFont(ofSize: 11)
+                    tf.textColor = itemColor
+                    tf.lineBreakMode = .byClipping
+                    addSubview(tf)
+                    tagField = tf
+                }
+                let t = NSTextField(labelWithString: r.map { "\($0)%" } ?? "—")
+                t.font = Self.font
+                t.textColor = itemColor
                 t.lineBreakMode = .byClipping
                 addSubview(t)
                 if let r { fill.layer?.backgroundColor = Self.barColor(r).cgColor }
-                return (track, fill, t, r.map { CGFloat(min(100, max(0, $0))) / 100 })
+                return (tagField, track, fill, t, r.map { CGFloat(min(100, max(0, $0))) / 100 })
             }
             return Cell(icon: iv, items: items)
         }
-        lead.textColor = fg.withAlphaComponent(0.5)
+        lead.textColor = textColor
         needsLayout = true
     }
 
@@ -587,38 +607,49 @@ final class UsageGlanceStrip: NSView, NSViewToolTipOwner {
         return n
     }
 
-    /// 一組（不含圖示）的寬：每個數字「細條＋空隙＋數字」，數字之間隔 itemGap
+    /// 一組（不含圖示）的寬：每個數字「細條＋空隙＋（標籤＋）數字」，數字之間隔 itemGap
     private func width(of c: Cell) -> CGFloat {
         c.items.enumerated().reduce(CGFloat(0)) { acc, e in
-            acc + (e.offset > 0 ? Self.itemGap : 0) + (e.element.frac == nil ? 0 : Self.barW + 4) + e.element.text.frame.width
+            let tagW = e.element.tag.map { $0.frame.width + 2 } ?? 0
+            return acc + (e.offset > 0 ? Self.itemGap : 0) + (e.element.frac == nil ? 0 : Self.barW + 4) + tagW + e.element.text.frame.width
         }
     }
 
     override func layout() {
         super.layout()
         removeAllToolTips()
-        let h: CGFloat = 14, y = (bounds.height - h) / 2
         lead.isHidden = true; lead.frame = .zero
-        cells.forEach { c in c.items.forEach { $0.text.sizeToFit() } }
+        cells.forEach { c in c.items.forEach { $0.tag?.sizeToFit(); $0.text.sizeToFit() } }
         // 「剩餘」兩個字拿掉了：第一組貼著左緣，後面每組前面空 12
         shown = Self.fit(widths: cells.map { width(of: $0) }, lead: -12, available: bounds.width)
         var x: CGFloat = -12
         for (i, c) in cells.enumerated() {
             let on = i < shown
             c.icon.isHidden = !on
-            for it in c.items { it.text.isHidden = !on; it.track.isHidden = !on || it.frac == nil; it.fill.isHidden = !on || it.frac == nil }
+            for it in c.items {
+                it.tag?.isHidden = !on
+                it.text.isHidden = !on
+                it.track.isHidden = !on || it.frac == nil
+                it.fill.isHidden = !on || it.frac == nil
+            }
             guard on else { continue }
             x += 12
-            c.icon.frame = NSRect(x: x, y: (bounds.height - 13) / 2, width: 13, height: 13)
+            c.icon.frame = NSRect(x: x, y: ((bounds.height - 13) / 2).rounded(), width: 13, height: 13)
             var ix = x + 16
             for (k, it) in c.items.enumerated() {
                 if k > 0 { ix += Self.itemGap }
                 if let f = it.frac {
-                    it.track.frame = NSRect(x: ix, y: (bounds.height - Self.barH) / 2, width: Self.barW, height: Self.barH)
+                    it.track.frame = NSRect(x: ix, y: ((bounds.height - Self.barH) / 2).rounded(), width: Self.barW, height: Self.barH)
                     it.fill.frame = NSRect(x: ix, y: it.track.frame.minY, width: max(f > 0 ? 1 : 0, Self.barW * f), height: Self.barH)
                     ix += Self.barW + 4
                 }
-                it.text.frame = NSRect(x: ix, y: y, width: it.text.frame.width, height: h)
+                if let tf = it.tag {
+                    let th = tf.frame.height
+                    tf.frame = NSRect(x: ix, y: ((bounds.height - th) / 2).rounded(), width: tf.frame.width, height: th)
+                    ix = tf.frame.maxX + 2
+                }
+                let nh = it.text.frame.height
+                it.text.frame = NSRect(x: ix, y: ((bounds.height - nh) / 2).rounded(), width: it.text.frame.width, height: nh)
                 ix = it.text.frame.maxX
             }
             addToolTip(NSRect(x: x - 4, y: 0, width: ix - x + 8, height: bounds.height), owner: self, userData: nil)
@@ -662,9 +693,22 @@ final class ChatInputBar: NSView {
     private let statusDivider = NSView()
     /// 「上傳檔案」：開檔案面板（可縮放、可移動，不是掛在視窗上的 sheet），選好的當成拖進來的檔案
     private let uploadButton = BlueCircleButton()
+    /// 專用安全貼上金鑰入口（面板不顯示明文，成功只插入佔位字）。
+    private let keyButton = BlueCircleButton()
+    private var keyPanel: NSPanel?
+    private var keySecret = ""
+    private var keyServicePopup: NSPopUpButton?
+    private var keyErrorLabel: NSTextField?
+    private var keyTextView: NSTextView?
+    private var keyTextViewDelegate: KeyPasteTextViewDelegate?
     /// 橘色收納鈕：在藍色資料夾鈕左邊，樣式一樣；按下去由 ChatPane 給選單（瀏覽器格的比對、回報、匯出）
     let toolsButton = BlueCircleButton()
     var onToolsButton: ((NSView) -> Void)?
+    /// 全域浮動終端機與關聯圖切換入口；放在資料夾按鈕左側。
+    let terminalButton = NSButton()
+    let graphButton = NSButton()
+    var onTerminalButton: (() -> Void)?
+    var onGraphButton: (() -> Void)?
     /// 有卡片的檔案（拖進來或貼上的路徑）；文字裡的路徑被刪掉，卡片也跟著拿掉
     private var files: [URL] = []
     var draftFilePaths: [String] {
@@ -680,12 +724,19 @@ final class ChatInputBar: NSView {
     /// 模型按鈕左邊的權限模式（按一下或 ⇧ Tab 換下一個）
     let modeButton = NSButton()
     var onCycleMode: (() -> Void)?
+    var onSelectBypassMode: (() -> Void)?
     /// no：這則訊息裡的第幾張圖，文字裡用 [Image #no] 標出位置（跟 Claude Code 一樣）
     private var attachments: [(data: Data, mediaType: String, image: NSImage, no: Int, edited: Bool)] = []
     var draftImages: [DraftPersistence.Image] {
         attachments.map { DraftPersistence.Image(data: $0.data, mediaType: $0.mediaType, no: $0.no, edited: $0.edited) }
     }
     private var nextImageNo = 1
+    private static let maxImageNo = Int.max - 1
+    private func allocateImageNo() -> Int? {
+        guard nextImageNo > 0, nextImageNo <= Self.maxImageNo else { return nil }
+        defer { nextImageNo += 1 }
+        return nextImageNo
+    }
     static func imageToken(_ n: Int) -> String { "[Image #\(n)]" }
     var onSend: ((String, [(data: Data, mediaType: String)], Bool) -> Bool)?   // 最後一個：⌃ Enter 馬上插話
     /// 輸入框是空的按 ⌃ Enter：排隊中的訊息全部馬上插話
@@ -798,8 +849,7 @@ final class ChatInputBar: NSView {
             if self.bangRunning || self.busy { self.flashStopHint() } else { self.onBlur?() }
         }
         textView.onInterrupt = { [weak self] in
-            if self?.bangRunning == true { self?.onStopBang?(); return }
-            self?.interruptAndRestore()
+            self?.stopFromInput() ?? false
         }
         textView.onCycleMode = { [weak self] in self?.onCycleMode?() }
         textView.onImages = { [weak self] urls, images in self?.attach(urls: urls, images: images) }
@@ -825,7 +875,11 @@ final class ChatInputBar: NSView {
         modeButton.isBordered = false
         modeButton.target = self
         modeButton.action = #selector(cycleModePressed)
-        modeButton.toolTip = L("權限模式（⇧ Tab 切換）：每次都問 → 改檔不問 → 只規劃 → 自動")
+        modeButton.toolTip = L("權限模式（⇧ Tab 切換）：每次都問 → 改檔不問 → 只規劃 → 自動 → 全部不問（需確認）")
+        modeButton.menu = NSMenu()
+        let bypass = NSMenuItem(title: L("⏵⏵ 全部不問"), action: #selector(selectBypassMode), keyEquivalent: "")
+        bypass.target = self; bypass.attributedTitle = NSAttributedString(string: bypass.title, attributes: [.foregroundColor: NSColor.systemRed])
+        modeButton.menu?.addItem(bypass)
         box.addSubview(modeButton)
         statusDivider.wantsLayer = true
         box.addSubview(statusDivider)
@@ -835,12 +889,22 @@ final class ChatInputBar: NSView {
         uploadButton.action = #selector(uploadPressed)
         uploadButton.toolTip = L("上傳檔案（可以選好幾個檔案或資料夾）")
         box.addSubview(uploadButton)
+        keyButton.image = NSImage(systemSymbolName: "key.fill", accessibilityDescription: L("貼上 API 金鑰（不會進聊天紀錄）"))?.withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
+        keyButton.target = self
+        keyButton.action = #selector(keyPressed)
+        keyButton.toolTip = L("貼上 API 金鑰（不會進聊天紀錄）")
+        box.addSubview(keyButton)
         toolsButton.baseColor = .systemOrange
         toolsButton.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: L("瀏覽器格的工具"))?.withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
         toolsButton.target = self
         toolsButton.action = #selector(toolsPressed)
         toolsButton.toolTip = L("瀏覽器格的工具（請 Claude 比對、回報、匯出）")
         box.addSubview(toolsButton)
+        configureUtilityButton(terminalButton, symbol: "terminal", label: "浮動終端機", shortcut: "F5", tooltip: "浮動終端機（F5）", identifier: "chatInputBar.terminalButton", action: #selector(terminalPressed))
+        configureUtilityButton(graphButton, symbol: "point.3.connected.trianglepath.dotted", label: "關聯圖", shortcut: "F6", tooltip: "關聯圖（F6）", identifier: "chatInputBar.graphButton", action: #selector(graphPressed))
+        uploadButton.setAccessibilityIdentifier("chatInputBar.folderButton")
+        box.addSubview(terminalButton)
+        box.addSubview(graphButton)
         lockView.wantsLayer = true
         lockView.isHidden = true
         lockLabel.font = .systemFont(ofSize: 13)
@@ -876,6 +940,30 @@ final class ChatInputBar: NSView {
         box.addSubview(stopHint)
         updateButton()
         NotificationCenter.default.addObserver(self, selector: #selector(textChanged), name: NSText.didChangeNotification, object: textView)
+    }
+
+    private func configureUtilityButton(_ button: NSButton, symbol: String, label: LString, shortcut: String, tooltip: LString, identifier: String, action: Selector) {
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: L(label))?.withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.isBordered = false
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 11
+        button.contentTintColor = .secondaryLabelColor
+        button.target = self
+        button.action = action
+        button.toolTip = L(tooltip)
+        button.setAccessibilityLabel(L(label))
+        button.setAccessibilityIdentifier(identifier)
+    }
+
+    @objc private func terminalPressed() { onTerminalButton?() }
+    @objc private func graphPressed() { onGraphButton?() }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        keyPanel?.close()
+        keyPanel = nil; keyTextView?.string = ""; keyTextView = nil; keyTextViewDelegate = nil; keySecret = ""
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -922,6 +1010,7 @@ final class ChatInputBar: NSView {
         }
     }
     @objc private func cycleModePressed() { onCycleMode?() }
+    @objc private func selectBypassMode() { onSelectBypassMode?() }
 
     private var modelTitleText = ""
     /// 模型按鈕上的字，例如「Opus 5.5」
@@ -946,6 +1035,77 @@ final class ChatInputBar: NSView {
     }
 
     @objc private func showModels() { onModelButton?(modelButton) }
+
+    @objc private func keyPressed() { showKeyPanel() }
+
+    private func showKeyPanel() {
+        guard keyPanel == nil else { keyPanel?.makeKeyAndOrderFront(nil); return }
+        let w: CGFloat = 330, h: CGFloat = 210
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: w, height: h), styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
+        panel.title = L("安全貼上 API 金鑰")
+        panel.isReleasedWhenClosed = false
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+        let label = NSTextField(labelWithString: L("內容只會存進鑰匙圈，不會進聊天紀錄。"))
+        label.font = .systemFont(ofSize: 12); label.textColor = .secondaryLabelColor
+        label.frame = NSRect(x: 16, y: 170, width: w - 32, height: 18); root.addSubview(label)
+        let scroll = NSScrollView(frame: NSRect(x: 16, y: 92, width: w - 32, height: 70))
+        scroll.borderType = .bezelBorder; scroll.hasVerticalScroller = true
+        let editor = NSTextView(frame: NSRect(origin: .zero, size: scroll.contentSize))
+        editor.isRichText = false; editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false; editor.isAutomaticTextReplacementEnabled = false
+        editor.isAutomaticSpellingCorrectionEnabled = false
+        editor.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        editor.textColor = .clear
+        editor.insertionPointColor = .labelColor
+        editor.selectedTextAttributes = [.foregroundColor: NSColor.clear, .backgroundColor: NSColor.selectedTextBackgroundColor]
+        editor.isVerticallyResizable = true; editor.isHorizontallyResizable = false
+        editor.textContainer?.widthTracksTextView = true
+        editor.textContainer?.containerSize = NSSize(width: scroll.contentSize.width, height: .greatestFiniteMagnitude)
+        let delegate = KeyPasteTextViewDelegate { [weak self] secret in
+            guard let self else { return }
+            self.keySecret = KeyVaultPaste.clean(secret)
+            let guessed = KeyService.guess(self.keySecret)
+            if let i = KeyService.everything.firstIndex(where: { $0.id == guessed.id }) { self.keyServicePopup?.selectItem(at: i) }
+            editor.textStorage?.addAttributes([.foregroundColor: NSColor.clear], range: NSRange(location: 0, length: editor.textStorage?.length ?? 0))
+        }
+        editor.delegate = delegate
+        keyTextViewDelegate = delegate
+        keyTextView = editor
+        scroll.documentView = editor; root.addSubview(scroll)
+        let popup = NSPopUpButton(frame: NSRect(x: 16, y: 54, width: 190, height: 26), pullsDown: false)
+        popup.addItems(withTitles: KeyService.everything.map(\.name))
+        let guessed = KeyService.find("other")!
+        popup.selectItem(at: KeyService.everything.firstIndex(where: { $0.id == guessed.id }) ?? KeyService.everything.count - 1)
+        root.addSubview(popup); keyServicePopup = popup
+        let error = NSTextField(labelWithString: "")
+        error.textColor = .systemRed; error.font = .systemFont(ofSize: 11)
+        error.frame = NSRect(x: 16, y: 25, width: 190, height: 20); root.addSubview(error); keyErrorLabel = error
+        let save = NSButton(title: L("存進鑰匙圈"), target: self, action: #selector(saveKeyFromPanel))
+        save.bezelStyle = .rounded; save.frame = NSRect(x: w - 120, y: 48, width: 104, height: 30); root.addSubview(save)
+        panel.contentView = root
+        keySecret = ""
+        keyPanel = panel
+        if let win = window {
+            let p = convert(NSPoint(x: keyButton.frame.midX, y: keyButton.frame.maxY), to: nil)
+            let screen = win.convertPoint(toScreen: p)
+            panel.setFrameTopLeftPoint(NSPoint(x: screen.x - w / 2, y: screen.y + 8))
+        }
+        panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(editor)
+    }
+
+    @objc private func saveKeyFromPanel() {
+        guard let popup = keyServicePopup else { return }
+        let item = KeyService.everything[popup.indexOfSelectedItem]
+        let result = KeyVaultPaste.save(keySecret, service: KeyVault.service(item.id))
+        if let error = result.error { keyErrorLabel?.stringValue = error; return }
+        if let placeholder = result.placeholder {
+            textView.insertText(placeholder, replacementRange: textView.selectedRange())
+            textView.didChangeText(); onPendingInputChange?()
+            keyTextView?.string = ""; keyTextView = nil
+            keyPanel?.close(); keyPanel = nil; keySecret = ""
+        }
+    }
 
     /// 整體文字大小
     /// 打字的字型：nil＝系統字型；有給就用它（跟終端機一樣），大小照終端機點數換算
@@ -1070,9 +1230,15 @@ final class ChatInputBar: NSView {
         uploadButton.isHidden = !lockView.isHidden || inner.width < 200
         let ux = (modeButton.isHidden ? modelButton.frame.minX : modeButton.frame.minX) - 26
         uploadButton.frame = NSRect(x: ux, y: row + 3, width: 22, height: 22)
+        keyButton.isHidden = !lockView.isHidden || inner.width < 230
+        keyButton.frame = NSRect(x: uploadButton.frame.minX - 26, y: row + 3, width: 22, height: 22)
         // 橘色收納鈕：接在資料夾鈕左邊；上傳鈕收起來（太窄）時一起收
-        toolsButton.isHidden = !Prefs.shared.webFeaturesEnabled || uploadButton.isHidden || inner.width < 230
-        toolsButton.frame = NSRect(x: uploadButton.frame.minX - 26, y: row + 3, width: 22, height: 22)
+        toolsButton.isHidden = !Prefs.shared.webFeaturesEnabled || keyButton.isHidden || inner.width < 230
+        toolsButton.frame = NSRect(x: keyButton.frame.minX - 26, y: row + 3, width: 22, height: 22)
+        terminalButton.isHidden = !lockView.isHidden || inner.width < 310 || uploadButton.isHidden
+        terminalButton.frame = NSRect(x: uploadButton.frame.minX - 26, y: row + 3, width: 22, height: 22)
+        graphButton.isHidden = terminalButton.isHidden
+        graphButton.frame = NSRect(x: terminalButton.frame.minX - 26, y: row + 3, width: 22, height: 22)
         statusDivider.isHidden = !lockView.isHidden
         statusDivider.frame = NSRect(x: 14, y: row + Self.statusRow + 1, width: max(0, box.bounds.width - 28), height: 1)
         var y = row + Self.statusRow + 4
@@ -1199,6 +1365,8 @@ final class ChatInputBar: NSView {
         modelButton.isHidden = text != nil
         modeButton.isHidden = text != nil
         uploadButton.isHidden = text != nil
+        terminalButton.isHidden = text != nil
+        graphButton.isHidden = text != nil
         needsLayout = true
     }
     @objc private func lockPressed() { lockAction?() }
@@ -1256,7 +1424,19 @@ final class ChatInputBar: NSView {
         updateButton()
     }
 
-    @objc private func buttonPressed() { busy ? onStop?() : send() }
+    @objc private func buttonPressed() {
+        if busy { _ = stopFromInput() } else { send() }
+    }
+
+    /// Ctrl+C、停止按鈕與輸入框外快捷鍵共用同一條中斷路徑。
+    @discardableResult
+    func stopFromInput() -> Bool {
+        if bangRunning { onStopBang?(); return true }
+        guard busy || lastSent != nil else { return false }
+        interruptAndRestore()
+        if window?.firstResponder !== textView { window?.makeFirstResponder(textView) }
+        return true
+    }
 
     /// ⌃ C：Claude 在做（或剛送出、還沒開始）就停下來；輸入框是空的話，把剛送出的字和圖放回來
     func interruptAndRestore() {
@@ -1326,9 +1506,9 @@ final class ChatInputBar: NSView {
         nextImageNo = 1
         for im in images {
             guard let img = NSImage(data: im.data) else { continue }
-            attachments.append((im.data, im.mediaType, img, nextImageNo, false))
-            t += (t.isEmpty ? "" : " ") + Self.imageToken(nextImageNo)
-            nextImageNo += 1
+            guard let no = allocateImageNo() else { break }
+            attachments.append((im.data, im.mediaType, img, no, false))
+            t += (t.isEmpty ? "" : " ") + Self.imageToken(no)
         }
         textView.string = t
         textView.undoManager?.removeAllActions()
@@ -1379,7 +1559,47 @@ final class ChatInputBar: NSView {
     /// 焦點不在輸入框時按 ⌃ Enter（MainWindow 轉過來）：輸入框有字就馬上插話送出，空的就讓排隊的馬上插話
     func sendNowFromOutside() { send(now: true) }
 
+    /// 送出前的金鑰攔截（KeyGuard.swift）。回傳 true＝攔下了、這次不送出（輸入框的字可能已經換成〔金鑰：…，已存〕，讓使用者看過再送）
+    private func interceptKeys() -> Bool {
+        KeyGuard.wire()
+        let raw = textView.string
+        let hits = KeyScan.scan(raw)
+        if !hits.isEmpty {
+            var replaced = false
+            for hit in hits.reversed() {       // 從後面換起，前面的位置才不會跑掉
+                switch KeyGuard.ask(hit) {
+                case .cancel:
+                    return true
+                case .sendAnyway:
+                    continue                // 只放行這一個命中（沒有留下旗標）；其他命中、附檔、引用照樣逐一檢查
+                case .notAKey:
+                    KeyGuard.allow(hit.key)
+                case .save(let service, let label):
+                    if let err = KeyVault.set(service: service, key: hit.key) {
+                        let a = NSAlert(); a.messageText = L("金鑰沒有存進去，所以這則沒有送出"); a.informativeText = err; a.runModal()
+                        return true
+                    }
+                    if hit.range.upperBound <= (textView.string as NSString).length {
+                        textView.insertText("〔金鑰：\(label)，已存〕", replacementRange: hit.range)
+                        replaced = true
+                    }
+                }
+            }
+            if replaced { textChanged(); return true }       // 換好了，請使用者看一眼再送
+        }
+        var bad = files.filter(KeyGuard.fileHasKey).map(\.lastPathComponent)
+        if quotesProvider().contains(where: { !KeyScan.scan($0.text).isEmpty }) { bad.append(L("（引用的訊息）")) }
+        let big = files.filter(KeyGuard.fileIsOverScanLimit)
+        if !bad.isEmpty, !KeyGuard.askFiles(bad, truncated: !big.isEmpty) { return true }
+        if !big.isEmpty { return !KeyGuard.askBigFiles(big.map(\.lastPathComponent)) }      // 超過 8 MB 後面掃不到：讓使用者決定
+        return false
+    }
+
+    /// 測試掛鉤（--keyguard-test）：走跟按下送出一樣的路
+    func testSend() { send() }
+
     private func send(now: Bool = false) {
+        if interceptKeys() { return }
         let text = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         // ! 指令：不走模型。只有 ! 沒有指令就什麼都不做
         if Bang.isBangMode(text) {
@@ -1489,10 +1709,11 @@ final class ChatInputBar: NSView {
         added = added.map { a in Self.fit(a.data, a.mediaType).map { ($0.0, $0.1, a.image) } ?? a }
         var tokens: [String] = []
         for a in added {
-            attachments.append((a.data, a.mediaType, a.image, nextImageNo, false))
-            tokens.append(Self.imageToken(nextImageNo))
-            nextImageNo += 1
+            guard let no = allocateImageNo() else { break }
+            attachments.append((a.data, a.mediaType, a.image, no, false))
+            tokens.append(Self.imageToken(no))
         }
+        guard !tokens.isEmpty else { return }
         // 在游標的位置插入 [Image #n]，說明文字可以寫在它前後
         var r = textView.selectedRange()
         if r.location == NSNotFound || r.upperBound > (textView.string as NSString).length { r = NSRange(location: (textView.string as NSString).length, length: 0) }
@@ -1658,6 +1879,16 @@ final class ChatInputBar: NSView {
     static func png(_ img: NSImage) -> Data? {
         guard let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
         return rep.representation(using: .png, properties: [:])
+    }
+}
+
+/// 專用代理只把安全面板的輸入留在記憶體，避免 ChatInputBar 承擔 NSTextViewDelegate。
+private final class KeyPasteTextViewDelegate: NSObject, NSTextViewDelegate {
+    private let onChange: (String) -> Void
+    init(onChange: @escaping (String) -> Void) { self.onChange = onChange }
+    func textDidChange(_ notification: Notification) {
+        guard let editor = notification.object as? NSTextView else { return }
+        onChange(editor.string)
     }
 }
 

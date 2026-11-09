@@ -1,8 +1,8 @@
 {
   "meta": {
     "name": "codenv-claude",
-    "version": "0.2.0",
-    "description": "codenv 單一聊天室的 Claude 沙盒。聊天室資料夾可讀寫；~/.claude 只開放對話紀錄、記憶等會寫的子資料夾，設定、hooks、外掛、技能、~/.claude.json 只能讀（改了會影響沙盒外的 Claude）；鑰匙圈不開，登入用 codenv 從沙盒外帶進來的長效權杖（CLAUDE_CODE_OAUTH_TOKEN）"
+    "version": "0.3.0",
+    "description": "codenv 單一聊天室的 Claude 沙盒。聊天室資料夾可讀寫；~/.claude 只開放對話紀錄、記憶等會寫的子資料夾，設定、hooks、外掛、技能、~/.claude.json 只能讀（改了會影響沙盒外的 Claude）；AI 工作台資料夾（含 browser/token、collab.json、state.json）完全不開，看板與控制通道改走 codenv 發的聊天室專屬 token；鑰匙圈不開，登入用 codenv 從沙盒外帶進來的長效權杖（CLAUDE_CODE_OAUTH_TOKEN）"
   },
   "extends": "default",
   "groups": {
@@ -30,7 +30,6 @@
       "~/.claude/telemetry",
       "~/.claude/cache",
       "~/.claude/state",
-      "~/Library/Application Support/codenv",
       "~/Library/Developer",
       "~/.cache",
       "~/.npm",

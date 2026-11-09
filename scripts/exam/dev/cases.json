@@ -1,17 +1,262 @@
 [
-  {"id":"A06","name":"選項文字含分隔符仍完整還原","runner":"logic.mjs","before":"bfbe834^","files":["Resources/chat/chat.js"]},
-  {"id":"A07","name":"看板步驟不誤拆 email／@State","runner":"todo.py","before":"593aaf7^","files":["scripts/codenv-todo"]},
-  {"id":"A08","name":"HANDOFF 後有補充仍判對狀態","runner":"todo.py","before":"593aaf7^","files":["scripts/codenv-todo"]},
-  {"id":"A03","name":"歷史重載剝掉內部附加行","runner":"logic.mjs","before":"e93a637^","files":["Resources/chat/chat.js"]},
-  {"id":"A05","name":"依指定 UUID 精準撤泡泡","runner":"logic.mjs","before":"122e79d^","files":["Resources/chat/chat.js"]},
-  {"id":"A02","name":"半圓定義域端點接合","runner":"logic.mjs","before":"a657704^","files":["Resources/chat/plot.js"]},
-  {"id":"A01","name":"圓與格子等比例","runner":"logic.mjs","before":"a657704^","files":["Resources/chat/plot.js"],"extraBefore":["9457591^"]},
-  {"id":"B01","name":"完成前串流即排版數學式","runner":"browser.mjs","before":"8cd5f38^","files":["Resources/chat/chat.js"]},
-  {"id":"B10","name":"未讀排隊訊息標沒送到","runner":"browser.mjs","before":"066d226^","files":["Resources/chat/chat.js"]},
-  {"id":"B04","name":"內容縮短不解除貼底、真捲動才解除","runner":"browser.mjs","before":"a70357d^","files":["Resources/chat/chat.js"]},
-  {"id":"A13","name":"加步驟到已完成目標會回到進行中","runner":"todo.py"},
-  {"id":"A14","name":"搜尋詞的撇號和反斜線不被吃掉","runner":"todo.py"},
-  {"id":"A15","name":"牆鐘跳時 agy 步驟不被誤判被切斷","runner":"todo.py"},
-  {"id":"A16","name":"只有空白的搜尋詞不組出壞 SQL","runner":"todo.py"},
-  {"id":"A17","name":"看板壞一筆目標只跳過那筆、其他照列","runner":"todo.py"}
+  {
+    "id": "A06",
+    "name": "選項文字含分隔符仍完整還原",
+    "runner": "logic.mjs",
+    "before": "bfbe834^",
+    "files": [
+      "Resources/chat/chat.js"
+    ]
+  },
+  {
+    "id": "A07",
+    "name": "看板步驟不誤拆 email／@State",
+    "runner": "todo.py",
+    "before": "593aaf7^",
+    "files": [
+      "scripts/codenv-todo"
+    ]
+  },
+  {
+    "id": "A08",
+    "name": "HANDOFF 後有補充仍判對狀態",
+    "runner": "todo.py",
+    "before": "593aaf7^",
+    "files": [
+      "scripts/codenv-todo"
+    ]
+  },
+  {
+    "id": "A03",
+    "name": "歷史重載剝掉內部附加行",
+    "runner": "logic.mjs",
+    "before": "e93a637^",
+    "files": [
+      "Resources/chat/chat.js"
+    ]
+  },
+  {
+    "id": "A05",
+    "name": "依指定 UUID 精準撤泡泡",
+    "runner": "logic.mjs",
+    "before": "122e79d^",
+    "files": [
+      "Resources/chat/chat.js"
+    ]
+  },
+  {
+    "id": "A02",
+    "name": "半圓定義域端點接合",
+    "runner": "logic.mjs",
+    "before": "a657704^",
+    "files": [
+      "Resources/chat/plot.js"
+    ]
+  },
+  {
+    "id": "A01",
+    "name": "圓與格子等比例",
+    "runner": "logic.mjs",
+    "before": "a657704^",
+    "files": [
+      "Resources/chat/plot.js"
+    ],
+    "extraBefore": [
+      "9457591^"
+    ]
+  },
+  {
+    "id": "B01",
+    "name": "完成前串流即排版數學式",
+    "runner": "browser.mjs",
+    "before": "8cd5f38^",
+    "files": [
+      "Resources/chat/chat.js"
+    ]
+  },
+  {
+    "id": "B10",
+    "name": "未讀排隊訊息標沒送到",
+    "runner": "browser.mjs",
+    "before": "066d226^",
+    "files": [
+      "Resources/chat/chat.js"
+    ]
+  },
+  {
+    "id": "B04",
+    "name": "內容縮短不解除貼底、真捲動才解除",
+    "runner": "browser.mjs",
+    "before": "a70357d^",
+    "files": [
+      "Resources/chat/chat.js"
+    ]
+  },
+  {
+    "id": "B12",
+    "name": "Codex interrupted 收尾解除生成狀態",
+    "runner": "browser.mjs",
+    "files": [
+      "Resources/chat/chat.js",
+      "scripts/exam/scenarios.js"
+    ]
+  },
+  {
+    "id": "C65",
+    "name": "Codex turn/interrupt JSON-RPC 與 mock app-server 收尾",
+    "runner": "../bridge-test/run.sh",
+    "files": [
+      "Sources/Workbench/CodexBridge.swift",
+      "scripts/bridge-test/codex/main.swift",
+      "scripts/exam/fake-codex-server.py"
+    ]
+  },
+  {
+    "id": "A13",
+    "name": "加步驟到已完成目標會回到進行中",
+    "runner": "todo.py"
+  },
+  {
+    "id": "A14",
+    "name": "搜尋詞的撇號和反斜線不被吃掉",
+    "runner": "todo.py"
+  },
+  {
+    "id": "A15",
+    "name": "牆鐘跳時 agy 步驟不被誤判被切斷",
+    "runner": "todo.py"
+  },
+  {
+    "id": "A16",
+    "name": "只有空白的搜尋詞不組出壞 SQL",
+    "runner": "todo.py"
+  },
+  {
+    "id": "A17",
+    "name": "看板壞一筆目標只跳過那筆、其他照列",
+    "runner": "todo.py"
+  },
+  {
+    "id": "A20",
+    "name": "代勾記錄來源聊天室與原話",
+    "runner": "todo.py"
+  },
+  {
+    "id": "C79",
+    "name": "停用 macOS 視窗狀態還原",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/main.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/DetachedWindow.swift",
+      "Sources/Workbench/FloatingTerminal.swift",
+      "Sources/Workbench/ImportWindow.swift",
+      "Sources/Workbench/TestHarness.swift"
+    ]
+  },
+  {
+    "id": "C80",
+    "name": "magpie 雙帳號三額度平均與 Argon 明細",
+    "runner": "logic.mjs",
+    "fixture": "fixtures/magpie-accounts.json",
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/AgyMagpie.swift",
+      "scripts/exam/logic.mjs",
+      "scripts/exam/scenarios.js"
+    ]
+  },
+  {
+    "id": "C81",
+    "name": "右欄模式切換固定且數值欄對齊",
+    "runner": "native.sh",
+    "pending": true,
+    "files": [
+      "Sources/Workbench/RightPanelView.swift",
+      "Sources/Workbench/RightPanelSupport.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh"
+    ]
+  },
+  {
+    "id": "C82",
+    "name": "右欄分界線固定聊天室標題並還原高度",
+    "runner": "native.sh",
+    "pending": true,
+    "files": [
+      "Sources/Workbench/RightPanelView.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/TestHarness.swift"
+    ]
+  },
+  {
+    "id": "B13",
+    "name": "result 停止忙碌計時、背景通知不重啟",
+    "runner": "browser.mjs",
+    "before": "HEAD",
+    "files": [
+      "Resources/chat/chat.js",
+      "scripts/exam/scenarios.js"
+    ]
+  },
+  {
+    "id": "A18",
+    "name": "沙盒聊天室的看板讀寫走 socket（專屬 token、衝突重試、不碰檔）",
+    "runner": "todo.py"
+  },
+  {
+    "id": "A21",
+    "name": "沙盒搜尋索引避開 AI 工作台並降級略過不可讀中繼資料",
+    "runner": "todo.py"
+  },
+  {
+    "id": "C85",
+    "name": "F12 快速連按面板狀態",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/Usage.swift",
+      "scripts/exam/native.sh"
+    ]
+  },
+  {
+    "id": "C72",
+    "name": "F12 用量面板開關與焦點保留",
+    "runner": "native.sh",
+    "pending": true,
+    "files": [
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/Usage.swift",
+      "scripts/exam/native.sh"
+    ]
+  },
+  {
+    "id": "C73",
+    "name": "F1 說明介面載入、搜尋與關閉",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh"
+    ]
+  },
+  {
+    "id": "C74",
+    "name": "用量紀錄去重、輪替與週期統計",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/codenv-todo"
+    ]
+  },
+  {
+    "id": "A22",
+    "name": "用量紀錄跨 cutoff 與重置週期統計",
+    "runner": "todo.py",
+    "files": [
+      "scripts/codenv-todo",
+      "scripts/exam/todo.py"
+    ]
+  }
 ]

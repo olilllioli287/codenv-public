@@ -6,6 +6,8 @@ final class Prefs: ObservableObject {
     static let shared = Prefs()
     private let d = appDefaults
 
+    static let rightPanelDividerHeightKey = "rightPanelDividerHeight"
+
     /// 首頁側欄：commander＝總指揮 Session 清單、tree＝原本的分類樹
     /// 新對話的預設模型（nil＝跟 Claude 的設定）
     @Published var defaultModel: String? { didSet { d.set(defaultModel, forKey: "defaultModel") } }
@@ -29,6 +31,8 @@ final class Prefs: ObservableObject {
     /// 網頁外掛的總開關：只切換呈現與執行中的網頁，不改聊天室、掛件或版面資料。
     /// 闔蓋時讓正在做事的聊天室做完這一段（LidKeeper.swift），預設開
     @Published var lidKeepWorking: Bool { didSet { d.set(lidKeepWorking, forKey: "lidKeepWorking") } }
+    /// 闔蓋時收到停止指示的聊天室，開蓋後通知繼續；預設開
+    @Published var lidResumeNotifyEnabled: Bool { didSet { d.set(lidResumeNotifyEnabled, forKey: "lidResumeNotifyEnabled") } }
     @Published var webFeaturesEnabled: Bool {
         didSet {
             d.set(webFeaturesEnabled, forKey: "webFeaturesEnabled")
@@ -49,8 +53,13 @@ final class Prefs: ObservableObject {
     @Published var archiveDays: Int { didSet { d.set(archiveDays, forKey: "archiveDays") } }
     /// 每日交接（DailyHandoff.swift）：開關、分界時間（時，本地）、一天最多幾件
     @Published var dailyHandoffEnabled: Bool { didSet { d.set(dailyHandoffEnabled, forKey: "dailyHandoffEnabled") } }
+    /// 每日交接後用本機 E4B 產生只供看板審核的記憶／技能提議
+    @Published var e4bDailyReviewEnabled: Bool { didSet { d.set(e4bDailyReviewEnabled, forKey: "e4bDailyReviewEnabled") } }
     @Published var dailyHandoffHour: Int { didSet { d.set(dailyHandoffHour, forKey: "dailyHandoffHour") } }
+    @Published var dailyHandoffIntervalDays: Int { didSet { d.set(dailyHandoffIntervalDays, forKey: "dailyHandoffIntervalDays") } }
     @Published var dailyHandoffMax: Int { didSet { d.set(dailyHandoffMax, forKey: "dailyHandoffMax") } }
+    /// 衝刺聊天室每輪待命時檢查是否停在一半（只在額度衝刺聊天室生效）
+    @Published var sprintCheck: Bool { didSet { d.set(sprintCheck, forKey: "sprintCheck") } }
     /// 打開對話先載入幾則（往上捲再載入更早的）
     @Published var historyLimit: Int { didSet { d.set(historyLimit, forKey: "historyLimit") } }
     /// 用量多久查一次（分鐘）
@@ -72,6 +81,8 @@ final class Prefs: ObservableObject {
     @Published var autoCheckUpdates: Bool { didSet { d.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
     /// 介面語言：system（跟系統：中文就繁中、其他英文）／zh／en；改了要重開才生效（I18n.swift 啟動時決定一次）
     @Published var language: String { didSet { d.set(language, forKey: "language") } }
+    /// agy 走 magpie 號池（預設開；閘道連不上時自動退回 agy 自己的登入）。看板的執行器看不到 UserDefaults，靠標記檔 agy-magpie-off
+    @Published var agyMagpie: Bool { didSet { d.set(agyMagpie, forKey: "agyMagpie"); Self.syncMagpieMarker(agyMagpie) } }
     @Published var agyEnabled: Bool { didSet { d.set(agyEnabled, forKey: "agyEnabled"); Self.syncAgyMarker(agyEnabled) } }
     /// 程式碼學習專區的預設版面（CodeLabView.Mode）：1＝右上程式碼右下結果、2＝F10 整塊換成執行畫面、3＝F10 跳出執行視窗、4＝不用 AI
     @Published var codeLabLayout: Int { didSet { d.set(codeLabLayout, forKey: "codeLabLayout") } }
@@ -93,6 +104,7 @@ final class Prefs: ObservableObject {
         cloudCompactTokens = d.object(forKey: "cloudCompactTokens") as? Int ?? 640_000   // 定的預設
         localCompactTokens = d.object(forKey: "localCompactTokens") as? Int ?? 400_000
         lidKeepWorking = d.object(forKey: "lidKeepWorking") as? Bool ?? true
+        lidResumeNotifyEnabled = d.object(forKey: "lidResumeNotifyEnabled") as? Bool ?? AppDefaults.lidResumeNotifyEnabled
         webFeaturesEnabled = d.bool(forKey: "webFeaturesEnabled")
         browserEngine = d.string(forKey: "browserEngine") ?? "webkit"
         geminiCmdEnter = d.object(forKey: "geminiCmdEnter") as? Bool ?? true
@@ -100,8 +112,11 @@ final class Prefs: ObservableObject {
         notebookSkin = d.object(forKey: "notebookSkin") as? Bool ?? false
         archiveDays = d.object(forKey: "archiveDays") as? Int ?? 7
         dailyHandoffEnabled = d.object(forKey: "dailyHandoffEnabled") as? Bool ?? true
+        e4bDailyReviewEnabled = d.object(forKey: "e4bDailyReviewEnabled") as? Bool ?? AppDefaults.e4bDailyReviewEnabled
         dailyHandoffHour = min(23, max(0, d.object(forKey: "dailyHandoffHour") as? Int ?? 6))
+        dailyHandoffIntervalDays = min(14, max(1, d.object(forKey: "dailyHandoffIntervalDays") as? Int ?? 3))
         dailyHandoffMax = max(1, d.object(forKey: "dailyHandoffMax") as? Int ?? 15)
+        sprintCheck = d.object(forKey: "sprintCheck") as? Bool ?? true
         historyLimit = d.object(forKey: "historyLimit") as? Int ?? 400
         usageMinutes = d.object(forKey: "usageMinutes") as? Int ?? 5
         colorScheme = d.string(forKey: "colorScheme") ?? "system"
@@ -112,10 +127,19 @@ final class Prefs: ObservableObject {
         autoCheckUpdates = d.object(forKey: "autoCheckUpdates") as? Bool ?? true
         let agy = d.object(forKey: "agyEnabled") as? Bool ?? Edition.agyDefault
         agyEnabled = agy
+        let mp = d.object(forKey: "agyMagpie") as? Bool ?? true
+        agyMagpie = mp
+        Self.syncMagpieMarker(mp)
         Self.syncAgyMarker(agy)
         chatFont = d.string(forKey: "chatFont") ?? "terminal"
         codeScheme = d.string(forKey: "codeScheme") ?? "claude"
         customCode = d.dictionary(forKey: "customCode") as? [String: String] ?? [:]
+    }
+
+    static func syncMagpieMarker(_ on: Bool) {
+        let url = CollabBoardModel.todoFile.deletingLastPathComponent().appendingPathComponent("agy-magpie-off")
+        if on { try? FileManager.default.removeItem(at: url) }
+        else { FileManager.default.createFile(atPath: url.path, contents: Data("agy 走 magpie 號池在 codenv 的設定裡是關著的\n".utf8)) }
     }
 
     /// 看板的背景執行器（scripts/codenv-todo，Python）看不到 UserDefaults：關著時在看板資料夾放一個 agy-disabled 檔，它看到就不叫 agy

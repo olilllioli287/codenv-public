@@ -60,6 +60,7 @@ struct SettingsView: View {
             KeysPage().tabItem { Label(L("按鍵"), systemImage: "keyboard") }.tag("keys")
             RadialPage().tabItem { Label(L("⌥ 八宮格"), systemImage: "circle.grid.3x3") }.tag("radial")
             LocalModelsPage().tabItem { Label(L("本機模型"), systemImage: "cpu") }.tag("local")
+            KeyVaultPage().tabItem { Label(L("金鑰"), systemImage: "key") }.tag("keys-vault")
             SchedulesPage(store: store).tabItem { Label(L("排程"), systemImage: "clock") }.tag("schedules")
             DataPage(store: store).tabItem { Label(L("資料"), systemImage: "folder") }.tag("data")
         }
@@ -613,6 +614,7 @@ struct AppearancePage: View {
 final class SettingsWindowController: NSWindowController {
     init(store: Store, appearance: AppearanceSettings) {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 640), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        w.isRestorable = false
         w.title = L("設定")
         w.contentViewController = NSHostingController(rootView: SettingsView(store: store, appearance: appearance))
         w.isReleasedWhenClosed = false

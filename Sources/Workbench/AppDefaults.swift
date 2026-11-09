@@ -6,3 +6,12 @@ let appDefaults: UserDefaults = {
     if CommandLine.arguments.contains("--state-dir"), let d = UserDefaults(suiteName: Edition.bundleID + ".test") { return d }
     return .standard
 }()
+
+/// E4B 每日檢討第一次啟用時的預設值；Prefs 可由使用者持久化覆寫。
+enum AppDefaults {
+    static let e4bDailyReviewEnabled = true
+    static let lidResumeNotifyEnabled = true
+    static let rightPanelDividerDefaultHeight: CGFloat = 220
+    static let rightPanelDividerMinimumHeight: CGFloat = 90
+    static let rightPanelDividerMaximumHeight: CGFloat = 560
+}

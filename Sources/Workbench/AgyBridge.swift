@@ -38,6 +38,9 @@ final class AgyBridge {
 
     /// agy 的位置：裝在 ~/.local/bin（官方安裝方式），登入 shell 的 PATH 不一定有
     static var executable: String {
+        // 測試用的假 agy（只有帶 --state-dir 才認）
+        let a = CommandLine.arguments
+        if a.contains("--state-dir"), let i = a.firstIndex(of: "--agy-bin"), i + 1 < a.count { return a[i + 1] }
         let p = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/agy").path
         return FileManager.default.isExecutableFile(atPath: p) ? p : "agy"
     }
@@ -61,8 +64,9 @@ final class AgyBridge {
     }
 
     /// 開 agy 的參數。mode 是工作台的權限模式（default、acceptEdits、plan、auto、bypassPermissions）
-    static func arguments(model: String, mode: String?, conversation: String?) -> [String] {
+    static func arguments(model: String, mode: String?, conversation: String?, settings: String? = nil) -> [String] {
         var a = ["--input-format", "stream-json", "--output-format", "stream-json", "--model", model]
+        if let settings { a += ["--settings", settings] }
         switch mode {
         case "acceptEdits": a += ["--mode", "accept-edits"]
         case "plan": a += ["--mode", "plan"]
@@ -364,7 +368,7 @@ final class AgyBridge {
     private func record(_ obj: [String: Any]) {
         var obj = obj
         obj["timestamp"] = obj["timestamp"] ?? Transcripts.stamp()   // 跟 Claude 紀錄同欄位：md 和交接看得到時間
-        guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        guard let d = Transcripts.redactedJSON(obj) else { return }
         Transcripts.append(d + Data([0x0a]), to: transcriptURL)      // 寫不進去會記進事件紀錄（Transcripts.append）
     }
 }

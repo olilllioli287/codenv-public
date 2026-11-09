@@ -1,5 +1,9 @@
 # 固定測試考卷：歷史 bug 案例盤點
 
+### C79：停用 macOS 視窗狀態還原
+
+啟動隔離測試實例並讀取 `--window-restoration-probe` 輸出。預期 `ApplePersistenceIgnoreState=true`、`NSQuitAlwaysKeepsWindows=false`、主視窗 `isRestorable=false`；AppDelegate 的 secure restore、state restore 與 state save delegate 均回傳 `false`。主視窗、關於面板、程式碼實驗室執行視窗、獨立視窗、事件紀錄、浮動終端機、匯入、整理及設定視窗均明確停用還原。執行方式：`bash scripts/exam/native.sh C75 <repo 根目錄>`。
+
 盤點範圍：`git log --all` 全部 **480 筆 commit**，涵蓋 2026-10-22～2026-11-05；搭配修正 diff、目前程式碼與測試入口檢查。純版本、規格、功能新增及沒有額外修正的合併不重複算 bug。
 
 上一輪盤點時未修改檔案、未啟動 App 或瀏覽器、未執行網路操作。當時執行的離線測試結果（本輪結果另列於下方）：
@@ -342,7 +346,7 @@ docs/exam-old-output-all.txt
 | 28 | 公版匯出目的地防呆、刪太多檔停下 | — | 腳本 | 暫存資料夾＋假 HOME：非空非 repo／家目錄／別人的 repo 都拒絕且檔案還在；新資料夾與 codenv-public remote 可同步；要刪 40 個檔停下，調高門檻才放行 | 可驗；`export-guard.sh C28` |
 | 29 | 沙盒讀鑰匙圈卡住時逾時回 nil | — | C | security 換成睡 30 秒的假腳本：keychain() 逾時（2 秒）回 nil，整體 6 秒內回來 | 可驗；`native.sh C29`（EXAM_APP=） |
 | 30 | 更新檢查連到不回應的伺服器會逾時 | — | C | 本機假伺服器收連線不回；逾時縮成 3 秒，探測要回「連線逾時」（舊版永遠卡住） | 可驗；`native.sh C30`（EXAM_APP=） |
-| 32 | codenv-todo 很長的請求不被截斷 | — | C | 送 3 萬中文字（約 90 KB）的請求：伺服器正常處理（舊版 64 KB 截斷、回看不懂） | 可驗；`native.sh C32`（EXAM_APP=） |
+| 32 | codenv-todo 很長的請求不被截斷 | — | C | 送 3 萬中文字（約 90 KB）的請求：伺服器讀到換行邊界並正常處理；超過 8 MB 或未完整封包回 JSON 錯誤 | 可驗；`native.sh C32`（EXAM_APP=） |
 | 33 | 檔名以 - 開頭的程式檔不被當成編譯選項 | — | C | -Wall.cpp 做 F9 檢查通過，執行指令用 ./-Wall.cpp | 可驗；`native.sh C33`（EXAM_APP=） |
 | 34 | 排程防重送標記含年份 | — | C | 同排程 2026／2027 年 3/5 09:00 的標記不同（舊版相同） | 可驗；`native.sh C34`（EXAM_APP=） |
 | 35 | 闔蓋外接螢幕：防抖、上限、虛擬螢幕不算 | — | C | 假環境：外接掉 2 秒不撐著、掉久才撐；外接闔蓋撐到上限放掉預擋且不主動睡；虛擬／未知廠商／內建／睡眠螢幕不算實體外接 | 可驗；`native.sh C35`（EXAM_APP=） |
@@ -720,6 +724,45 @@ wb.flushQueued();
 
 預期：即時與歷史都顯示成通知樣式，不產生一般使用者泡泡。普通 user 訊息仍正常；不能因一般文字提到 `task-notification` 就整則藏掉。
 
+### C80：magpie 雙帳號三額度平均與 Argon 明細
+
+輸入 `scripts/exam/dev/fixtures/magpie-accounts.json` 兩帳號 fixture，各自含 Gemini 5 小時、Gemini 每週及 Argon 每週額度。第二帳號使用 `Gemini 4 Argon` 的 pool 標籤，驗證型號標籤也能映射至 Argon bucket。
+
+預期：池整體三欄平均為 `85／70／60%`，狀態列格式為 `85%  70%  阿公 60%` 且不含破折號；卡片可保留兩帳號各三項的個別值，Argon 合計採最早有效重置時間。執行器 `scripts/exam/logic.mjs C80 <repo>` 讀取 fixture，驗證 Magpie 欄位對應、平均、狀態列和 Swift UI 接線；不啟動 App。
+
+### C81：右欄模式切換固定且數值欄對齊
+
+原生 UI 案例（`scripts/exam/dev/cases.json` 登錄；目前 pending）。需在隔離測試 App 中載入至少一筆同時有記憶體與上下文數值的聊天室，分別擷取列表及關聯圖模式 accessibility 節點的 window frame：
+
+| 節點 | accessibility identifier | 預期 |
+|---|---|---|
+| 模式切換群組 | `rightPanelModeToggle` | list／graph 的 x、y、width、height 完全相同 |
+| 記憶體標題和值 | `rightPanelMemoryHeader`／`rightPanelMemoryValue` | 標題和值的右緣 x 差 ≤ 1 pt |
+| 上下文標題和值 | `rightPanelContextHeader`／`rightPanelContextValue` | 標題和值的右緣 x 差 ≤ 1 pt |
+
+另驗證列表標題上下文文字與切換按鈕 frame 左緣至少相隔 1 pt，且標題完整顯示。使用原生 accessibility frame（同一螢幕座標系）判定；不可用 DOM 代替 SwiftUI 座標。案例尚未接上 probe 前保持 pending，不視為通過。
+
+### C82：右欄分界線固定聊天室標題並還原高度
+
+原生 UI 案例（`scripts/exam/dev/cases.json` 登錄；目前 pending）。在隔離 `--state-dir` 測試實例中使用原生 accessibility frame 擷取聊天室標題列和模式按鈕的位置；新增／移除正在跑工作及切換列表／關聯圖後，標題列 `frame.origin.y` 必須一致。以拖曳手勢調整分界線，重載右欄並重開隔離實例後，讀回分界線高度，誤差需小於 1 pt。另檢查該值只寫入測試 suite，不污染正式 UserDefaults。Probe 尚未接上前維持 pending。
+
+### B13：result 停止忙碌計時、背景通知不重啟
+
+輸入：`wb.setBusy(true)` 等待計時器啟動後送 `result`，隨後送一筆含 `<task-notification>` 的完成通知。
+
+預期：result 後 `.typing` 隱藏且計時字串清空；背景通知仍以通知樣式呈現，但不重新顯示忙碌列或開始累計時間。原生狀態追蹤也略過 `system/task_notification` 與標記式 user 通知，避免聊天室 idle 被拉回 working。
+### B12：Codex interrupted 收尾解除生成狀態
+
+模擬 Codex 串流已收到部分回答後，送出 `[Request interrupted by user]` 與 `result(error_during_execution)`，對應 app-server 的 `turn/completed` 狀態 `interrupted`。
+
+預期：串流游標消失、生成狀態解除、已收到的部分回答保留。此瀏覽器案例只驗前端收尾；Codex JSON-RPC 的 thread／turn 參數與 mock app-server 中止回覆由 C65 覆蓋。
+
+### C65：Codex turn/interrupt JSON-RPC 與 mock app-server 收尾
+
+以假的 `codex app-server` 協定資料測試 `CodexBridge`：建立 thread、開始 turn，再呼叫 `interrupt()`。
+
+預期：送出 JSON-RPC `turn/interrupt`，參數帶目前的 `threadId` 和 `turnId`；mock server 回覆中斷成功並送 `turn/completed(status: interrupted)`；Bridge 發出錯誤收尾 result，讓 `ChatSession` 回到 idle。Runner：`scripts/bridge-test/run.sh`。這是 Bridge 層覆蓋，沒有模擬原生視窗中的實體 Ctrl+C／停止按鈕操作。
+
 ## 保留組 C 類的最小重跑規格
 
 這三題尚未執行；以下是日後接 runner 所需的具體操作與判定。
@@ -730,4 +773,32 @@ wb.flushQueued();
 | 遲到 save 不寫錯檔 | A、B 內容各不同；先開 A 再開 B；透過 `--codelab …:js=…` 投遞 `{type:"save",path:A,text:"late"}` | B bytes 完全不變，當前 file 仍 B；以 `open=`、`js=`、`ui` 掛鉤及磁碟比對驗收 |
 | 編輯器快捷鍵不被攔 | 在程式碼區放焦點，聊天有灰字建議；逐一按 Tab、`/`、⌃C、⌃Enter；再把焦點放聊天做正向對照 | 編輯器操作不採用聊天建議、不送聊天、不停止聊天；聊天正向行為仍作用；現有 `edkey=` 只涵蓋部分，需補其餘按鍵斷言 |
 
-所有 C 類 runner 應使用假 Claude／Codex／agy、本機網頁 fixture 與假用量；`--state-dir` 是資料隔離入口，**本身不是禁止外連或替換全部後端的保證**。本次僅完成盤點、離線既有 Node 驗證與案例草稿，沒有把掛鉤誤列為已通過的固定考卷。
+所有 C 類 runner 應使用假 Claude／Codex／agy、本機網頁 fixture 與假用量；`--state-dir` 是資料隔離入口，**本身不是禁止外連或替換全部後端的保證**。本次僅完成盤點、離線既有 Node 驗證與案例草稿，沒有把掛鉤誤列為已通過的固定考卷。B12 驗 Codex interrupted 前端收尾，C65 驗 Codex JSON-RPC 與 mock app-server；兩題尚未執行。
+
+### A20：代勾記錄來源聊天室與原話
+
+驗證 `codenv-todo step <使用者步驟> 完成 --note "" --by <總指揮>` 必須同時有非空原話、總指揮名稱及有效的 `CODENV_CONVERSATION` UUID；只允許代勾 owner 為「你」的步驟。成功後記錄代勾人、原話和來源聊天室，並在最後一步完成時同步完成目標。拒絕路徑不得改動看板。Runner：`scripts/exam/todo.py A20 <repo>`。
+
+### C66：待你處理收件匣操作與聊天室通知
+
+驗證最左側協作圖示的收件匣只列提議、輪到使用者的「決定：…」及驗收步驟；同意提議、回覆決定、驗收通過與退回驗收均更新正確狀態。回覆及退回通知送到開目標的聊天室；找不到聊天室時依動作保留或記錄狀態並提示通知未送出。也覆蓋空收件匣、最後一步完成目標、非使用者步驟與發現不受影響。Runner：`scripts/exam/native.sh C66 <repo 根目錄>`。
+
+### C67：沙盒聊天室專屬 token 分權
+
+驗證沙盒聊天室 token 綁定來源 conv、限制可用命令、為 send 加入伺服器標記，並限制看板讀寫及衝突重試；正式 token 維持既有權限。Runner：`scripts/exam/native.sh C67 <repo 根目錄>`。
+
+### A21：沙盒搜尋索引避開 AI 工作台並略過不可讀中繼資料
+
+驗證沙盒索引寫入 Claude 可寫的 projects 子目錄，不讀取 AI 工作台的 state 與 transcripts；工作台中繼資料不可讀時，仍可建立 Claude 對話索引。Runner：`scripts/exam/todo.py A21 <repo>`。
+
+### C72：F12 用量面板開關與焦點保留
+
+以假用量啟動隔離實例，派送 F12 開啟面板、等待更新再關閉。預期面板可開關、開啟不搶焦點、用量有刷新，關閉後焦點仍在原處。Runner：`scripts/exam/native.sh C72 <repo 根目錄>`。
+
+### C73：F1 說明介面載入、搜尋與關閉
+
+以假用量啟動隔離實例，確認快捷鍵總表文件可載入和解析、搜尋可找到 F12 並排除不符頁面；F1 開啟不搶焦點，Esc 與再次按 F1 都可關閉且還原焦點。Runner：`scripts/exam/native.sh C73 <repo 根目錄>`。
+
+### C74：用量紀錄去重、輪替與週期統計
+
+以隔離 state-dir 驗證用量紀錄同值去重、重置週期變更仍新增、超過 5 MiB 輪替並限制舊檔大小；`codenv-todo usage-log` 以跨 cutoff baseline 及 resetAt 分段計算百分比／次數消耗。Runner：`scripts/exam/native.sh C74 <repo 根目錄>`；CLI 統計由 `scripts/exam/todo.py A22 <repo>` 覆蓋。

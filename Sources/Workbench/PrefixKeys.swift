@@ -30,6 +30,24 @@ final class PrefixKeys {
         self.controller = controller
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self, let c = self.controller else { return e }
+            let shortcutMods = e.modifierFlags.intersection([.command, .control, .option, .shift])
+            let belongsToCodenv = e.window === c.window || c.floatingTerminal.owns(e.window)
+                || c.detachedWindows.values.contains(where: { $0.window === e.window })
+                || UsageSheet.owns(e.window) || HelpSheet.owns(e.window)
+            if belongsToCodenv, shortcutMods.isEmpty, e.keyCode == 111 {
+                self.disarm()
+                UsageSheet.toggleForShortcut(in: e.window)
+                return nil
+            }
+            if belongsToCodenv, shortcutMods.isEmpty, e.keyCode == 122 {
+                self.disarm()
+                HelpSheet.toggle(in: e.window)
+                return nil
+            }
+            if belongsToCodenv, shortcutMods.isEmpty, e.keyCode == 53, HelpSheet.isOpen {
+                HelpSheet.close()
+                return nil
+            }
             // F5：全 App 開關浮動終端機，終端機裡按也收得起來（不送進 shell）。瀏覽器格有焦點時 F5 仍是重新載入
             if e.keyCode == 96, e.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
                e.window === c.window || c.floatingTerminal.owns(e.window),
@@ -174,6 +192,8 @@ final class PrefixKeys {
         }
         armed = false
         hud.hide()
+        // 按過 ⌃ A 之後帶 ⌘／⌥ 的鍵不是 tmux 指令（⌘ C 會變成開新 Window、⌘ X 關格、⌘ V／⌘ Q 被吞）：解除等待，放行給系統／選單
+        if Self.releasesPrefix(mods) { return false }
         if e.keyCode == 53 { return true }   // Esc：取消
         guard let c = controller else { return true }
 
@@ -222,6 +242,11 @@ final class PrefixKeys {
         return true
     }
 
+    /// 等第二個鍵時，帶 ⌘ 或 ⌥ 的組合不屬於前綴指令：解除等待並放行
+    static func releasesPrefix(_ mods: NSEvent.ModifierFlags) -> Bool {
+        !mods.intersection([.command, .option]).isEmpty
+    }
+
     /// 焦點在終端機（SwiftTerm 的 TerminalView，包含程式碼執行區）上
     static func inTerminal(_ w: NSWindow?) -> Bool {
         guard let r = w?.firstResponder else { return false }
@@ -260,6 +285,7 @@ final class PrefixHUD {
         label.textColor = .white
         let size = label.intrinsicContentSize
         let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: size.width + 28, height: 30), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        p.isRestorable = false
         p.isOpaque = false
         p.backgroundColor = .clear
         p.level = .floating

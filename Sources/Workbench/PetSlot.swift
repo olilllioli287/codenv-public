@@ -50,17 +50,13 @@ enum PetSlot {
 
 /// 畫在空位上的淡淡虛線框；左上角那個小把手可以拖來調大小
 final class PetSlotView: NSView {
+    /// Floating terminal layout constants remain shared with WindowHost.
+    static let termSize: CGFloat = 34
+    static let buttonLeft: CGFloat = 10
+    static let buttonTop: CGFloat = 4
     var onResize: ((NSSize) -> Void)?
     /// 嵌在右半的桌寵本體（左半是計時器）
     let embed = PetEmbedView()
-    /// 浮動終端機按鈕：左上角（計時器、進度往下排）
-    let termButton = FloatTermButton()
-    /// 關聯圖（F6）按鈕：終端機按鈕正下方
-    let graphButton = GraphButton()
-    static let termSize: CGFloat = 34
-    /// 按鈕左緣對齊上面 Ports 膠囊的左緣（portsBar 左內距 10）、上緣離分隔線跟 Ports 膠囊一樣近
-    static let buttonLeft: CGFloat = 10
-    static let buttonTop: CGFloat = 4
     private var observer: NSObjectProtocol?
     private var dragStart: (NSPoint, NSSize)?
     private let grip: CGFloat = 16
@@ -69,8 +65,6 @@ final class PetSlotView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         addSubview(embed)
-        addSubview(termButton)
-        addSubview(graphButton)
         observer = NotificationCenter.default.addObserver(forName: PetEmbedPrefs.changed, object: nil, queue: .main) { [weak self] _ in self?.needsLayout = true }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -80,12 +74,6 @@ final class PetSlotView: NSView {
         super.layout()
         embed.isHidden = !PetEmbedPrefs.enabled || !PetSprites.available
         let half = floor(bounds.width / 2)
-        let fits = bounds.height >= Self.termSize + 14
-        termButton.isHidden = !fits
-        termButton.frame = NSRect(x: Self.buttonLeft, y: bounds.height - Self.buttonTop - Self.termSize, width: Self.termSize, height: Self.termSize)
-        let fitsGraph = bounds.height >= Self.termSize * 2 + 6 + 14
-        graphButton.isHidden = !fitsGraph
-        graphButton.frame = NSRect(x: Self.buttonLeft, y: bounds.height - Self.buttonTop - Self.termSize * 2 - 6, width: Self.termSize, height: Self.termSize)
         embed.frame = NSRect(x: half, y: 0, width: bounds.width - half, height: max(0, bounds.height - 6))
     }
 

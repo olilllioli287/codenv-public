@@ -110,6 +110,7 @@ final class ImportWindowController: NSWindowController {
     let model = ImportModel()
     init(store: Store) {
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 600), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        w.isRestorable = false
         w.title = L("匯入對話")
         w.isReleasedWhenClosed = false
         super.init(window: w)

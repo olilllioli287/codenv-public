@@ -26,6 +26,12 @@ struct SprintState: Codable, Equatable {
     var windSent = false            // 收尾通知已送出
     var nudges = 0                  // 閒置時提醒繼續的次數
     var lastNudgeAt: Date?
+    var checkLastRound: String?     // 最近已檢查的衝刺聊天室回合
+    var checkReminderTimes: [Date]? // 衝刺收尾檢查在最近 30 分鐘送出的提醒
+    var checkReminderCount: Int?    // 這次衝刺累計提醒次數
+    var checkConsecutiveReminders: Int? // 連續提醒後仍未動手的次數
+    var checkStuckReason: String?   // 停止提醒後顯示在衝刺卡片上的原因
+    var checkNudgeRound: String?    // 正常回覆或模型失敗後，可由閒置 nudge 接手的回合
 }
 
 final class SprintStore: ObservableObject {
@@ -103,6 +109,9 @@ struct SprintCard: View {
                 Text(L("上次衝刺已結束（\(st.endedAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? "")）")).font(.system(size: 11 * s)).foregroundStyle(.secondary)
             default:
                 Text(L("還沒有衝刺")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+            }
+            if let reason = st.checkStuckReason {
+                Text(L("卡住：") + reason).font(.system(size: 11 * s)).foregroundStyle(.red)
             }
             if !st.goal.isEmpty {
                 Text(L("目標：") + st.goal).font(.system(size: 11 * s)).foregroundStyle(.primary).lineLimit(expanded ? nil : 2)

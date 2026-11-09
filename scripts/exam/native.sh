@@ -11,7 +11,23 @@ BIN="$APP/Contents/MacOS/Workbench"
 T=$(mktemp -d /tmp/codenv-exam-native.XXXXXX)
 trap 'stop; rm -rf "$T"' EXIT
 stop() { for p in $(pids "$BIN"); do ps -o command= -p "$p" | grep -q -- "$T" && kill "$p"; done; sleep 1; }
-launch() { open -g -n "$APP" --args --state-dir "$1" --background -NSAppSleepDisabled YES -ApplePersistenceIgnoreState YES "${@:2}"; }
+launch() {
+    local state="$1"; shift
+    local hasScreen=0 hasClaudeHome=0
+    for arg in "$@"; do
+        [ "$arg" = "--test-screen" ] && hasScreen=1
+        [ "$arg" = "--claude-home" ] && hasClaudeHome=1
+    done
+    if [ "$hasClaudeHome" -eq 0 ]; then
+        mkdir -p "$state/.claude"
+        set -- "$@" --claude-home "$state/.claude"
+    fi
+    if [ "$hasScreen" -eq 1 ]; then
+        open -g -n "$APP" --args --state-dir "$state" --background -NSAppSleepDisabled YES -ApplePersistenceIgnoreState YES "$@"
+    else
+        open -g -n "$APP" --args --state-dir "$state" --background --test-screen ipad -NSAppSleepDisabled YES -ApplePersistenceIgnoreState YES "$@"
+    fi
+}
 convs() { python3 -c "import json,sys;print(len(json.load(open(sys.argv[1]))['conversations']))" "$1" 2>/dev/null || echo "讀不懂"; }
 fail=0
 # 找程序：不用 pgrep -f（系統上任何一個程序的參數有非 ASCII 字，例如 agy 的中文題目，pgrep 就整個報錯回空，
@@ -20,6 +36,152 @@ pids() { LC_ALL=C ps -ax -o pid=,command= | LC_ALL=C awk -v pat="$1" 'index($0, 
 check() { if [ "$2" = "$3" ]; then echo "  斷言通過：$1"; else echo "  斷言失敗：$1（期望 $3，實際 $2）"; fail=1; fi; }
 
 case "$ID" in
+C81)
+    python3 "$ROOTDIR/scripts/exam/right-panel-columns.py" "$ROOTDIR" || fail=1
+    ;;
+C85)
+    D="$T/state"; mkdir -p "$D"
+    launch "$D" --usage-fake --f12-burst-probe "3:$T/out.txt"
+    for i in $(seq 1 20); do [ -s "$T/out.txt" ] && break; sleep 1; done
+    stop
+    check "F12 快速連按測試完成" "$([ -s "$T/out.txt" ] && echo 有 || echo 無)" "有"
+    check "3 次後面板顯示" "$(grep -c 'n3=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "4 次後面板隱藏" "$(grep -c 'n4=false' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "5 次後面板顯示" "$(grep -c 'n5=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    ;;
+C72)
+    D="$T/state"; mkdir -p "$D"
+    launch "$D" --usage-fake --f12-probe "3:$T/out.txt"
+    for i in $(seq 1 20); do [ -s "$T/out.txt" ] && break; sleep 1; done
+    stop
+    check "F12 測試完成" "$([ -s "$T/out.txt" ] && echo 有 || echo 無)" "有"
+    check "F12 開啟用量面板" "$(grep -c 'opened=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "F12 開啟不搶焦點" "$(grep -c 'keptFocusOnOpen=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "F12 開啟時重新整理用量" "$(grep -c 'refreshed=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "再按 F12 關閉" "$(grep -c 'closed=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "關閉後焦點仍在原處" "$(grep -c 'restoredFocus=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    ;;
+C73)
+    D="$T/state"; mkdir -p "$D"
+    launch "$D" --usage-fake --f1-probe "3:$T/out.txt"
+    for i in $(seq 1 20); do [ -s "$T/out.txt" ] && break; sleep 1; done
+    stop
+    check "F1 測試完成" "$([ -s "$T/out.txt" ] && echo 有 || echo 無)" "有"
+    check "F1 開啟說明介面" "$(grep -c 'opened=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "載入快捷鍵總表" "$(grep -c 'doc=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "Markdown 內容可解析" "$(grep -c 'markdown=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "搜尋找到 F12" "$(grep -c 'searchF12=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "搜尋能排除不符合頁面" "$(grep -c 'searchMiss=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "F1 開啟不搶焦點" "$(grep -c 'keptFocusOnOpen=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "Esc 關閉" "$(grep -c 'esc=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "再按 F1 關閉" "$(grep -c 'f1=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "關閉後焦點仍在原處" "$(grep -c 'restoredFocus=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    ;;
+C74)
+    D="$T/state"; mkdir -p "$D"
+    CODENV_USAGE_REFRESH_AT=5 launch "$D" --usage-fake
+    for i in $(seq 1 20); do [ -s "$D/usage-log.jsonl" ] && break; sleep 1; done
+    sleep 7; stop
+    check "測試實例產生用量紀錄" "$([ -s "$D/usage-log.jsonl" ] && echo 有 || echo 無)" "有"
+    check "相同剩餘數值不重複寫入" "$(wc -l < "$D/usage-log.jsonl" | tr -d ' ')" "11"
+    check "Copilot 記錄剩餘次數與總次數" "$(python3 -c 'import json,sys; r=next(x for x in map(json.loads,open(sys.argv[1])) if x["kind"]=="count"); print("%s/%s"%(r["remaining"],r["total"]))' "$D/usage-log.jsonl" 2>/dev/null)" "194/200"
+    check "每筆紀錄包含重置時間" "$(python3 -c 'import json,sys; print(sum(x.get("resetAt") is not None for x in map(json.loads,open(sys.argv[1]))))' "$D/usage-log.jsonl" 2>/dev/null)" "11"
+
+    P="$T/dedupe"; mkdir -p "$P"
+    launch "$P" --usage-fake --usage-log-dedupe-probe "3:$T/dedupe.txt"
+    for i in $(seq 1 20); do [ -s "$T/dedupe.txt" ] && break; sleep 1; done
+    stop
+    check "同數值跨重置仍新增紀錄" "$(grep -c 'resetChangedRecorded=true' "$T/dedupe.txt" 2>/dev/null || true)" "1"
+    check "同週期數值不變仍去重" "$(grep -c 'unchangedSkipped=true rows=2' "$T/dedupe.txt" 2>/dev/null || true)" "1"
+
+    R="$T/rotate"; mkdir -p "$R"
+    python3 - "$R/usage-log.jsonl" <<'PY'
+import json, sys
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    row = {"timestamp": "2026-01-01T00:00:00Z", "pool": "Claude Code · 5 小時",
+           "kind": "percent", "remaining": 0, "total": 100, "resetAt": None}
+    line = json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+    for _ in range(50000):
+        f.write(line)
+PY
+    launch "$R" --usage-fake
+    for i in $(seq 1 25); do [ -s "$R/usage-log.1.jsonl" ] && break; sleep 1; done
+    stop
+    check "超過 5 MiB 後建立舊紀錄檔" "$([ -s "$R/usage-log.1.jsonl" ] && echo 有 || echo 無)" "有"
+    check "輪替後目前檔小於 5 MiB" "$(python3 -c 'import os,sys; print(os.path.getsize(sys.argv[1]) < 5*1024*1024)' "$R/usage-log.jsonl")" "True"
+    check "輪替保留最新 Copilot 資料" "$(grep -c '"pool":"Copilot' "$R/usage-log.jsonl" 2>/dev/null || true)" "1"
+    python3 - "$R/usage-log.jsonl" <<'PY'
+import json, sys
+row = {"timestamp": "2026-01-01T00:00:00Z", "pool": "Claude Code · 5 小時",
+       "kind": "percent", "remaining": 0, "total": 100, "resetAt": None}
+line = json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    f.write(line * 50000)
+PY
+    launch "$R" --usage-fake
+    for i in $(seq 1 25); do [ "$(python3 -c 'import os,sys; print(os.path.getsize(sys.argv[1]))' "$R/usage-log.1.jsonl" 2>/dev/null || echo 0)" -gt 0 ] && break; sleep 1; done
+    stop
+    check "連續輪替不讓舊檔無限長大" "$(python3 -c 'import os,sys; print(os.path.getsize(sys.argv[1]) < 5*1024*1024)' "$R/usage-log.1.jsonl")" "True"
+
+    mkdir -p "$T/cli"
+    python3 - "$T/cli/usage-log.jsonl" <<'PY'
+import datetime, json, sys
+now = datetime.datetime.now(datetime.timezone.utc)
+def iso(delta):
+    return (now + delta).isoformat().replace("+00:00", "Z")
+rows = [
+    {"pool":"Test Percent", "kind":"percent", "remaining":80, "total":100, "timestamp":iso(datetime.timedelta(days=-6)), "resetAt":iso(datetime.timedelta(days=-2))},
+    {"pool":"Test Percent", "kind":"percent", "remaining":75, "total":100, "timestamp":iso(datetime.timedelta(days=-4)), "resetAt":iso(datetime.timedelta(days=-2))},
+    {"pool":"Test Percent", "kind":"percent", "remaining":90, "total":100, "timestamp":iso(datetime.timedelta(days=-2, hours=1)), "resetAt":iso(datetime.timedelta(days=3))},
+    {"pool":"Test Percent", "kind":"percent", "remaining":80, "total":100, "timestamp":iso(datetime.timedelta(days=-1)), "resetAt":iso(datetime.timedelta(days=3))},
+    {"pool":"Copilot · Chat / 每月", "kind":"count", "remaining":160, "total":200, "timestamp":iso(datetime.timedelta(days=-6)), "resetAt":iso(datetime.timedelta(days=-1))},
+    {"pool":"Copilot · Chat / 每月", "kind":"count", "remaining":155, "total":200, "timestamp":iso(datetime.timedelta(days=-4)), "resetAt":iso(datetime.timedelta(days=-1))},
+    {"pool":"Copilot · Chat / 每月", "kind":"count", "remaining":187, "total":200, "timestamp":iso(datetime.timedelta(hours=-23)), "resetAt":iso(datetime.timedelta(days=27))},
+    {"pool":"Copilot · Chat / 每月", "kind":"count", "remaining":180, "total":200, "timestamp":iso(datetime.timedelta(hours=-1)), "resetAt":iso(datetime.timedelta(days=27))},
+    {"pool":"Window Baseline", "kind":"percent", "remaining":194, "total":100, "timestamp":iso(datetime.timedelta(days=-8)), "resetAt":iso(datetime.timedelta(days=20))},
+    {"pool":"Window Baseline", "kind":"percent", "remaining":180, "total":100, "timestamp":iso(datetime.timedelta(hours=-1)), "resetAt":iso(datetime.timedelta(days=20))},
+    {"pool":"Reset Same Value", "kind":"percent", "remaining":80, "total":100, "timestamp":iso(datetime.timedelta(days=-8)), "resetAt":iso(datetime.timedelta(days=-7))},
+    {"pool":"Reset Same Value", "kind":"percent", "remaining":80, "total":100, "timestamp":iso(datetime.timedelta(hours=-1)), "resetAt":iso(datetime.timedelta(days=6))},
+    {"pool":"Outside Window", "kind":"percent", "remaining":10, "total":100, "timestamp":iso(datetime.timedelta(days=-30)), "resetAt":None},
+]
+with open(sys.argv[1][:-6] + ".1.jsonl", "w", encoding="utf-8") as f:
+    for row in (rows[0], rows[4], rows[8], rows[10]):
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    for row in rows[1:4] + rows[5:8] + rows[9:10] + rows[11:]:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+PY
+    CODENV_STATE_DIR="$T/cli" python3 "$ROOTDIR/scripts/codenv-todo" usage-log --since 7d > "$T/cli.out"
+    check "百分比消耗跨重置分段計算" "$(grep -F -c 'Test Percent：可觀測消耗 25%' "$T/cli.out" || true)" "1"
+    check "Copilot 次數消耗跨重置計算" "$(grep -F -c 'Copilot · Chat / 每月：可觀測消耗 25 次' "$T/cli.out" || true)" "1"
+    check "視窗外基線仍計入期間消耗" "$(grep -F -c 'Window Baseline：可觀測消耗 14%' "$T/cli.out" || true)" "1"
+    check "重置後數值相同仍計算新週期用量" "$(grep -F -c 'Reset Same Value：可觀測消耗 20%' "$T/cli.out" || true)" "1"
+    check "重置週期分開列出" "$(grep -F -c '重置於 ' "$T/cli.out")" "6"
+    check "期間外的池不列入" "$(grep -F -c 'Outside Window' "$T/cli.out" || true)" "0"
+    ;;
+C83)
+    D="$T/state"; mkdir -p "$D"
+    launch "$D" --usage-fake --f12-probe "3:$T/out.txt"
+    for i in $(seq 1 20); do [ -s "$T/out.txt" ] && break; sleep 1; done
+    stop
+    check "F12 測試完成" "$([ -s "$T/out.txt" ] && echo 有 || echo 無)" "有"
+    check "F12 開啟用量面板" "$(grep -c 'opened=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "F12 開啟不搶焦點" "$(grep -c 'keptFocusOnOpen=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "F12 開啟時重新整理用量" "$(grep -c 'refreshed=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "再按 F12 關閉" "$(grep -c 'closed=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "關閉後焦點仍在原處" "$(grep -c 'restoredFocus=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    ;;
+C84)
+    D="$T/state"; mkdir -p "$D"
+    launch "$D" --usage-fake --focus-restore-probe "3:$T/out.txt"
+    for i in $(seq 1 20); do [ -s "$T/out.txt" ] && break; sleep 1; done
+    stop
+    check "焦點 probe 完成" "$([ -s "$T/out.txt" ] && echo 有 || echo 無)" "有"
+    check "F1 面板關閉後恢復原 responder" "$(grep -c 'helpRestoredResponder=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "F1 不覆蓋主視窗後續焦點" "$(grep -c 'helpPreserved=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "F12 面板關閉後恢復原 responder" "$(grep -c 'usageRestoredResponder=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "F12 不覆蓋主視窗後續焦點" "$(grep -c 'usagePreserved=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    ;;
 C13)
     D="$T/state"; mkdir -p "$D" "$T/proj"
     # 1. 建一段對話，再開一次讓它備份
@@ -100,20 +262,19 @@ C16)
     ;;
 C17)
     # 網頁卸載後代送訊息；歷史已含完整回答時，重播串流不能讓文字出現兩次。
-    # 第 14～36 秒每秒讀一次畫面（串流與結束時間會隨機器忙碌飄移；這輪結束後不在版面上的格子會被收掉），取最多的那次：
-    # 至少一次看到＝真的畫到了；任何一次 2 次以上＝重複
+    # 從重建後開始持續輪詢畫面，直到回合完成（機器忙碌時不要靠幾個固定秒數抽樣）；這輪結束後不在版面上的格子會被收掉。
     D="$T/state"; H="$T/claude"; mkdir -p "$D" "$H" "$T/a" "$T/b"
     FAKE="$(cd "$2" && pwd)/scripts/exam/fake-claude-stream.py"   # 轉絕對路徑：App 由 open 啟動，工作目錄不在 repo
-    probes=(); for s in $(seq 14 36); do probes+=(--web-probe "$s:$T/a:$T/q$s.txt"); done
     launch "$D" --claude-home "$H" --chat-claude "$FAKE" --web-unload-seconds 3 \
       --new-conv-at "1:$T/a" --set-input "2:A 的草稿" --new-conv-at "3:$T/b" --bg-send "5:$T/a:<clear>" \
-      --web-probe "9:$T/a:$T/p1.txt" --bg-send "10:$T/a:背景代送考題C17" "${probes[@]}"
-    for i in $(seq 1 60); do [ -s "$T/q36.txt" ] && break; sleep 1; done
+      --web-probe "9:$T/a:$T/p1.txt" --bg-send "10:$T/a:背景代送考題C17" \
+      --web-probe-watch "14:70:$T/a:$T/watch.txt:串流考題C17-唯一字串"
+    for i in $(seq 1 90); do [ -s "$T/watch.txt" ] && break; sleep 1; done
     stop; for p in $(pids "$FAKE"); do kill "$p"; done
-    max=0; for f in "$T"/q*.txt; do n=$(grep -o '串流考題C17-唯一字串' "$f" 2>/dev/null | wc -l | tr -d ' '); [ "$n" -gt "$max" ] && max=$n; done
     check "代送前已卸載" "$(head -1 "$T/p1.txt" 2>/dev/null)" "hasWeb=false inWindow=false"
-    check "畫面上唯一字串最多出現 1 次（且有出現）" "$max" "1"
-    if [ "$max" != "1" ]; then for s in 14 20 26 32 36; do echo "    第 $s 秒：$(head -2 "$T/q$s.txt" 2>/dev/null | tr '\n' ' ')"; done; fi
+    check "畫面輪詢涵蓋回合完成" "$(grep -c 'finished=true' "$T/watch.txt" 2>/dev/null || true)" "1"
+    check "畫面上唯一字串最多出現 1 次（且有出現）" "$(sed -n 's/.*maxOccurrences=\([0-9]*\).*/\1/p' "$T/watch.txt" 2>/dev/null)" "1"
+    if ! grep -q 'maxOccurrences=1' "$T/watch.txt" 2>/dev/null; then cat "$T/watch.txt" 2>/dev/null | sed 's/^/    /'; fi
     ;;
 C18)
     # 程序被主動關掉（換模型重開、停 agy、關格子）時，還沒確認的訊息不能一直掛著：要放回輸入框、寄件匣保留（ChatSession.terminate）
@@ -362,7 +523,7 @@ C40)
     check "大小相同、內容不同的修改要偵測到（.gitattributes 的 filter）" "$([ -f "$T/out.txt" ] && grep -c 'changed_attr=1' "$T/out.txt" || true)" "1"
     check "  （.git/info/attributes 的 filter）" "$([ -f "$T/out.txt" ] && grep -c 'changed_info=1' "$T/out.txt" || true)" "1"
     check "CRLF＋eol=crlf 的 repo 不會多出假變更" "$([ -f "$T/out.txt" ] && grep -c 'crlf_changed=0' "$T/out.txt" || true)" "1"
-    check "卡住的 git 逾時回 nil、不拖太久" "$([ -f "$T/out.txt" ] && grep -c 'timeout_nil=true' "$T/out.txt" || true)$([ -f "$T/out.txt" ] && grep -c 'timeout_fast=true' "$T/out.txt" || true)" "11"
+    check "卡住的 git 顯示逾時、不冒充乾淨且不拖太久" "$([ -f "$T/out.txt" ] && grep -c 'timeout_reported=true' "$T/out.txt" || true)$([ -f "$T/out.txt" ] && grep -c 'timeout_fast=true' "$T/out.txt" || true)" "11"
     check "git 不存在：回 nil，不回空結果" "$([ -f "$T/out.txt" ] && grep -c 'missing_git_nil=true' "$T/out.txt" || true)" "1"
     check "右欄 RPShell 逾時整群砍、不拖太久" "$([ -f "$T/out.txt" ] && grep -c 'rpshell_timed_out=true' "$T/out.txt" || true)$([ -f "$T/out.txt" ] && grep -c 'rpshell_fast=true' "$T/out.txt" || true)" "11"
     check "子程序也被砍乾淨" "$([ -f "$T/out.txt" ] && grep -c 'leftover=0' "$T/out.txt" || true)" "1"
@@ -486,6 +647,7 @@ C47)
     check "CODENV_COLLAB_FILE 指到測試資料夾" "$(grep -c "^CODENV_COLLAB_FILE=$D/collab.json\$" "$T/out.txt")" "1"
     check "CODENV_BROWSER_DIR 指到測試資料夾" "$(grep -c "^CODENV_BROWSER_DIR=$D/browser\$" "$T/out.txt")" "1"
     check "CODENV_STATE_DIR 指到測試資料夾" "$(grep -c "^CODENV_STATE_DIR=$D\$" "$T/out.txt")" "1"
+    check "測試版只建立空的資料夾清單" "$(stat -f %z "$D/envs" 2>/dev/null || echo missing)" "0"
     "$BIN" --state-dir > "$T/err.txt" 2>&1; rc=$?
     check "--state-dir 缺值：報錯結束（exit 2）" "$rc" "2"
     # --test-screen：挑一台不是主螢幕的（沒有第二台就跳過），視窗要整個落在它的可用範圍裡
@@ -547,6 +709,415 @@ PY
     sleep 7; stop
     check "items 格式不對：事件紀錄有留一行" "$(cat "$D2"/events/* 2>/dev/null | grep -c 'items 格式不對')" "1"
     check "  原檔沒動（items 仍是壞的字串）" "$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['items'])" "$D2/collab.json")" "壞的"
+    ;;
+C54)
+    D="$T/state"; mkdir -p "$D"; launch "$D" --codex-session-approval-probe "$T/out.txt"; sleep 3; stop
+    check "出現核准卡且整段對話允許送 acceptForSession" "$(grep -c 'card=true decision=acceptForSession' "$T/out.txt" 2>/dev/null || true)" "1"
+    ;;
+C55)
+    D="$T/state"; mkdir -p "$D"; launch "$D" --permission-bypass-menu-probe "$T/out.txt"; sleep 2; stop
+    check "快速循環含 bypass、取消確認不切換，特別選單保留" "$(grep -c 'cycle=default,acceptEdits,plan,auto,bypassPermissions bypass=⏵⏵ 全部不問 redMenu=true confirmation=true cancelStays=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    ;;
+C56)
+    D="$T/state"; mkdir -p "$D"; launch "$D" --activation-policy-probe "$T/out.txt"
+    for i in $(seq 1 20); do [ -s "$T/out.txt" ] && break; sleep 1; done; stop
+    check "背景啟動為 accessory 且主視窗仍建立" "$(cat "$T/out.txt" 2>/dev/null)" "policy=accessory window=true"
+    ;;
+C57)
+    # 衝刺收尾檢查（原本在 sprint-check 分支叫 C48，合併時改編為 C57，避免跟換模型交接那題撞號）
+   D="$T/state"; mkdir -p "$D"
+   FIXTURE="$ROOTDIR/scripts/exam/sprint-check-accuracy.json"
+   launch "$D" --sprint-check-probe "$T/probe.txt" "$FIXTURE" --sprint-check-model-off
+   for i in $(seq 1 30); do grep -q '^last_round_async=' "$T/probe.txt" 2>/dev/null && break; sleep 1; done
+   sleep 1; stop
+   P="$T/probe.txt"
+   check "分類結果可解析" "$(grep -c '^parse=true$' "$P" 2>/dev/null)" "1"
+   check "送模型前遮蔽 token" "$(grep -c '^redact=true$' "$P" 2>/dev/null)" "1"
+   check "正常回覆不提醒" "$(grep -c '^normal=true$' "$P" 2>/dev/null)" "1"
+   check "有背景工作不提醒" "$(grep -c '^busy=true$' "$P" 2>/dev/null)" "1"
+   check "有未回覆的跨聊天室訊息不提醒" "$(grep -c '^waiting=true$' "$P" 2>/dev/null)" "1"
+   check "看板有進行中步驟不提醒" "$(grep -c '^doing=true$' "$P" 2>/dev/null)" "1"
+   check "模型不可用時放行、不提醒" "$(grep -c '^model_off=true$' "$P" 2>/dev/null)" "1"
+   check "跨聊天室回覆不變成永久待回覆、逾 30 分鐘過期" "$(grep -c '^reply_pairing=true$' "$P" 2>/dev/null)" "1"
+   check "只計衝刺聊天室自己名下的 doing 步驟" "$(grep -c '^doing_owner=true$' "$P" 2>/dev/null)" "1"
+   check "20 句均經過假判斷入口並核對分類輸出" "$(grep -c '^exam_classification_path=true$' "$P" 2>/dev/null)" "1"
+   check "紀錄檔最後回合非同步讀取並回主執行緒" "$(grep -c '^last_round_async=true$' "$P" 2>/dev/null)" "1"
+   check "有活動、節流或送訊失敗時保留同輪重試" "$(grep -c '^round_retries=true$' "$P" 2>/dev/null)" "1"
+   check "正常回覆／模型失敗時閒置 nudge 可接手" "$(grep -c '^fallback_nudge=true$' "$P" 2>/dev/null)" "1"
+   check "工具動作或真人介入會重置連續提醒" "$(grep -c '^action_resets=true$' "$P" 2>/dev/null)" "1"
+   check "有進行中任務代表計數有進展並清除連續提醒" "$(grep -c '^progress_resets=true$' "$P" 2>/dev/null)" "1"
+   check "30 分鐘內前三次可提醒" "$(grep -c '^third=true$' "$P" 2>/dev/null)" "1"
+   check "連續兩次仍沒行動標卡住" "$(grep -c '^stuck=true$' "$P" 2>/dev/null)" "1"
+   check "30 分鐘最多三次提醒" "$(grep -c '^throttled=true$' "$P" 2>/dev/null)" "1"
+   check "重置前 15 分鐘改成收尾提醒" "$(grep -c '^winding=true$' "$P" 2>/dev/null)" "1"
+   check "標註考卷共 20 句（假模型通路測試，不代表真模型準確率）" "$(grep '^accuracy_fixture_count=' "$P" 2>/dev/null)" "accuracy_fixture_count=20"
+   check "包含六種分類" "$(grep '^accuracy_kinds=' "$P" 2>/dev/null)" "accuracy_kinds=broken_promise,done,no_action,ok,unwatched,waiting_user"
+   check "只提到盯著的反例標正常" "$(grep -c '^watch_counterexample=true$' "$P" 2>/dev/null)" "1"
+   ;;
+C58)
+    # agy 走 magpie 號池：閘道連得上→換模型名＋環境變數＋完整單次 settings；連不上→原樣＋事件紀錄；設定關掉→原樣；看板同規則
+    # 假閘道＝本機 TCP 監聽（只測連得上），假 agy 只把參數與環境變數記下來；不碰真的 magpie 和 agy
+    mkdir -p "$T/proj"
+    printf '#!/bin/bash\n{ echo "ARGS: $*"; echo "KEY=${GEMINI_API_KEY-}"; echo "URL=${GOOGLE_GEMINI_BASE_URL-}"; } >> "$(dirname "$0")/calls.txt"\ncat >/dev/null\n' > "$T/fake-agy"; chmod +x "$T/fake-agy"
+    python3 - "$T" <<'PY' &
+import socket, sys, time
+s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(8)
+open(sys.argv[1] + "/port", "w").write(str(s.getsockname()[1]))
+end = time.time() + 120
+s.settimeout(1)
+while time.time() < end:
+    try: c, _ = s.accept(); c.close()
+    except Exception: pass
+PY
+    GW=$!
+    for i in $(seq 1 10); do [ -s "$T/port" ] && break; sleep 0.5; done
+    PORT=$(cat "$T/port")
+    # 一個沒人監聽的埠
+    DEAD=$(python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1]);s.close()")
+    run_case() {  # 名字 埠 模型 [訊息] [額外參數…]
+        local n="$1" port="$2" model="$3" prompt="hi"; shift 3
+        if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then prompt="$1"; shift; fi
+        local d="$T/state-$n"; mkdir -p "$d"; rm -f "$T/calls.txt"
+        launch "$d" --pref "agyMagpie=1" --agy-bin "$T/fake-agy" --magpie-port "$port" --new-conv-at "1:$T/proj" --chat-model "2:agy:$model" --chat-send "4:$prompt" "$@"
+        for i in $(seq 1 25); do grep -q 'stream-json' "$T/calls.txt" 2>/dev/null && break; sleep 1; done; sleep 1; stop
+        cp "$T/calls.txt" "$T/calls-$n.txt" 2>/dev/null || : > "$T/calls-$n.txt"
+        echo "$d"
+    }
+    d1=$(run_case up "$PORT" gemini-3.8-flash-high | tail -1)
+    check "閘道連得上：模型換成 magpie/antigravity/gemini-3.8-flash" "$(grep -c -- '--model magpie/antigravity/gemini-3.8-flash ' "$T/calls-up.txt")" "1"
+    check "  單次 settings 含四個 customModels" "$(grep -c -- '--settings {"modelProvider":"gemini","customModelsConfig":{"customModels":{"magpie/antigravity/gemini-3.8-flash":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"antigravity/gemini-3.8-flash"},"magpie/antigravity/gemini-4-argon":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"antigravity/gemini-4-argon"},"magpie/antigravity/claude-opus-5-5":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"antigravity/claude-opus-5-5"},"magpie/antigravity/claude-sonnet-5-5":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"antigravity/claude-sonnet-5-5"}}}}' "$T/calls-up.txt")" "1"
+    check "  帶 GEMINI_API_KEY=magpie-agy" "$(grep -c '^KEY=magpie-agy$' "$T/calls-up.txt")" "1"
+    check "  帶 GOOGLE_GEMINI_BASE_URL 指到假閘道" "$(grep -c "^URL=http://127.0.0.1:$PORT\$" "$T/calls-up.txt")" "1"
+    check "  事件紀錄有一行連上了" "$(cat "$d1"/events/* 2>/dev/null | grep -c 'agy magpie - 閘道連上了')" "1"
+    run_case research "$PORT" gemini-3.8-flash-high "請查資料並搜尋網路最新資訊"
+    check "搜尋聊天照樣走 magpie 模型" "$(grep -c -- '--model magpie/antigravity/gemini-3.8-flash ' "$T/calls-research.txt")" "1"
+    check "  搜尋聊天帶 magpie API key" "$(grep -c '^KEY=magpie-agy$' "$T/calls-research.txt")" "1"
+    run_case argon "$PORT" gemini-4-argon-high >/dev/null
+    check "阿公：gemini-4-argon-high → magpie/antigravity/gemini-4-argon" "$(grep -c -- '--model magpie/antigravity/gemini-4-argon ' "$T/calls-argon.txt")" "1"
+    run_case claude "$PORT" claude-opus-5-5-high >/dev/null
+    check "agy 裡的 Claude：→ magpie/antigravity/claude-opus-5-5" "$(grep -c -- '--model magpie/antigravity/claude-opus-5-5 ' "$T/calls-claude.txt")" "1"
+    d2=$(run_case down "$DEAD" gemini-3.8-flash-high | tail -1)
+    check "閘道連不上：照舊用原模型名" "$(grep -c -- '--model gemini-3.8-flash-high ' "$T/calls-down.txt")" "1"
+    check "  直連不帶 modelProvider settings" "$(grep -c -- '--settings' "$T/calls-down.txt" || true)" "0"
+    # 假 agy 還會被啟動來查 /usage；只檢查聊天那筆，usage 不屬於路由切換範圍。
+    check "  聊天呼叫不帶 magpie 的環境變數（/usage 不計）" "$(awk '/^ARGS:/ { chat = ($0 ~ /--input-format stream-json/); next } chat && /^KEY=$/ { n++ } END { print n+0 }' "$T/calls-down.txt")" "1"
+    check "  直連聊天不帶 magpie 閘道網址（/usage 不計）" "$(awk '/^ARGS:/ { chat = ($0 ~ /--input-format stream-json/); next } chat && /^URL=$/ { n++ } END { print n+0 }' "$T/calls-down.txt")" "1"
+    check "  事件紀錄有一行連不上" "$(cat "$d2"/events/* 2>/dev/null | grep -c 'agy magpie - 閘道連不上')" "1"
+    d3=$(run_case off "$PORT" gemini-3.8-flash-high --pref "agyMagpie=0" | tail -1)
+    check "設定關掉：就算閘道開著也用原模型名" "$(grep -c -- '--model gemini-3.8-flash-high ' "$T/calls-off.txt")" "1"
+    check "  看板標記檔 agy-magpie-off 有放" "$([ -f "$d3/agy-magpie-off" ] && echo 有 || echo 無)" "有"
+    # 看板執行器（scripts/codenv-todo）同一套規則
+    python3 - "$ROOTDIR/scripts/codenv-todo" "$PORT" "$DEAD" "$T" <<'PY'
+import importlib.machinery, importlib.util, os, sys
+path, port, dead, tmp = sys.argv[1:5]
+os.environ["CODENV_COLLAB_FILE"] = tmp + "/collab-x.json"
+loader = importlib.machinery.SourceFileLoader("todo", path)
+spec = importlib.util.spec_from_loader("todo", loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+def chk(name, got, want): print(("  斷言通過：" if got == want else "  斷言失敗：") + name + ("" if got == want else "（期望 %r，實際 %r）" % (want, got)))
+os.environ["CODENV_MAGPIE_PORT"] = port; m.ENV = os.environ
+r = m.magpie_route("gemini-3.8-flash-high")
+chk("看板：連得上→magpie 模型名", r[0], "magpie/antigravity/gemini-3.8-flash")
+chk("看板：帶兩個環境變數", sorted(r[1]), ["GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL"])
+chk("看板：單次 settings 含四個 customModels", __import__("json").loads(r[2] or "{}"), __import__("json").loads(m.magpie_settings()))
+chk("看板：阿公", m.magpie_route("gemini-4-argon-high")[0], "magpie/antigravity/gemini-4-argon")
+chk("看板：不認得的模型原樣", m.magpie_route("foo-high"), ("foo-high", {}, None))
+os.environ["CODENV_MAGPIE_PORT"] = dead
+chk("看板：連不上→原樣", m.magpie_route("gemini-3.8-flash-high"), ("gemini-3.8-flash-high", {}, None))
+os.environ["CODENV_MAGPIE_PORT"] = port
+open(tmp + "/agy-magpie-off", "w").close(); m.MAGPIE_OFF = tmp + "/agy-magpie-off"
+chk("看板：標記檔在（設定關掉）→原樣", m.magpie_route("gemini-3.8-flash-high"), ("gemini-3.8-flash-high", {}, None))
+PY
+    kill $GW 2>/dev/null
+    ;;
+C59)
+    # 僅用假的 magpie accounts 輸出測試三池平均與各帳號 hover 說明；不啟動 magpie CLI。
+    D="$T/state"; mkdir -p "$D"
+    cat > "$T/accounts.json" <<'JSON'
+[
+  {"email":"one@example.test","windows":[
+    {"name":"Gemini 5 hours","remaining":80,"resetsAt":"2026-11-09T00:00:00Z","pool":"gemini-3.8-flash"},
+    {"name":"Gemini weekly","remaining":90,"resetsAt":"2026-11-15T00:00:00Z","pool":"gemini-weekly"},
+    {"name":"Argon weekly","remaining":70,"resetsAt":"2026-11-15T00:00:00Z","pool":"gemini-4-argon"}]},
+  {"email":"two@example.test","windows":[
+    {"name":"Gemini 5 hours","remaining":40,"resetsAt":"2026-11-09T02:00:00Z","pool":"gemini-3.8-flash"},
+    {"name":"Gemini weekly","remaining":50,"resetsAt":"2026-11-14T00:00:00Z","pool":"gemini-weekly"},
+    {"name":"Argon weekly","remaining":30,"resetsAt":"2026-11-14T00:00:00Z","pool":"gemini-4-argon"}]}
+]
+JSON
+    launch "$D" --magpie-usage-probe "$T/out.txt" --magpie-usage-input "$T/accounts.json"
+    for i in $(seq 1 25); do [ -s "$T/out.txt" ] && break; sleep 1; done; stop
+    check "假 Magpie 輸出解析完成" "$([ -s "$T/out.txt" ] && echo 有 || echo 無)" "有"
+    check "Gemini 五小時兩帳號平均 60%" "$(grep -c '^Gemini 5 小時=60%' "$T/out.txt" || true)" "1"
+    check "Gemini 每週兩帳號平均 70%" "$(grep -c '^Gemini 每週=70%' "$T/out.txt" || true)" "1"
+    check "阿公每週兩帳號平均 50%" "$(grep -c '^Argon 每週=50%' "$T/out.txt" || true)" "1"
+    check "五小時提示列出兩帳號餘額與重置" "$(grep -c '^TIP Gemini 5 小時=one@example.test：剩 80%.*重置.*two@example.test：剩 40%.*重置' "$T/out.txt" || true)" "1"
+    check "每週提示列出兩帳號餘額與重置" "$(grep -c '^TIP Gemini 每週=one@example.test：剩 90%.*重置.*two@example.test：剩 50%.*重置' "$T/out.txt" || true)" "1"
+    check "阿公提示列出兩帳號餘額與重置" "$(grep -c '^TIP Argon 每週=one@example.test：剩 70%.*重置.*two@example.test：剩 30%.*重置' "$T/out.txt" || true)" "1"
+    printf '{"accounts":[{"windows":"invalid"}]}' > "$T/bad-accounts.json"
+    launch "$D" --magpie-usage-probe "$T/bad-out.txt" --magpie-usage-input "$T/bad-accounts.json"
+    for i in $(seq 1 25); do [ -s "$T/bad-out.txt" ] && break; sleep 1; done; stop
+    check "假 Magpie 格式錯誤時保留 agy /usage fallback" "$(grep -c '^FALLBACK=agy /usage$' "$T/bad-out.txt" || true)" "1"
+    ;;
+C60)
+    # codenv-todo archive：總指揮只能封存自己底下、目前沒在工作的聊天室；工作中的、別的總指揮底下的、總指揮自己、非總指揮呼叫都要拒絕
+    D="$T/state"; mkdir -p "$D"
+    "$BIN" --state-dir "$D" --archive-selftest "$T/out.txt" --wait-stop &
+    SPID=$!
+    for i in $(seq 1 30); do [ -s "$T/out.txt" ] && break; sleep 0.2; done
+    CID=$(sed -n 's/^chief1_id=//p' "$T/out.txt" 2>/dev/null)
+    CODENV_BROWSER_DIR="$D/browser" CODENV_CONVERSATION="$CID" python3 "$ROOTDIR/scripts/codenv-todo" archive "工作分支" > "$T/cli_busy.txt" 2>&1; busy_rc=$?
+    CODENV_BROWSER_DIR="$D/browser" CODENV_CONVERSATION="$CID" python3 "$ROOTDIR/scripts/codenv-todo" archive "指令分支" > "$T/cli_ok.txt" 2>&1; ok_rc=$?
+    : > "$D/stop-selftest"; wait "$SPID" 2>/dev/null || true
+    check "probe 正常完成" "$([ -f "$T/out.txt" ] && echo 有 || echo 無)" "有"
+    check "非總指揮呼叫拒絕" "$(grep -c '^nonChief_ok=false$' "$T/out.txt" 2>/dev/null)" "1"
+    check "不能封存總指揮自己" "$(grep -c '^self_ok=false$' "$T/out.txt" 2>/dev/null)" "1"
+    check "不能封存別的總指揮底下的聊天室" "$(grep -c '^other_ok=false$' "$T/out.txt" 2>/dev/null)$(grep -c '^other_archived=false$' "$T/out.txt" 2>/dev/null)" "11"
+    check "工作中的拒絕並說明" "$(grep -c '^busy_ok=false$' "$T/out.txt" 2>/dev/null)$(grep -c '^busy_err=.*正在工作中' "$T/out.txt" 2>/dev/null)$(grep -c '^busy_archived=false$' "$T/out.txt" 2>/dev/null)" "111"
+    check "等待回答的也拒絕" "$(grep -c '^wait_ok=false$' "$T/out.txt" 2>/dev/null)$(grep -c '^wait_archived=false$' "$T/out.txt" 2>/dev/null)" "11"
+    check "同名未指明 id 拒絕" "$(grep -c '^dup_ok=false$' "$T/out.txt" 2>/dev/null)" "1"
+    check "總指揮封存閒置聊天室成功" "$(grep -c '^idle_ok=true$' "$T/out.txt" 2>/dev/null)$(grep -c '^idle_archived=true$' "$T/out.txt" 2>/dev/null)" "11"
+    check "用 id 前綴只封存指定的那個" "$(grep -c '^byId_ok=true$' "$T/out.txt" 2>/dev/null)$(grep -c '^dup1_archived=true$' "$T/out.txt" 2>/dev/null)$(grep -c '^dup2_archived=false$' "$T/out.txt" 2>/dev/null)" "111"
+    check "CLI 封存工作中聊天室失敗並說明" "$([ "$busy_rc" != "0" ] && grep -c '正在工作中' "$T/cli_busy.txt" 2>/dev/null || echo 0)" "1"
+    check "CLI 封存閒置聊天室成功" "$([ "$ok_rc" = "0" ] && grep -c '已封存：「指令分支」' "$T/cli_ok.txt" 2>/dev/null || echo 0)" "1"
+    check "codenv-todo help 有 archive 說明" "$(python3 "$ROOTDIR/scripts/codenv-todo" help | grep -c 'codenv-todo archive')" "1"
+    ;;
+C75|C79)
+    D="$T/state"; mkdir -p "$D"
+    launch "$D" --window-restoration-probe "$T/out.txt"
+    for i in $(seq 1 30); do [ -s "$T/out.txt" ] && break; sleep 1; done
+    stop
+    check "probe 正常完成" "$([ -s "$T/out.txt" ] && echo 有 || echo 無)" "有"
+    check "ApplePersistenceIgnoreState 為 true" "$(grep -c 'applePersistenceIgnoreState=true' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "NSQuitAlwaysKeepsWindows 為 false" "$(grep -c 'nsQuitAlwaysKeepsWindows=false' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "主視窗 isRestorable 為 false" "$(grep -c 'mainWindowRestorable=false' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "secure restorable state 關閉" "$(grep -c 'secureRestorableState=false' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "application state restore 關閉" "$(grep -c 'shouldRestoreApplicationState=false' "$T/out.txt" 2>/dev/null || true)" "1"
+    check "application state save 關閉" "$(grep -c 'shouldSaveApplicationState=false' "$T/out.txt" 2>/dev/null || true)" "1"
+    ;;
+C66)
+    # 「待你處理」收件匣：假看板含 提議中目標／決定步驟／驗收步驟／agent 之間的步驟／發現。只有前三種進收件匣；
+    # 同意、回覆、已驗、有問題各做一次，collab.json 要對，回覆和退回要真的送進開目標的聊天室（假 claude 把收到的字存檔）
+    D="$T/state"; mkdir -p "$D" "$T/proj"
+    python3 - "$D/collab.json" <<'PY'
+import json, sys
+st = lambda i, t, o, s='todo', at='2026-11-08T01:00:00Z': {'id': i, 'text': t, 'owner': o, 'state': s, 'at': at}
+g = lambda i, t, status, steps, at, by='codenv_1': {'id': i, 'title': t, 'status': status, 'by': by, 'at': at, 'done': '完成條件-' + i, 'steps': steps}
+json.dump({'autoApprove': False, 'items': [], 'findings': [{'id': 'f1', 'by': 'codenv_2', 'at': '2026-11-08T01:00:00Z', 'text': '一筆發現'}], 'goals': [
+    g('g1', '提議目標A', 'proposed', [st('s1a', '先做', 'codenv_2'), st('s1v', '使用者驗收', '你')], '2026-11-08T01:00:00Z'),
+    g('g2', '目標B', 'active', [st('s2a', '實作', 'codenv_2', 'done'), st('s2b', '決定：用方案一還是二', '你'), st('s2v', '使用者驗收', '你')], '2026-11-08T01:01:00Z'),
+    g('g3', '目標C', 'active', [st('s3a', '實作', 'codenv_2', 'done'), st('s3v', '使用者驗收', '你')], '2026-11-08T01:02:00Z'),
+    g('g4', '目標D（agent 之間）', 'active', [st('s4a', '實作', 'codenv_2'), st('s4v', '使用者驗收', '你')], '2026-11-08T01:03:00Z'),
+    g('g5', '目標E', 'active', [st('s5a', '實作', 'codenv_2', 'done'), st('s5v', '使用者驗收', '你')], '2026-11-08T01:04:00Z'),
+    g('g6', '目標F（別種你的步驟）', 'active', [st('s6a', '貼一段東西給 agy', '你')], '2026-11-08T01:05:00Z'),
+    g('g8', '最後一步是決定的目標', 'active', [st('s8', '決定：採用方案甲或乙', '你')], '2026-11-07T01:00:00Z'),
+]}, open(sys.argv[1], 'w'), ensure_ascii=False)
+PY
+    printf '#!/bin/sh\nprintf "%%s\\n" "$CODENV_CONVERSATION" > "%s"\ncat >> "%s"\n' "$T/caller.log" "$T/stdin.log" > "$T/fake-claude"; chmod +x "$T/fake-claude"
+    launch "$D" --chat-claude "$T/fake-claude" --new-conv-at "1:$T/proj" --rename "2:codenv_1" \
+      --collab-dump "6:$T/d.txt" --collab-act "7|approve|g1" --collab-dump "10:$T/d.txt" \
+      --collab-act "11|inboxreply|g2|s2b|選方案二，因為比較省\\n第二行補充理由" --collab-dump "14:$T/d.txt" \
+      --collab-act "15|inboxok|g3|s3v" --collab-dump "18:$T/d.txt" \
+      --collab-act "19|inboxbad|g5|s5v|按鈕點了沒反應" --collab-dump "22:$T/d.txt" \
+      --collab-act "23|inboxreply|g8|s8|採用方案甲" --collab-dump "26:$T/d.txt"
+    for i in $(seq 1 40); do grep -c '^inbox=' "$T/d.txt" 2>/dev/null | grep -q '^6$' && break; sleep 1; done; sleep 1
+    stop; for p in $(pids "$T/fake-claude"); do kill "$p"; done
+    check "收件匣數字依序（提議/決定/驗收各一、agent 步驟與別種步驟不算）" "$(grep '^inbox=' "$T/d.txt" | tr '\n' ' ')" "inbox=5 inbox=4 inbox=4 inbox=3 inbox=2 inbox=1 "
+    check "初始收件匣包含提議、決定、驗收與最後一步決定" "$(awk '/^inbox=5/{f=1;next} /^inbox=/{f=0} f&&/inbox /{print $2"-"$3}' "$T/d.txt" | sort | tr '\n' ' ')" "decision-g2 decision-g8 proposal-g1 verify-g3 verify-g5 "
+    check "g4（輪到 agent）與 g6 沒進收件匣" "$(awk '/^inbox=5/{f=1;next} /^inbox=/{f=0} f&&/inbox /{print $3}' "$T/d.txt" | grep -c 'g4\|g6')" "0"
+    j() { python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+g={x['id']:x for x in d['goals']}
+s=lambda gi,si:[y for y in g[gi]['steps'] if y['id']==si][0]
+print($1)" "$D/collab.json" 2>/dev/null || echo 讀不到; }
+    check "同意：g1 進行中" "$(j "g['g1']['status']")" "active"
+    check "回覆：決定步驟完成、記下多行回覆" "$(j "s('g2','s2b')['state']+'|'+s('g2','s2b')['note']")" "done|使用者回覆：選方案二，因為比較省\n第二行補充理由"
+    check "最後一步決定回覆：步驟和目標皆完成" "$(j "g['g8']['status']+'|'+str(bool(g['g8'].get('doneAt')))+'|'+s('g8','s8')['state']+'|'+str(bool(s('g8','s8').get('at')))")" "done|True|done|True"
+    check "最後一步已驗：步驟和目標皆完成" "$(j "g['g3']['status']+'|'+str(bool(g['g3'].get('doneAt')))+'|'+s('g3','s3v')['state']+'|'+str(bool(s('g3','s3v').get('at')))")" "done|True|done|True"
+    check "有問題：驗收步驟卡住、記說明" "$(j "s('g5','s5v')['state']+'|'+s('g5','s5v')['note']")" "blocked|有問題：按鈕點了沒反應"
+    check "有問題後目標不算完成" "$(j "g['g5']['status']")" "active"
+    check "agent 之間的步驟和發現沒被動" "$(j "s('g4','s4a')['state']+'|'+str(len(d['findings']))")" "todo|1"
+    check "多行回覆完整送進聊天室" "$(grep -c '第二行補充理由' "$T/stdin.log" 2>/dev/null)" "1"
+    check "已驗通過的通知送進聊天室" "$(grep -c '使用者驗收通過' "$T/stdin.log" 2>/dev/null)" "1"
+    check "退回的說明送進聊天室" "$(grep -c '按鈕點了沒反應' "$T/stdin.log" 2>/dev/null)" "1"
+    check "聊天室程序記錄來源聊天室 ID" "$(python3 - "$D/state.json" "$T/caller.log" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+conversations = [c for c in state.get('conversations', []) if c.get('title') == 'codenv_1']
+caller = open(sys.argv[2]).read().strip()
+print('true' if len(conversations) == 1 and conversations[0]['id'].lower() == caller.lower() else 'false')
+PY
+)" "true"
+    # 收件匣空了：用空看板再開一次，數字 0
+    D2="$T/state2"; mkdir -p "$D2"; echo '{"items":[],"goals":[]}' > "$D2/collab.json"
+    launch "$D2" --collab-dump "5:$T/e.txt"
+    for i in $(seq 1 20); do [ -s "$T/e.txt" ] && break; sleep 1; done; sleep 1; stop
+    check "空看板：數字 0" "$(grep '^inbox=' "$T/e.txt" | tr -d '\n')" "inbox=0"
+    # 找不到來源聊天室時仍完成驗收，並明確提示通知未送出
+    D3="$T/state3"; mkdir -p "$D3"
+    python3 - "$D3/collab.json" <<'PY'
+import json, sys
+json.dump({'items': [], 'goals': [{
+    'id': 'g7', 'title': '找不到聊天室的驗收', 'status': 'active', 'by': 'missing-chat',
+    'steps': [
+        {'id': 's7a', 'text': '實作', 'owner': 'codenv_2', 'state': 'done'},
+        {'id': 's7v', 'text': '使用者驗收', 'owner': '你', 'state': 'todo'},
+    ],
+}, {
+'id': 'g9', 'title': '找不到聊天室的決定', 'status': 'active', 'by': 'missing-chat',
+'steps': [{'id': 's9', 'text': '決定：保留哪個版本', 'owner': '你', 'state': 'todo'}],
+}]}, open(sys.argv[1], 'w'), ensure_ascii=False)
+PY
+launch "$D3" --collab-act "2|inboxreply|g9|s9|" --collab-dump "3:$T/e2.txt" \
+  --collab-act "4|inboxreply|g9|s9|我選版本甲" --collab-dump "5:$T/e3.txt" \
+  --collab-act "6|inboxbad|g7|s7v|退回原因保留" --collab-dump "7:$T/e4.txt"
+for i in $(seq 1 10); do [ -s "$T/e4.txt" ] && break; sleep 1; done; sleep 1; stop
+check "空白決定回覆不設通知且不改步驟" "$(grep -c '^notice=' "$T/e2.txt" 2>/dev/null || true)" "0"
+check "空白決定回覆仍保留待回覆步驟" "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['goals'][1]['steps'][0]['state']+'|'+str('note' in d['goals'][1]['steps'][0]))" "$D3/collab.json")" "todo|False"
+check "找不到聊天室時顯示回覆未送出" "$(grep -c '^notice=找不到開這個目標的聊天室（missing-chat），回覆沒有送出$' "$T/e3.txt" 2>/dev/null)" "1"
+check "找不到聊天室仍保留決定回覆" "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['goals'][1]['steps'][0]['state']+'|'+str('note' in d['goals'][1]['steps'][0]))" "$D3/collab.json")" "todo|False"
+check "找不到聊天室仍保留驗收退回步驟" "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['goals'][0]['steps'][1]['state']+'|'+str('note' in d['goals'][0]['steps'][1]))" "$D3/collab.json")" "todo|False"
+check "找不到聊天室時退回失敗提示" "$(grep -c '^notice=找不到開這個目標的聊天室（missing-chat），退回的說明沒有送出$' "$T/e4.txt" 2>/dev/null)" "1"
+check "找不到聊天室仍保留待驗狀態與原因" "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); x=d['goals'][0]['steps'][1]; print(x['state']+'|'+str('note' in x))" "$D3/collab.json")" "todo|False"
+D4="$T/state4"; mkdir -p "$D4"
+python3 - "$D4/collab.json" <<'PY'
+import json, sys
+json.dump({'items': [], 'goals': [{'id': 'g7', 'title': '找不到聊天室的驗收', 'status': 'active', 'by': 'missing-chat',
+    'steps': [{'id': 's7a', 'text': '實作', 'owner': 'codenv_2', 'state': 'done'},
+              {'id': 's7v', 'text': '使用者驗收', 'owner': '你', 'state': 'todo'}]}]}, open(sys.argv[1], 'w'), ensure_ascii=False)
+PY
+launch "$D4" --collab-act "2|inboxok|g7|s7v" --collab-dump "3:$T/e5.txt"
+for i in $(seq 1 10); do [ -s "$T/e5.txt" ] && break; sleep 1; done; sleep 1; stop
+check "找不到聊天室時顯示驗收通知未送出" "$(grep -c '^notice=找不到開這個目標的聊天室（missing-chat），驗收已記錄，但通知沒有送出$' "$T/e5.txt" 2>/dev/null)" "1"
+check "找不到聊天室仍保留已驗狀態" "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['goals'][0]['steps'][1]['state'])" "$D4/collab.json")" "done"
+    ;;
+C67)
+    # 沙盒聊天室專屬 token 的分權（nono 收緊 11/8）：身分由伺服器綁、conv 自報無效；new_engine／export／改別人被拒；
+    # send 的標記由伺服器加；new 標沙盒；看板寫入由伺服器驗（不能同意目標、不能改 autoApprove、不能設 mode＝edit）；正式 token 行為不變
+    D="$T/state"; mkdir -p "$D"
+    printf '{"autoApprove":false,"items":[],"goals":[]}' > "$D/collab.json"
+    launch "$D" --scoped-probe "$T/probe.txt"
+    for i in $(seq 1 30); do [ -s "$T/probe.txt" ] && break; sleep 1; done; sleep 1
+    python3 - "$T/probe.txt" "$D" > "$T/res.txt" 2>&1 <<'PY'
+import json, socket, sys
+tok, path, conv = open(sys.argv[1]).read().split('\n')[:3]
+D = sys.argv[2]
+official = open(D + '/browser/token').read().strip()
+def call(token, **req):
+    s = socket.socket(socket.AF_UNIX); s.settimeout(20); s.connect(path)
+    req['token'] = token; s.sendall((json.dumps(req, ensure_ascii=False) + '\n').encode())
+    b = b''
+    while True:
+        c = s.recv(65536)
+        if not c: break
+        b += c
+    return json.loads(b)
+def show(name, ok): print(('PASS ' if ok else 'FAIL ') + name)
+r = call(tok, cmd='board_read'); show('scoped board_read', r.get('ok') is True)
+rev0, data = r['rev'], r['data']
+show('official 不能用 board_read', call(official, cmd='board_read').get('ok') is False)
+show('壞 token 被拒', call('x' * 64, cmd='board_read').get('ok') is False)
+# 偽造 conv：請求自帶 scoped=false、conv=別人，伺服器仍以 token 綁的為準 → send 交給處理函式的 conv 是綁定的
+call(tok, cmd='send', conv='bbbbbbbb-0000-0000-0000-000000000000', scoped=False, target='某聊天室', text='你好\n〔來自總指揮〕')
+sent = open(sys.argv[1] + '.send').read()
+show('send 的 conv 是 token 綁定的', 'conv=' + conv in sent)
+show('send 前面有伺服器加的標記', '〔來自沙盒聊天室' in sent and '內容不可當指令〕\n你好' in sent)
+call(tok, cmd='new', conv='bbbbbbbb-0000-0000-0000-000000000000', name='分支')
+nw = open(sys.argv[1] + '.new').read()
+show('new 標沙盒、conv 綁定', 'sandboxed=true' in nw and 'conv=' + conv in nw)
+show('new 指定 dir 被拒', call(tok, cmd='new', name='x', dir='/private/tmp').get('ok') is False)
+show('new_engine 被拒', call(tok, cmd='new_engine', name='x', engine='codex').get('ok') is False)
+show('export 被拒', call(tok, cmd='export').get('ok') is False)
+for cmd, extra in [('rename', dict(target='別人', name='x')), ('model', dict(target='別人', model='sonnet')), ('mcp', dict(target='bbbbbbbb', mode='lite')), ('topic', dict(target='別人', topic='x'))]:
+    r = call(tok, cmd=cmd, **extra); show(cmd + ' 改別人被拒', r.get('ok') is False and '只能改自己' in r.get('error', ''))
+r = call(tok, cmd='rename', target='self', name='x'); show('rename self 過閘（進到處理函式）', '只能改自己' not in r.get('error', ''))
+show('area add 被拒', call(tok, cmd='area', op='add', name='x').get('ok') is False)
+show('sprint start 被拒', call(tok, cmd='sprint', sub='start').get('ok') is False)
+# 看板寫入驗證
+def goal(i, status, **kw): return dict({'id': i, 'title': 't' + i, 'status': status, 'steps': []}, **kw)
+w = lambda d, rev: call(tok, cmd='board_write', data=d, rev=rev)
+bad = dict(data, goals=[goal('g1', 'active', autoApproved=True)])
+show('新目標不能直接進行中', w(bad, rev0).get('ok') is False)
+show('改 autoApprove 被拒', w(dict(data, autoApprove=True), rev0).get('ok') is False)
+show('省略 autoApprove 也被拒', w({k: v for k, v in data.items() if k != 'autoApprove'}, rev0).get('ok') is False)
+show('新目標帶 mode＝edit 步驟被拒', w(dict(data, goals=[dict(goal('g2', 'proposed'), steps=[{'id': 's', 'text': 'x', 'owner': 'gemini4.0argon', 'mode': 'edit', 'state': 'todo'}])]), rev0).get('ok') is False)
+show('舊 rev 被擋（沒有被寫入）', json.load(open(D + '/collab.json')).get('goals') == [])
+ok = w(dict(data, goals=[goal('g3', 'proposed')]), rev0); show('新目標提議中可寫', ok.get('ok') is True)
+show('過期 rev 回 conflict', w(dict(data, goals=[goal('g4', 'proposed')]), rev0).get('conflict') is True)
+r2 = call(tok, cmd='board_read')
+approve = r2['data']; approve['goals'][0]['status'] = 'active'
+show('提議中不能由沙盒改成進行中', w(approve, r2['rev']).get('ok') is False)
+show('檔案裡只有 g3 且 autoApprove 沒變', [g['id'] for g in json.load(open(D + '/collab.json'))['goals']] == ['g3'] and json.load(open(D + '/collab.json'))['autoApprove'] is False)
+# 正式 token 行為不變：ls 照常，team 的 conv 用自報的
+show('正式 token ls 可用', call(official, cmd='ls').get('ok') is True)
+show('正式 token 不能 board_write', call(official, cmd='board_write', data={}, rev='').get('ok') is False)
+PY
+    stop
+    cat "$T/res.txt" | sed 's/^/  /'
+    check "沒有 FAIL" "$(grep -c '^FAIL' "$T/res.txt")" "0"
+    check "PASS 題數" "$(grep -c '^PASS' "$T/res.txt")" "$(grep -c '^\(PASS\|FAIL\)' "$T/res.txt")"
+    check "有跑到最後（至少 27 題）" "$([ "$(grep -c '^PASS' "$T/res.txt")" -ge 27 ] && echo 是 || echo 否)" "是"
+    ;;
+C68)
+    # 聊天輸入框送出前的金鑰攔截：假金鑰被攔、可存進鑰匙圈（測試專用前綴，測完刪掉）、可「仍要送出」、取消；正常長字串不誤攔；附檔裡的金鑰也攔
+    PFX="codenv-test-$RANDOM$RANDOM-"
+    KEY="nvapi-$(LC_ALL=C tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c 48)"
+    mkdir -p "$T/proj"
+    kg() {  # kg <名字> <模式> <文字>：開一個測試版（暫存資料夾、測試前綴），跑完讀 JSON
+        local d="$T/s-$1"; mkdir -p "$d"
+        launch "$d" --keyvault-prefix "$PFX" --new-conv-at "1:$T/proj" --keyguard-test "5:$2:$d/out.json:$3"
+        # 測試掛鉤延遲 5 秒後執行；等它寫完結果就能關 App，不必每個案例固定睡 8/30 秒。
+        local n limit=30
+        [ "$2" != mixfile ] || limit=90
+        for n in $(seq 1 "$limit"); do
+            if [ -s "$d/out.json" ] && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$d/out.json" 2>/dev/null; then break; fi
+            sleep 1
+        done
+        if [ ! -s "$d/out.json" ] || ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$d/out.json" 2>/dev/null; then echo "測試掛鉤逾時或輸出 JSON 不完整：$1"; stop; exit 1; fi
+        stop
+    }
+    jq_() { python3 -c "import json,sys;d=json.load(open(sys.argv[1]));v=d[sys.argv[2]];print(json.dumps(v,ensure_ascii=False) if not isinstance(v,str) else v)" "$T/s-$1/out.json" "$2" 2>/dev/null || echo 讀不到; }
+    has() { case "$1" in *"$2"*) echo 是;; *) echo 否;; esac; }
+    kg save save "請用這個 $KEY 去連線"
+    check "存：第一次送出被攔（沒送出）" "$(jq_ save sent1)" "[]"
+    check "存：輸入框的金鑰換成〔金鑰：NVIDIA，已存〕" "$(has "$(jq_ save input1)" '〔金鑰：NVIDIA，已存〕')" "是"
+    check "存：輸入框裡沒有金鑰本體" "$(has "$(jq_ save input1)" "$KEY")" "否"
+    check "存：鑰匙圈讀回的金鑰一致" "$([ "$(jq_ save saved)" = "$KEY" ] && echo 是 || echo 否)" "是"
+    check "存：末四碼對" "$([ "$(jq_ save last4)" = "${KEY: -4}" ] && echo 是 || echo 否)" "是"
+    check "存：第二次送出的字沒有金鑰" "$(has "$(jq_ save sent)" "$KEY")" "否"
+    check "存：第二次真的送出了（帶〔金鑰：NVIDIA，已存〕）" "$(has "$(jq_ save sent)" '〔金鑰：NVIDIA，已存〕')" "是"
+    kg send send "請用這個 $KEY 去連線"
+    check "仍要送出：送出的字還是原文" "$(has "$(jq_ send sent)" "$KEY")" "是"
+    check "仍要送出：沒存進鑰匙圈" "$(jq_ send saved)" ""
+    kg cancel cancel "請用這個 $KEY 去連線"
+    check "取消：沒送出" "$(jq_ cancel sent)" "[]"
+    check "取消：輸入框的字原封不動" "$(has "$(jq_ cancel input2)" "$KEY")" "是"
+    kg bang save "! echo $KEY"
+    check "! 指令的內容也攔（第一次不執行、字換成已存）" "$(has "$(jq_ bang input1)" '〔金鑰：NVIDIA，已存〕')" "是"
+    NORMAL='commit 3f786850e387550fdab836ed7e6dc881de23001b 在 /home/dev/app/src/components/MainWindowController.swift 與 550e8400-e29b-41d4-a716-446655440000'
+    kg normal cancel "$NORMAL"
+    check "正常長字串（雜湊、路徑、UUID）不誤攔：一次就送出" "$(has "$(jq_ normal sent)" 3f786850e387550fdab836ed7e6dc881de23001b)" "是"
+    check "  卡片一次都沒跳" "$(jq_ normal asked)" "0"
+    KEY2="nvapi-$(LC_ALL=C tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c 48)"      # 白名單會記在測試設定裡，用另一把，免得影響後面的案例
+    kg notakey notakey "請看這段 $KEY2 不是金鑰"
+    check "這段不是金鑰：第一次就送出（原文）" "$(has "$(jq_ notakey sent1)" "$KEY2")" "是"
+    check "  兩次送出卡片只跳一次（第二次已記住）" "$(jq_ notakey asked)" "1"
+    check "  沒存進鑰匙圈" "$(jq_ notakey saved)" ""
+    kg integ cancel "integrity: \"sha512-$(LC_ALL=C tr -dc 'A-Za-z0-9+/' </dev/urandom | head -c 86)==\""
+    check "package-lock 的 sha512 integrity 不攔" "$(jq_ integ asked)" "0"
+    kg fullw save "$(python3 -c "import sys;print(''.join(chr(ord(c)+0xFEE0) if 0x21<=ord(c)<=0x7e else c for c in sys.argv[1]))" "$KEY")"
+    check "全形的金鑰也攔、存進鑰匙圈（內容是半形原文）" "$([ "$(jq_ fullw saved)" = "$KEY" ] && echo 是 || echo 否)" "是"
+    JWT="eyJ$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 30).$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 40).$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 30)"
+    kg jwt jwtsend "$KEY $JWT"
+    check "低信心 JWT 選「仍要送出」只放行它：後面的真金鑰還是被問、取消後不送出" "$(jq_ jwt sent1)" "[]"
+    check "  每次送出兩個命中都問過（測試送兩次共 4）" "$(jq_ jwt asked)" "4"
+    kg file file "API_KEY=$KEY"
+    check "附檔裡有金鑰：選取消就不送出" "$(jq_ file sent)" "[]"
+    kg mixfile mixfile "API_KEY=$KEY"
+    check "Argon 5：有金鑰小檔與超過 8 MB 大檔時，先確認小檔後仍會詢問大檔" "$(jq_ mixfile bigAsked)" "1"
+    check "  Argon 5：含金鑰附件警告先完成確認" "$(jq_ mixfile fileAsked)" "1"
+    check "  Argon 5：兩種警告都確認後才送出兩個附件路徑" "$(jq_ mixfile filesSentExactly)" "true"
+    check "測試用的鑰匙圈項目都刪掉了" "$(security dump-keychain 2>/dev/null | grep -c "$PFX")" "0"
     ;;
 *) echo "沒有這個原生案例：$ID"; exit 1 ;;
 esac

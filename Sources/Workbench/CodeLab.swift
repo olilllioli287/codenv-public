@@ -381,6 +381,7 @@ final class CodeLabView: NSView, WKNavigationDelegate, NSSplitViewDelegate, NSWi
     private func openRunWindow() {
         let w = runWindow ?? {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 480), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+            w.isRestorable = false
             w.isReleasedWhenClosed = false
             w.delegate = self
             w.minSize = NSSize(width: 320, height: 200)

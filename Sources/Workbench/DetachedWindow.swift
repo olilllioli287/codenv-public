@@ -28,6 +28,7 @@ final class DetachedWindowController: NSWindowController, NSWindowDelegate {
         host = WindowHost(store: store, workspace: workspace, boundWindow: windowID)
         let w = NSWindow(contentRect: NSRect(x: screenPoint.x - 450, y: screenPoint.y - 320, width: 900, height: 640),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        w.isRestorable = false
         w.minSize = NSSize(width: 360, height: 260)
         w.isReleasedWhenClosed = false
         super.init(window: w)

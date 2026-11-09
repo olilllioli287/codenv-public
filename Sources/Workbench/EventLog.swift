@@ -286,6 +286,7 @@ enum EventLog {
         }
         t = t.replacingOccurrences(of: #" {2,}"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
+        t = KeyScan.redact(t)     // 前面的規則漏掉的金鑰樣式（nvapi-、sk-or-、高熵長字串…）也只留末四碼
         return t.count > maxLen ? String(t.prefix(maxLen)) + "…" : t
     }
 
@@ -466,6 +467,7 @@ final class EventConsoleWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
+        w.isRestorable = false
         w.title = L("事件紀錄")
         w.contentViewController = NSHostingController(rootView: EventConsoleView())
         w.setContentSize(NSSize(width: 760, height: 480))

@@ -117,18 +117,27 @@ enum ModelCarry {
     private static func isLatestGeneration(_ s: UUID, _ g: Int) -> Bool { genLock.lock(); defer { genLock.unlock() }; return generations[s] == g }
     /// 比對代數和寫檔在同一把鎖裡：比對完到寫完之間，新的交接進不來
     private static func writeDocIfLatest(_ s: UUID, _ g: Int, name: String, turns: [(user: Bool, text: String)], files: [(path: String, edited: Bool)], to f: URL) {
+        let doc = renderDoc(name: name, turns: turns, files: files, partial: false)
         genLock.lock(); defer { genLock.unlock() }
         guard generations[s] == g else { return }
-        _ = writeDoc(name: name, turns: turns, files: files, to: f, partial: false)
+        _ = writeRenderedDoc(doc, to: f)
     }
 
     /// 全文檔（atomically：讀的人只會看到舊版或新版）。partial＝只有檔尾那一段，背景補完整前先這樣
     static func writeDoc(name: String, turns: [(user: Bool, text: String)], files: [(path: String, edited: Bool)], to f: URL, partial: Bool) -> Bool {
-        try? FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+        writeRenderedDoc(renderDoc(name: name, turns: turns, files: files, partial: partial), to: f)
+    }
+
+    private static func renderDoc(name: String, turns: [(user: Bool, text: String)], files: [(path: String, edited: Bool)], partial: Bool) -> String {
         var doc = "# 換模型前的對話（\(name)，精簡版：只留雙方說的話）\n\n"
         if partial { doc += "（這是先寫的檔尾版，只有最近的一段；完整版幾秒內會蓋過這個檔，更早的內容晚點再讀一次。）\n\n" }
         doc += render(turns, model: name) + "\n"
         if !files.isEmpty { doc += "\n# \(name) 讀過／改過的檔案（最近的在最後）\n\n" + renderFiles(files) + "\n" }
+        return doc
+    }
+
+    private static func writeRenderedDoc(_ doc: String, to f: URL) -> Bool {
+        try? FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
         return (try? doc.write(to: f, atomically: true, encoding: .utf8)) != nil
     }
 
@@ -138,7 +147,7 @@ enum ModelCarry {
     }
 
     static func render(_ turns: [(user: Bool, text: String)], model: String) -> String {
-        turns.map { ($0.user ? "【使用者】" : "【\(model)】") + "\n" + $0.text }.joined(separator: "\n\n")
+        turns.map { ($0.user ? "【使用者】" : "【\(model)】") + "\n" + KeyScan.redact($0.text, strongOnly: true) }.joined(separator: "\n\n")
     }
 
     /// 交接那段（附在訊息後面）：最近的對話（最多 limit 個字）＋全文檔的位置；前面沒聊過什麼就 nil。

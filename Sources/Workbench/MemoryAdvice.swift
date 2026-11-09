@@ -77,4 +77,15 @@ enum MemoryAdvice {
         }
         EventLog.log("記憶整理", "交接：\(conversationTitle) 提議 \(proposals.count) 條記憶，已放看板待審")
     }
+
+    /// E4B 額外提出的技能建議一樣只建立看板提議；不提供檔案寫入入口。
+    static func submitReview(_ proposals: [Handoff.MemoryProposal], from conversationTitle: String, category: String) {
+        for p in proposals {
+            let title = category == "skill" ? "技能提議：" + p.title : "記憶：" + p.title
+            let step = category == "skill" ? "審閱技能提議，決定是否採納" : "審閱記憶提議，決定是否採納"
+            CollabBoardModel.shared.addMemoryProposal(title: title,
+                done: "建議內容：\(p.content)\n出處：\(p.source)\n來源聊天室：\(conversationTitle)（E4B 提議，未驗證；請先審閱）",
+                step: step, by: boardBy, limit: 10)
+        }
+    }
 }

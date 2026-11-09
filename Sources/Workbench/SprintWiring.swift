@@ -12,6 +12,12 @@ final class SprintRunner {
     private let maxNudges = 40
     private var idleSince: Date?
     private var sawWorkingAfterWind = false
+    private var judgingRounds: Set<String> = []
+    private struct TranscriptStamp: Equatable { var size: UInt64; var modified: Date }
+    private struct TranscriptSnapshot { var stamp: TranscriptStamp; var round: (text: String, userText: String, tools: [String], id: String)? }
+    private var transcriptSnapshots: [UUID: TranscriptSnapshot] = [:]
+    private var readingTranscripts: Set<UUID> = []
+    private var pendingVerdicts: [String: SprintCheck.Verdict] = [:]
 
     init(host: MainWindowController) {
         self.host = host
@@ -129,6 +135,7 @@ final class SprintRunner {
                 return
             }
             if resetDetected(st) { return beginWinding(reason: "reset") }
+            if Prefs.shared.sprintCheck { checkIdleRound(st) }
             nudgeIfIdle(st)
         } else if st.phase == "winding" {
             checkWinding(st)
@@ -183,10 +190,195 @@ final class SprintRunner {
         return Transcripts.turns(url, model: c.model ?? "", tail: 4 * 1024 * 1024).last(where: { !$0.user })?.text
     }
 
+    private func checkIdleRound(_ st: SprintState) {
+        guard st.phase == "running", st.checkStuckReason == nil,
+              let id = st.convID.flatMap(UUID.init(uuidString:)),
+              (store.status[id] ?? .idle) == .idle,
+              let pane = host.workspace.panes[id] as? ChatPane,
+              let url = pane.session.transcriptURL,
+              let stamp = transcriptStamp(url) else { return }
+        if let snapshot = transcriptSnapshots[id], snapshot.stamp == stamp {
+            guard let round = snapshot.round, round.id != sprint.state.checkLastRound else { return }
+            processIdleRound(round, stamp: stamp, id: id, pane: pane)
+            return
+        }
+        guard !readingTranscripts.contains(id) else { return }
+        readingTranscripts.insert(id)
+        SprintCheck.readLastRound(url) { [weak self] round in
+            guard let self else { return }
+            self.readingTranscripts.remove(id)
+            guard self.sprint.state.phase == "running", self.sprint.state.convID == st.convID else { return }
+            guard self.transcriptStamp(url) == stamp else {
+                self.checkIdleRound(self.sprint.state)
+                return
+            }
+            self.transcriptSnapshots[id] = TranscriptSnapshot(stamp: stamp, round: round)
+            guard let round else {
+                self.logCheck(kind: "error", score: nil, counts: self.checkCounts(for: id), reminder: false,
+                              outcome: "讀不到可檢查的最後一輪")
+                return
+            }
+            guard round.id != self.sprint.state.checkLastRound else { return }
+            if self.sprint.state.checkNudgeRound != nil {
+                self.sprint.update { $0.checkNudgeRound = nil }
+            }
+            guard let currentPane = self.host.workspace.panes[id] as? ChatPane else { return }
+            self.processIdleRound(round, stamp: stamp, id: id, pane: currentPane)
+        }
+    }
+
+    private func transcriptStamp(_ url: URL) -> TranscriptStamp? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (attrs[.size] as? NSNumber)?.uint64Value,
+              let modified = attrs[.modificationDate] as? Date else { return nil }
+        return TranscriptStamp(size: size, modified: modified)
+    }
+
+    private func processIdleRound(_ round: (text: String, userText: String, tools: [String], id: String),
+                                  stamp: TranscriptStamp, id: UUID, pane: ChatPane) {
+        guard store.status[id, default: .idle] == .idle else { return }
+        if let verdict = pendingVerdicts[round.id] {
+            finishIdleJudgement(verdict, round: round, stamp: stamp, id: id, pane: pane)
+            return
+        }
+        guard !judgingRounds.contains(round.id) else { return }
+        judgingRounds.insert(round.id)
+        SprintCheck.judge(last: round.text, tools: round.tools) { [weak self, weak pane] verdict, _ in
+            guard let self else { return }
+            self.judgingRounds.remove(round.id)
+            guard self.sprint.state.phase == "running",
+                  self.sprint.state.convID == id.uuidString,
+                  self.store.status[id, default: .idle] == .idle,
+                  let pane,
+                  self.transcriptSnapshots[id]?.stamp == stamp else {
+                self.logCheck(kind: "stale", score: nil, counts: self.checkCounts(for: id), reminder: false, outcome: "結果過期")
+                return
+            }
+            if let verdict { self.pendingVerdicts[round.id] = verdict }
+            self.finishIdleJudgement(verdict, round: round, stamp: stamp, id: id, pane: pane)
+        }
+    }
+
+    private func finishIdleJudgement(_ verdict: SprintCheck.Verdict?,
+                                     round: (text: String, userText: String, tools: [String], id: String),
+                                     stamp: TranscriptStamp, id: UUID, pane: ChatPane) {
+        guard store.status[id, default: .idle] == .idle,
+              transcriptSnapshots[id]?.stamp == stamp else { return }
+        let current = sprint.state
+        guard current.phase == "running", current.convID == id.uuidString else { return }
+        let counts = checkCounts(for: id)
+        let now = Date()
+        let recent = (current.checkReminderTimes ?? []).filter { now.timeIntervalSince($0) < 30 * 60 }
+        let acted = SprintCheck.didAct(tools: round.tools, userMessage: round.userText)
+        let consecutive = (recent.isEmpty || acted || counts.total > 0) ? 0 : (current.checkConsecutiveReminders ?? 0)
+        let decision = SprintCheck.reminderDecision(verdict: verdict, counts: counts,
+                                                    recentReminders: recent.count,
+                                                    consecutiveReminders: consecutive)
+        guard let verdict else {
+            if counts.total == 0 && SprintCheck.shouldMarkRoundChecked(verdict: nil, counts: counts, decision: decision, reminderSent: false) {
+                sprint.update {
+                    $0.checkLastRound = round.id
+                    $0.checkNudgeRound = round.id
+                    $0.checkConsecutiveReminders = consecutive
+                    $0.checkReminderTimes = recent
+                }
+                pendingVerdicts.removeValue(forKey: round.id)
+            }
+            logCheck(kind: "error", score: nil, counts: counts, reminder: false, outcome: "模型不可用或解析失敗，放行")
+            return
+        }
+
+        if SprintCheck.halfDone.contains(verdict.kind), counts.total > 0 {
+            sprint.update {
+                $0.checkConsecutiveReminders = 0
+                $0.checkReminderTimes = recent
+                $0.checkNudgeRound = nil
+            }
+            logCheck(kind: verdict.kind, score: verdict.score, counts: counts, reminder: false, outcome: "仍有背景工作或待回覆，稍後重查")
+            return
+        }
+
+        switch decision {
+        case .ignore:
+            if SprintCheck.shouldMarkRoundChecked(verdict: verdict, counts: counts, decision: decision, reminderSent: false) {
+                sprint.update {
+                    $0.checkLastRound = round.id
+                    $0.checkConsecutiveReminders = consecutive
+                    $0.checkReminderTimes = recent
+                    $0.checkNudgeRound = verdict.kind == "ok" ? round.id : nil
+                }
+                pendingVerdicts.removeValue(forKey: round.id)
+            }
+            logCheck(kind: verdict.kind, score: verdict.score, counts: counts, reminder: false, outcome: "略過")
+        case .throttled:
+            sprint.update { $0.checkConsecutiveReminders = consecutive; $0.checkReminderTimes = recent; $0.checkNudgeRound = nil }
+            logCheck(kind: verdict.kind, score: verdict.score, counts: counts, reminder: false, outcome: "30 分鐘提醒上限，稍後重查")
+        case .stuck:
+            let reason = SprintCheck.reasonLabel(verdict.kind)
+            if SprintCheck.shouldMarkRoundChecked(verdict: verdict, counts: counts, decision: decision, reminderSent: false) {
+                sprint.update {
+                    $0.checkLastRound = round.id
+                    $0.checkConsecutiveReminders = consecutive
+                    $0.checkReminderTimes = recent
+                    $0.checkStuckReason = reason
+                    $0.checkNudgeRound = nil
+                }
+                pendingVerdicts.removeValue(forKey: round.id)
+            }
+            notifyCommanderStuck(reason: reason, sprintChat: id)
+            logCheck(kind: verdict.kind, score: verdict.score, counts: counts, reminder: false, outcome: "連續兩次提醒後仍未動手，已標記卡住")
+        case .remind:
+            let text = SprintCheck.reminderText(kind: verdict.kind, resetAt: current.targetReset, now: now)
+            let sent = pane.sendText(text)
+            if SprintCheck.shouldMarkRoundChecked(verdict: verdict, counts: counts, decision: decision, reminderSent: sent) {
+                sprint.update {
+                    $0.checkLastRound = round.id
+                    $0.checkReminderTimes = recent + [now]
+                    $0.checkReminderCount = ($0.checkReminderCount ?? 0) + 1
+                    $0.checkConsecutiveReminders = consecutive + 1
+                    $0.checkNudgeRound = nil
+                }
+                pendingVerdicts.removeValue(forKey: round.id)
+            }
+            logCheck(kind: verdict.kind, score: verdict.score, counts: counts, reminder: sent,
+                     outcome: sent ? "已送提醒" : "提醒送不出去，稍後重試")
+        }
+    }
+
+    private func checkCounts(for id: UUID) -> SprintCheck.Counts {
+        let activity = SessionActivity.shared.running(id)
+            .filter { $0.background && ($0.kind == "bash" || $0.kind == "agent") }
+        let board = CollabBoardModel.shared
+        let localNames = Set(board.convByName.compactMap { $0.value == id ? $0.key : nil })
+        let pending = SprintCheck.pendingReplyCount(messages: board.messages, localNames: localNames, now: Date())
+        let doing = SprintCheck.doingStepCount(board.goals.flatMap(\.steps), ownerNames: localNames)
+        return SprintCheck.Counts(background: activity.count, pendingReplies: pending, doingSteps: doing)
+    }
+
+    private func notifyCommanderStuck(reason: String, sprintChat: UUID) {
+        let target = store.sessions.first(where: { $0.area == nil && $0.name == "codenv" })?.chief
+            ?? store.sessions.first(where: { $0.area == nil && $0.chief != nil && $0.chief != sprintChat })?.chief
+        guard let target, target != sprintChat else {
+            EventLog.log("衝刺檢查", "已標記卡住，但找不到可通知的總指揮聊天室")
+            return
+        }
+        CollabBoardModel.queueNotice(conv: target, text: "\(SprintCheck.marker) 衝刺聊天室連續兩次提醒後仍未動手，已停止提醒並標記卡住（原因：\(reason)）。")
+    }
+
+    private func logCheck(kind: String, score: Double?, counts: SprintCheck.Counts, reminder: Bool, outcome: String) {
+        let scoreText = score.map { String(format: "%.2f", $0) } ?? "-"
+        EventLog.log("衝刺檢查", "kind=\(kind) score=\(scoreText) \(counts.text) reminder=\(reminder) \(outcome)")
+    }
+
     private func nudgeIfIdle(_ st: SprintState) {
         guard let c = chat else { return }
         let status = store.status[c.id] ?? .idle
         guard status == .idle else { idleSince = nil; return }
+        if Prefs.shared.sprintCheck {
+            guard SprintCheck.shouldNudgeIdle(checkedRound: st.checkLastRound,
+                                              nudgeRound: st.checkNudgeRound,
+                                              counts: checkCounts(for: c.id)) else { idleSince = nil; return }
+        }
         if idleSince == nil { idleSince = Date(); return }
         guard Date().timeIntervalSince(idleSince!) >= nudgeAfter, st.nudges < maxNudges else { return }
         let left = st.targetReset.map { max(0, Int($0.timeIntervalSinceNow / 60)) } ?? 0
@@ -199,9 +391,11 @@ final class SprintRunner {
     // MARK: 結束
 
     func finish(summary: String, auto: Bool) {
+        let checkReminderCount = sprint.state.checkReminderCount ?? 0
         sprint.update {
             $0.phase = "done"; $0.endedAt = Date()
-            $0.summary = summary; $0.summaryAuto = auto
+            $0.summary = summary + "\n\n被提醒 \(checkReminderCount) 次"; $0.summaryAuto = auto
+            $0.checkConsecutiveReminders = 0
         }
         log("done auto=\(auto)")
     }
@@ -236,8 +430,8 @@ final class SprintRunner {
             guard isSprintChat() else { return ["ok": false, "error": "只有衝刺的聊天室（\(st.convTitle)）能回報"] }
             guard !text.isEmpty else { return ["ok": false, "error": "內容不能是空的"] }
             let clipped = String(text.prefix(8000))
-            if sub == "goal" { sprint.update { $0.goal = String(clipped.prefix(500)) } }
-            else if sub == "note" { sprint.update { $0.notes.append(SprintNote(at: Date(), text: String(clipped.prefix(500)))) } }
+            if sub == "goal" { sprint.update { $0.goal = String(clipped.prefix(500)); $0.checkConsecutiveReminders = 0 } }
+            else if sub == "note" { sprint.update { $0.notes.append(SprintNote(at: Date(), text: String(clipped.prefix(500)))); $0.checkConsecutiveReminders = 0 } }
             else { finish(summary: clipped, auto: false) }
             return ["ok": true]
         default:
