@@ -92,10 +92,18 @@ struct Theme {
         return theme
     }
 
-    static let xterm16: [NSColor] = [
+    // 型別寫明：GitHub Actions 的編譯器推不出整串（11/9 公版 CI 卡在這裡）
+    private static let xterm16Hex: [Int] = [
         0x000000, 0xCD0000, 0x00CD00, 0xCDCD00, 0x0000EE, 0xCD00CD, 0x00CDCD, 0xE5E5E5,
         0x7F7F7F, 0xFF0000, 0x00FF00, 0xFFFF00, 0x5C5CFF, 0xFF00FF, 0x00FFFF, 0xFFFFFF,
-    ].map { NSColor(srgbRed: CGFloat($0 >> 16 & 0xFF) / 255, green: CGFloat($0 >> 8 & 0xFF) / 255, blue: CGFloat($0 & 0xFF) / 255, alpha: 1) }
+    ]
+    private static func rgb(_ hex: Int) -> NSColor {
+        let r = CGFloat((hex >> 16) & 0xFF) / 255
+        let g = CGFloat((hex >> 8) & 0xFF) / 255
+        let b = CGFloat(hex & 0xFF) / 255
+        return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
+    }
+    static let xterm16: [NSColor] = xterm16Hex.map(rgb)
     static let defaultLight = Palette(fg: .black, bg: .white, cursor: .black, selection: .selectedTextBackgroundColor, bold: .black, ansi: xterm16)
     static let defaultDark = Palette(fg: NSColor(white: 0.86, alpha: 1), bg: NSColor(white: 0.08, alpha: 1), cursor: .white,
                                      selection: .selectedTextBackgroundColor, bold: .white, ansi: xterm16)

@@ -5,4 +5,6 @@ useDefault = true
 description = "Random fake credentials used by exam fixtures"
 paths = [
   '''scripts/exam/.*''',
+  '''scripts/test-precommit\.sh''',
+  '''scripts/exam/fixtures/fake-secrets\.txt''',
 ]

@@ -15,7 +15,10 @@ protocol LidEnv: AnyObject {
     func externalDisplayOnline() -> Bool
     func battery() -> (percent: Int, onAC: Bool)?
     func maxTemperature() -> Double?
+    /// IOKit HIDIdleTime；取不到時回 nil，採 fail closed（不主動睡）
+    func hidIdleTime() -> TimeInterval?
     func setNoSleep(_ on: Bool) -> NoSleepResult
+    func setFanAuto() -> Bool
     /// 蓋子還闔著時解除後要主動讓 Mac 睡：闔蓋睡眠只在「闔上那一刻」觸發，事後把 disablesleep 改回 0 不會補睡（實測）
     func sleepNow()
     /// 小幫手那邊 nosleep 現在是不是開著：true／false；連不上、不支援回 nil
@@ -34,6 +37,7 @@ final class LidKeeper {
         var preholdOffDelay: TimeInterval = 30    // 螢幕開著、聊天室都做完後，等多久才放掉預擋（防抖）
         var wakeGap: TimeInterval = 10            // 兩次檢查間隔超過這麼久＝Mac 睡過（醒來外接螢幕可能還沒回來，給它一段寬限）
         var externalDropDelay: TimeInterval = 4   // 外接螢幕斷線要持續這麼久才算斷（HDMI 重新協商、換輸入源會掉 1～2 秒）
+        var externalIdleSleepSeconds: TimeInterval = 600
     }
 
     static let stopMessage = "使用者闔上螢幕了：做完目前這一段就停，不要開始下一段，等他回來再繼續。"
@@ -49,6 +53,7 @@ final class LidKeeper {
     var sendStop: (UUID) -> Bool = { _ in false }
     /// 螢幕打開後恢復先前實際收到 stop 的聊天室。
     var resumeEnabled: () -> Bool = { true }
+    var externalIdleSleepEnabled: () -> Bool = { true }
     var sendResume: (UUID) -> Void = { _ in }
     var sessionIsAvailable: (UUID) -> Bool = { _ in false }
     var sessionIsArchived: (UUID) -> Bool = { _ in true }
@@ -126,6 +131,8 @@ final class LidKeeper {
     private var retryFailLogged = false
     private(set) var stoppedSessionIDs: Set<UUID> = []
     private var resumeGeneration = 0
+    private var externalIdleSleepPending = false
+    private var externalIdleSleepTriggered = false
 
     private func turnOn(_ t: Date) -> NoSleepResult {
         if noSleepOn { return .ok }
@@ -223,6 +230,7 @@ final class LidKeeper {
         }
 
         if !closed {
+            maybeSleepAfterExternalIdle(external: external, lidShut: lidShut, enabled: on, working: working)
             // 外接螢幕闔蓋（Mac 本來就不睡）：不叫停、不主動睡，但「撐著不睡」的 1 小時上限、電量、溫度照樣管，
             // 不然 Sidecar／遠端桌面等被誤當外接，或螢幕其實關了，放在包包裡會一直悶著
             if external, let since = externalSince, !externalCapped {
@@ -349,6 +357,50 @@ final class LidKeeper {
         flushPending(closed: true)
     }
 
+    /// 合蓋接實體外接螢幕時，完成工作且 HID 閒置滿門檻後，先交還風扇，再重新確認狀態才主動睡。
+    private func maybeSleepAfterExternalIdle(external: Bool, lidShut: Bool, enabled: Bool, working: Int) {
+        guard enabled, externalIdleSleepEnabled(), lidShut, external, working == 0 else {
+            if !lidShut || !external || !enabled || !externalIdleSleepEnabled() || working > 0 { externalIdleSleepTriggered = false }
+            return
+        }
+        guard let idle = env.hidIdleTime(), idle.isFinite else { return }
+        guard idle >= limits.externalIdleSleepSeconds else { externalIdleSleepTriggered = false; return }
+        guard !externalIdleSleepPending, !externalIdleSleepTriggered else { return }
+
+        externalIdleSleepPending = true
+        if noSleepOn { turnOff(); log("外接螢幕闔蓋工作完成，先解除不睡擋鎖") }
+        log("外接螢幕闔蓋、聊天室已完成、HID 閒置 \(Int(idle)) 秒；請 Battery 小幫手交還風扇後睡眠")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let stillIdleBeforeFan = self.env.lidClosed() && self.env.externalDisplayOnline()
+                && (self.env.hidIdleTime() ?? 0) >= self.limits.externalIdleSleepSeconds
+            guard stillIdleBeforeFan else {
+                DispatchQueue.main.async {
+                    self.externalIdleSleepPending = false
+                    self.externalIdleSleepTriggered = false
+                    self.log("發出風扇自動前偵測到使用者活動或外接狀態改變，取消風扇切換與睡眠")
+                }
+                return
+            }
+            let fanAuto = self.env.setFanAuto()
+            DispatchQueue.main.async {
+                self.externalIdleSleepPending = false
+                let stillSafe = self.enabled() && self.externalIdleSleepEnabled() && self.env.lidClosed()
+                    && self.env.externalDisplayOnline() && self.workingCount() == 0
+                    && (self.env.hidIdleTime() ?? 0) >= self.limits.externalIdleSleepSeconds
+                guard stillSafe else {
+                    self.log("風扇已要求自動；睡眠前重新檢查發現狀態改變，取消主動睡眠")
+                    self.externalIdleSleepTriggered = false
+                    return
+                }
+                self.externalIdleSleepTriggered = true
+                self.log(fanAuto ? "Battery 小幫手已將風扇交還系統自動" : "Battery 小幫手未回應風扇自動指令；仍依睡眠通知交還風扇")
+                self.log("外接螢幕闔蓋閒置滿 \(Int(self.limits.externalIdleSleepSeconds / 60)) 分鐘，主動讓 Mac 睡")
+                self.env.sleepNow()
+            }
+        }
+    }
+
     private func cancelPendingResume() { resumeGeneration += 1 }
 
     private func scheduleResume() {
@@ -433,6 +485,20 @@ final class RealLidEnv: LidEnv {
     }
 
     func maxTemperature() -> Double? { smc?.maxTemperature() }
+
+    func hidIdleTime() -> TimeInterval? {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOHIDSystem"))
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+        guard let value = IORegistryEntryCreateCFProperty(service, "HIDIdleTime" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber else { return nil }
+        return TimeInterval(value.uint64Value) / 1_000_000_000
+    }
+
+    func setFanAuto() -> Bool {
+        guard let s = connectHelper() else { return false }
+        defer { close(s) }
+        return request(s, "auto") == "ok"
+    }
 
     private func request(_ fd: Int32, _ line: String) -> String? {
         var tv = timeval(tv_sec: 2, tv_usec: 0)
@@ -555,6 +621,7 @@ final class SimLidEnv: LidEnv {
     var percent = 80
     var onAC = false
     var temp = 50.0
+    var idleSeconds: TimeInterval = 0
     var helper = "ok"            // ok | unsupported | fail
     var onCall: (String) -> Void = { _ in }
     var external = false
@@ -562,10 +629,16 @@ final class SimLidEnv: LidEnv {
     func externalDisplayOnline() -> Bool { external }
     func battery() -> (percent: Int, onAC: Bool)? { (percent, onAC) }
     func maxTemperature() -> Double? { temp }
+    func hidIdleTime() -> TimeInterval? { idleSeconds }
     var actualOn = false
     var connDead = false      // 假裝小幫手重啟、連線已斷
     func noSleepStatus() -> Bool? { helper == "ok" && !connDead ? actualOn : nil }
     func sleepNow() { onCall("[假] pmset sleepnow（蓋子闔著，主動睡）") }
+    func setFanAuto() -> Bool {
+        if Thread.isMainThread { onCall("[假小幫手] fan auto") }
+        else { DispatchQueue.main.async { self.onCall("[假小幫手] fan auto") } }
+        return helper == "ok"
+    }
     func setNoSleep(_ on: Bool) -> NoSleepResult {
         onCall("[假小幫手] nosleep \(on ? "on" : "off")（\(helper)）")
         if on { connDead = false }

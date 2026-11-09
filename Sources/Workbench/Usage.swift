@@ -1200,6 +1200,7 @@ extension Store {
 struct UsageRowView: View {
     @Environment(\.uiScale) private var s
     let row: UsageRow
+    var detail: String? = nil
     var body: some View {
         let b = row.bucket
         VStack(alignment: .leading, spacing: 4) {
@@ -1222,6 +1223,7 @@ struct UsageRowView: View {
             .frame(height: 5)
             if !b.resets.isEmpty { Text(L("\(b.resets) 重置")).font(.system(size: 11 * s)).foregroundStyle(.tertiary) }
         }
+        .help(detail ?? "")
     }
     /// 剩兩成以下紅，其他綠
     static func color(_ remaining: Int) -> Color { isLow(remaining) ? .red : .green }
@@ -1383,21 +1385,8 @@ struct UsageFullPage: View {
                 }
                 Text(p.title).font(.system(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)
             }
-            ForEach(m.rows(p)) { r in UsageRowView(row: r) }
-            if p == .gemini && !m.magpieAccounts.isEmpty {
-                VStack(alignment: .leading, spacing: 5 * s) {
-                    ForEach(m.magpieAccounts) { account in
-                        VStack(alignment: .leading, spacing: 2 * s) {
-                            Text(account.name).font(.system(size: 10.5 * s, weight: .medium)).foregroundStyle(.secondary)
-                            Text(["Gemini 5 小時", "Gemini 每週", "Argon 每週"].compactMap { label in
-                                guard let b = account.buckets[label] else { return nil }
-                                let short = label == "Gemini 5 小時" ? "5h" : label == "Gemini 每週" ? "週" : "阿公"
-                                return "\(short) \(b.remaining)%"
-                            }.joined(separator: " · "))
-                                .font(.system(size: 10 * s)).monospacedDigit().foregroundStyle(.tertiary)
-                        }
-                    }
-                }
+            ForEach(m.rows(p)) { r in
+                UsageRowView(row: r, detail: p == .gemini ? m.magpieQuotaTips[r.bucket.label] : nil)
             }
             PoolNote(m: m, pool: p)
         }

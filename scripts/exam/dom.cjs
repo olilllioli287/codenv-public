@@ -4,9 +4,11 @@ const vm = require('node:vm');
 const path = require('node:path');
 module.exports = (base) => {
 const Q = require(path.join(base, 'quote.js'));
+const frames = [];
 class Element {
   constructor(tag) {
     this.tagName = tag.toUpperCase(); this.children = []; this.parentElement = null;
+    this.nodeType = 1;
     this.dataset = {}; this.attrs = {}; this.listeners = {}; this.style = { setProperty() {}, removeProperty() {} };
     this.className = ''; this._text = ''; this.hidden = false; this.scrollTop = 0; this.scrollHeight = 1000; this.clientHeight = 500;
     this.classList = {
@@ -22,7 +24,7 @@ class Element {
   replaceChildren(...children) { for (const c of [...this.children]) c.remove(); this._text = ''; children.forEach((c) => this.appendChild(c)); }
   set textContent(text) { this.replaceChildren(); this._text = String(text); }
   get textContent() { return this._text + this.children.map((c) => c.textContent).join(''); }
-  set innerHTML(text) { this.replaceChildren(); this._text = String(text); }
+  set innerHTML(text) { this.replaceChildren(); this._text = String(text); if (this.tagName === 'TEMPLATE') { const n = new Element('text'); n.nodeType = 3; n._text = String(text); this.content = { childNodes: [n] }; } }
   get innerHTML() { return this._text; }
   get firstChild() { return this.children[0] || null; }
   get lastElementChild() { return this.children.at(-1) || null; }
@@ -59,11 +61,11 @@ class Element {
   scrollIntoView() { this.scrolled = true; }
 }
 const document = { body: new Element('body'), documentElement: new Element('html'), readyState: 'complete', addEventListener() {},
-  createElement: (tag) => new Element(tag), createTextNode: (t) => { const e = new Element('text'); e.textContent = t; return e; },
+  createElement: (tag) => new Element(tag), createTextNode: (t) => { const e = new Element('text'); e.nodeType = 3; e.textContent = t; return e; },
   querySelectorAll(s) { return this.body.querySelectorAll(s); }, getElementById() { return null; }, createTreeWalker() { return { nextNode() { return null; } }; }
 };
 const messages = [];
-const window = { cdvQuote: Q, requestAnimationFrame() {}, addEventListener() {}, innerHeight: 500, matchMedia: () => ({ matches: true }),
+const window = { cdvQuote: Q, requestAnimationFrame(fn) { frames.push(fn); }, addEventListener() {}, innerHeight: 500, matchMedia: () => ({ matches: true }),
   webkit: { messageHandlers: { wb: { postMessage: (m) => messages.push(m) } } }
 };
 const context = { addEventListener() {}, window, document, console, setTimeout() {}, clearTimeout() {}, setInterval() {}, clearInterval() {},
@@ -71,5 +73,5 @@ const context = { addEventListener() {}, window, document, console, setTimeout()
   marked: require(path.join(base, 'vendor/marked.umd.js')), performance: { now: () => 0 }, navigator: {} };
 vm.runInNewContext(fs.readFileSync(path.join(base, 'chat.js'), 'utf8'), context);
 
-return { wb: window.wb, document, messages, Q };
+return { wb: window.wb, document, messages, Q, flushFrames() { let count = 0; while (frames.length && count++ < 100) frames.shift()(); if (frames.length) throw Error('動畫影格未收斂'); } };
 };

@@ -1,5 +1,15 @@
 [
   {
+    "id": "C86",
+    "name": "工具往返與長回答串流／歷史重載",
+    "runner": "logic.mjs",
+    "files": [
+      "Resources/chat/chat.js",
+      "scripts/exam/dom.cjs",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
     "id": "A06",
     "name": "選項文字含分隔符仍完整還原",
     "runner": "logic.mjs",
@@ -156,7 +166,7 @@
   },
   {
     "id": "C80",
-    "name": "magpie 雙帳號三額度平均與 Argon 明細",
+    "name": "Gemini 卡片三額度平均、Argon 重置與無帳號明細",
     "runner": "logic.mjs",
     "fixture": "fixtures/magpie-accounts.json",
     "files": [

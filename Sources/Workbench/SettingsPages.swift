@@ -106,10 +106,13 @@ struct ChatPrefsPage: View {
             }
             Section(L("闔蓋")) {
                 Toggle(L("闔上螢幕時，讓正在做事的聊天室做完這一段"), isOn: $p.lidKeepWorking)
+                Toggle(L("接外接螢幕闔蓋時，做完且 10 分鐘沒操作就關風扇並睡眠"), isOn: $p.lidExternalIdleSleep)
+                    .padding(.leading, 20)
+                    .disabled(!p.lidKeepWorking)
                 Toggle(L("打開螢幕時通知它們繼續"), isOn: $p.lidResumeNotifyEnabled)
                     .padding(.leading, 20)
                     .disabled(!p.lidKeepWorking)
-                Text(L("有聊天室正在做事時 Mac 不會睡（要 Battery 的小幫手 v6，電量低於 30% 且沒插電時除外）；闔上螢幕後，聊天室做完目前這一段就停。全部停下、撐滿 1 小時、電量低於 30% 或溫度太高就恢復正常睡眠。紀錄在 ~/Library/Logs/codenv-lid.log。"))
+                Text(L("有聊天室正在做事時 Mac 不會睡（要 Battery 的小幫手 v6，電量低於 30% 且沒插電時除外）；闔上螢幕後，聊天室做完目前這一段就停。接外接螢幕時，預設等工作完成且 HID 鍵盤／滑鼠閒置 10 分鐘，請 Battery 小幫手交還風扇再主動睡眠；此功能需 Battery 小幫手 v9。全部停下、撐滿 1 小時、電量低於 30% 或溫度太高就恢復正常睡眠。紀錄在 ~/Library/Logs/codenv-lid.log。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L("瀏覽器格子")) {

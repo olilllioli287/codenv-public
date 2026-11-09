@@ -1,0 +1,2 @@
+# 每行一個 repo 相對路徑：必要考卷 fixtures 可列於此。
+scripts/exam/fixtures/large-sample.bin

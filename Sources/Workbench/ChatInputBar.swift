@@ -1571,8 +1571,10 @@ final class ChatInputBar: NSView {
                 case .cancel:
                     return true
                 case .sendAnyway:
+                    KeyGuard.recordLearning(type: "send-anyway", hit: hit, source: raw)
                     continue                // 只放行這一個命中（沒有留下旗標）；其他命中、附檔、引用照樣逐一檢查
                 case .notAKey:
+                    KeyGuard.recordLearning(type: "false-positive", hit: hit, source: raw)
                     KeyGuard.allow(hit.key)
                 case .save(let service, let label):
                     if let err = KeyVault.set(service: service, key: hit.key) {

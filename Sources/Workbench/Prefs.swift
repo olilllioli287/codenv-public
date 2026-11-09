@@ -31,6 +31,8 @@ final class Prefs: ObservableObject {
     /// 網頁外掛的總開關：只切換呈現與執行中的網頁，不改聊天室、掛件或版面資料。
     /// 闔蓋時讓正在做事的聊天室做完這一段（LidKeeper.swift），預設開
     @Published var lidKeepWorking: Bool { didSet { d.set(lidKeepWorking, forKey: "lidKeepWorking") } }
+    /// 合蓋接實體外接螢幕時，工作完成且 HID 閒置 10 分鐘後交還風扇並主動睡眠
+    @Published var lidExternalIdleSleep: Bool { didSet { d.set(lidExternalIdleSleep, forKey: "lidExternalIdleSleep") } }
     /// 闔蓋時收到停止指示的聊天室，開蓋後通知繼續；預設開
     @Published var lidResumeNotifyEnabled: Bool { didSet { d.set(lidResumeNotifyEnabled, forKey: "lidResumeNotifyEnabled") } }
     @Published var webFeaturesEnabled: Bool {
@@ -104,6 +106,7 @@ final class Prefs: ObservableObject {
         cloudCompactTokens = d.object(forKey: "cloudCompactTokens") as? Int ?? 640_000   // 定的預設
         localCompactTokens = d.object(forKey: "localCompactTokens") as? Int ?? 400_000
         lidKeepWorking = d.object(forKey: "lidKeepWorking") as? Bool ?? true
+        lidExternalIdleSleep = d.object(forKey: "lidExternalIdleSleep") as? Bool ?? true
         lidResumeNotifyEnabled = d.object(forKey: "lidResumeNotifyEnabled") as? Bool ?? AppDefaults.lidResumeNotifyEnabled
         webFeaturesEnabled = d.bool(forKey: "webFeaturesEnabled")
         browserEngine = d.string(forKey: "browserEngine") ?? "webkit"

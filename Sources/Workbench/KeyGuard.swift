@@ -7,7 +7,7 @@ import AppKit
 enum KeyGuardDecision {
     case save(service: String, label: String)    // service＝鑰匙圈 service 全名；label＝輸入框裡顯示的名字
     case sendAnyway
-    case notAKey                                 // 「這段不是金鑰，以後別再攔」：記雜湊（不記原文）後照常送
+    case notAKey                                 // 「這段不是金鑰，以後別再攔」：記錄誤攔並加入精確字串白名單
     case cancel
 }
 
@@ -19,6 +19,7 @@ enum KeyGuard {
     static var testBigFileDecision: (() -> Bool)?
 
     private static let allowKey = "keyAllowHashes"
+    private static let learningFile = "keyguard-false-positives.jsonl"
     private static var wired = false
     /// 把「這段不是金鑰」的雜湊清單接上設定檔（只記雜湊）。第一次用到時接
     static func wire() {
@@ -30,6 +31,66 @@ enum KeyGuard {
         wire()
         KeyScan.allowHashes.insert(KeyScan.hash(text))
         appDefaults.set(Array(KeyScan.allowHashes), forKey: allowKey)
+    }
+
+    /// 將使用者對命中結果的回饋附加到 JSONL。只有「不是金鑰」保存命中原文；仍要送出只保存摘要。
+    static func recordLearning(type: String, hit: KeyHit, source: String) {
+        let url = learningURL()
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let context: String
+            if let match = Range(hit.range, in: source) {
+                var start = match.lowerBound, end = match.upperBound
+                for _ in 0..<40 {
+                    if start > source.startIndex { source.formIndex(before: &start) }
+                    if end < source.endIndex { source.formIndex(after: &end) }
+                }
+                context = String(source[start..<end])
+            } else {
+                context = source
+            }
+            var record: [String: Any] = [
+                "type": type,
+                "rule": hit.kind,
+                "timestamp": ISO8601DateFormatter().string(from: Date()),
+            ]
+            if type == "false-positive" {
+                record["text"] = hit.text
+                record["context"] = context
+            } else {
+                record["length"] = hit.text.count
+                record["prefix"] = String(hit.text.prefix(4))
+                record["suffix"] = String(hit.text.suffix(4))
+                record["keywords"] = Self.contextKeywords(context)
+                record.removeValue(forKey: "context") // send-anyway 不持久化可能含秘密的周邊原文
+            }
+            let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys, .fragmentsAllowed])
+            let line = data + Data([0x0A])
+            if FileManager.default.fileExists(atPath: url.path) {
+                let h = try FileHandle(forWritingTo: url); defer { try? h.close() }
+                try h.seekToEnd(); try h.write(contentsOf: line)
+            } else {
+                try line.write(to: url, options: .atomic)
+            }
+        } catch {
+            NSLog("KeyGuard learning log write failed: %@", String(describing: error))
+        }
+    }
+
+    private static func learningURL() -> URL {
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--state-dir"), i + 1 < args.count {
+            return URL(fileURLWithPath: args[i + 1], isDirectory: true).appendingPathComponent(learningFile)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AI 工作台", isDirectory: true)
+            .appendingPathComponent(learningFile)
+    }
+
+    private static func contextKeywords(_ context: String) -> [String] {
+        let candidates = ["commit", "hash", "sha", "uuid", "git", "雜湊", "提交", "版本", "金鑰", "key", "token", "secret"]
+        let lower = context.lowercased()
+        return candidates.filter { lower.contains($0.lowercased()) }
     }
     static func shortHint(_ hit: KeyHit) -> String { "\(hit.kind)…" + String(hit.key.suffix(4)) }
 

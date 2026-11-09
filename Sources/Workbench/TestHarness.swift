@@ -19,6 +19,7 @@ extension AppDelegate {
                 if pair[0] == "petEmbedPress", let n = Int(pair[1]) { PetEmbedPrefs.pressLevel = n }
                 if pair[0] == "petEmbedOn" { PetEmbedPrefs.enabled = pair[1] == "1" }
                 if pair[0] == "agyMagpie" { Prefs.shared.agyMagpie = pair[1] == "1" }
+                if pair[0] == "lidExternalIdleSleep", ["0", "1"].contains(pair[1]) { Prefs.shared.lidExternalIdleSleep = pair[1] == "1" }
                 if pair[0] == "petSlotOn" { PetSlot.enabled = pair[1] == "1" }
                 if pair[0] == "sidebarMode", ["commander", "tree"].contains(pair[1]) { Prefs.shared.sidebarMode = pair[1] }
                 if pair[0] == "colorScheme", ["dark", "light", "system"].contains(pair[1]) { Prefs.shared.colorScheme = pair[1] }
@@ -334,7 +335,7 @@ extension AppDelegate {
             }
         }
         // --lid-sim "秒:動作"（要同時有 --lid-sim 旗標本身當開關，不碰真的闔蓋與 pmset）：
-        //   動作 close／open／temp=N／batt=N／ac=0|1／helper=ok|unsupported|fail／work=N（覆蓋工作中的段數）／work=auto。
+        //   動作 close／open／display=0|1／idle=秒／temp=N／batt=N／ac=0|1／helper=ok|unsupported|fail／work=N（覆蓋工作中的段數）／work=auto。
         // --lid-limits "撐多久秒,幾度,連續幾秒,幾秒記一行"：縮短時限方便測。
         for (i, a) in args.enumerated() where a == "--lid-limits" && i + 1 < args.count {
             let v = args[i + 1].split(separator: ",").compactMap { Double($0) }
@@ -344,6 +345,7 @@ extension AppDelegate {
                 if v.count > 4 { k.limits.preholdOffDelay = v[4] }
                 if v.count > 5 { k.limits.statusEvery = v[5] }
                 if v.count > 6 { k.limits.preholdRetry = v[6] }
+                if v.count > 7 { k.limits.externalIdleSleepSeconds = v[7] }
             }
         }
         for (i, a) in args.enumerated() where a == "--lid-sim" && i + 1 < args.count {
@@ -357,6 +359,7 @@ extension AppDelegate {
                 case "close": sim.closed = true
                 case "open": sim.closed = false
                 case "display": sim.external = kv.last == "1"
+                case "idle": sim.idleSeconds = Double(kv.last ?? "") ?? sim.idleSeconds
                 case "temp": sim.temp = Double(kv.last ?? "") ?? sim.temp
                 case "batt": sim.percent = Int(kv.last ?? "") ?? sim.percent
                 case "ac": sim.onAC = kv.last == "1"
@@ -1013,9 +1016,14 @@ extension AppDelegate {
                 if mode != "mixfile" { p.inputBar.testSend() }
                 let input2 = p.inputBar.textView.string
                 let key = KeyVault.read(service: svc)
+                let stateDir = args.firstIndex(of: "--state-dir").map { URL(fileURLWithPath: args[$0 + 1], isDirectory: true) }
+                let learningURL = stateDir?.appendingPathComponent("keyguard-false-positives.jsonl")
+                let learningRecords: [[String: Any]] = learningURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+                    .map { $0.split(whereSeparator: \.isNewline).compactMap { line in (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] } } ?? []
                 let expectedFilePrompt = fileURLs.map { TerminalPane.shellEscape($0.path) }.joined(separator: " ")
                 let result: [String: Any] = ["sent": sent, "sent1": sent1, "input1": input1, "input2": input2, "asked": asked, "fileAsked": fileAsked, "bigAsked": bigAsked,
                                              "filesSentExactly": mode == "mixfile" && sent == [expectedFilePrompt],
+                                             "learningRecords": learningRecords,
                                              "saved": key ?? "", "last4": KeyVault.status(service: svc).last4 ?? ""]
                 if let d = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) { try? d.write(to: URL(fileURLWithPath: out)) }
                 for s in KeyVault.allServices() { KeyVault.delete(service: s) }

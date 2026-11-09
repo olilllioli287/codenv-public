@@ -291,7 +291,7 @@ enum KeyScan {
         ]
     }()
     private static let run = try! NSRegularExpression(pattern: "[A-Za-z0-9_+/.-]{32,}={0,2}")
-    private static let hexRun = try! NSRegularExpression(pattern: "(?<![0-9A-Za-z_-])[0-9a-fA-F]{32,128}(?![0-9A-Za-z_-])")
+    private static let hexRun = try! NSRegularExpression(pattern: "(?<![0-9A-Za-z_-])[0-9a-fA-F]{7,128}(?![0-9A-Za-z_-])")
     private static let keyWords = try! NSRegularExpression(pattern: "(?i)(api|key|token|secret|passw|credential|bearer|auth)")
     private static let gitWords = try! NSRegularExpression(pattern: "(?i)\\b(commit|sha\\d*|hash|head|rev|checksum|digest|blob|tree|parent|merge|cherry-pick|revert|md5|git)\\b")
 
@@ -362,11 +362,17 @@ enum KeyScan {
         for m in hexRun.matches(in: text, range: full) {
             let ctx = lineContext(ns, m.range)
             let tok = ns.substring(with: m.range)
-            let gitLine = gitWords.firstMatch(in: ctx.before, range: NSRange(location: 0, length: (ctx.before as NSString).length)) != nil
+            let isLowerHexHash = tok.count >= 7 && tok.count <= 40 && tok == tok.lowercased()
+            let gitContext = gitWords.firstMatch(in: ctx.line, range: NSRange(location: 0, length: (ctx.line as NSString).length)) != nil
+                || gitWords.firstMatch(in: ctx.prev, range: NSRange(location: 0, length: (ctx.prev as NSString).length)) != nil
+            let gitLogLine = ctx.line.range(of: #"^\s*[0-9a-f]{7,40}\s+\S"#, options: .regularExpression) != nil
+                || ctx.line.range(of: #"^\s*commit\s+[0-9a-f]{7,40}\b"#, options: .regularExpression) != nil
+            let shaDigest = ctx.before.range(of: #"\bsha(1|256|384|512)\b"#, options: .regularExpression.union(.caseInsensitive)) != nil
             let alone = ctx.line.trimmingCharacters(in: .whitespacesAndNewlines) == tok
             let around = ctx.line + (alone ? " " + ctx.prev : "")
-            if gitLine { continue }
-            if keyWords.firstMatch(in: around, range: NSRange(location: 0, length: (around as NSString).length)) != nil {
+            if shaDigest { continue } // sha256／sha512 摘要本身可能超過 40 位，沿用舊版的摘要放行
+            if isLowerHexHash && (gitContext || gitLogLine) { continue }
+            if tok.count >= 32 && keyWords.firstMatch(in: around, range: NSRange(location: 0, length: (around as NSString).length)) != nil {
                 hits.append(KeyHit(range: m.range, text: tok, kind: "十六進位金鑰", service: nil, strong: false))
             }
         }

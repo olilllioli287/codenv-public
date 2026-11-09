@@ -36,6 +36,20 @@ pids() { LC_ALL=C ps -ax -o pid=,command= | LC_ALL=C awk -v pat="$1" 'index($0, 
 check() { if [ "$2" = "$3" ]; then echo "  斷言通過：$1"; else echo "  斷言失敗：$1（期望 $3，實際 $2）"; fail=1; fi; }
 
 case "$ID" in
+C86)
+    D1="$T/idle"; D2="$T/active"; D3="$T/disabled"
+    mkdir -p "$D1" "$D2" "$D3"
+    launch "$D1" --pref lidExternalIdleSleep=1 --lid-sim "0.5:work=1" --lid-sim "1:display=1" --lid-sim "1.5:close" --lid-sim "4:work=0" --lid-sim "4:idle=600"
+    sleep 13; stop
+    check "外接螢幕＋闔蓋＋工作完成＋閒置 10 分鐘：風扇 auto 一次" "$(grep -c '\[假小幫手\] fan auto' "$D1/codenv-lid.log" 2>/dev/null || true)" "1"
+    check "同一情境主動睡眠一次" "$(grep -c '\[假\] pmset sleepnow' "$D1/codenv-lid.log" 2>/dev/null || true)" "1"
+    launch "$D2" --pref lidExternalIdleSleep=1 --lid-sim "0.5:work=1" --lid-sim "1:display=1" --lid-sim "1.5:close" --lid-sim "4:work=0" --lid-sim "4:idle=599"
+    sleep 13; stop
+    check "閒置不到 10 分鐘：不自動風扇、不睡" "$(grep -Ec '\[假小幫手\] fan auto|\[假\] pmset sleepnow' "$D2/codenv-lid.log" 2>/dev/null || true)" "0"
+    launch "$D3" --pref lidExternalIdleSleep=0 --lid-sim "0.5:work=1" --lid-sim "1:display=1" --lid-sim "1.5:close" --lid-sim "4:work=0" --lid-sim "4:idle=600"
+    sleep 13; stop
+    check "子開關關：不自動風扇、不睡" "$(grep -Ec '\[假小幫手\] fan auto|\[假\] pmset sleepnow' "$D3/codenv-lid.log" 2>/dev/null || true)" "0"
+    ;;
 C81)
     python3 "$ROOTDIR/scripts/exam/right-panel-columns.py" "$ROOTDIR" || fail=1
     ;;
@@ -268,8 +282,8 @@ C17)
     launch "$D" --claude-home "$H" --chat-claude "$FAKE" --web-unload-seconds 3 \
       --new-conv-at "1:$T/a" --set-input "2:A 的草稿" --new-conv-at "3:$T/b" --bg-send "5:$T/a:<clear>" \
       --web-probe "9:$T/a:$T/p1.txt" --bg-send "10:$T/a:背景代送考題C17" \
-      --web-probe-watch "14:70:$T/a:$T/watch.txt:串流考題C17-唯一字串"
-    for i in $(seq 1 90); do [ -s "$T/watch.txt" ] && break; sleep 1; done
+    --web-probe-watch "14:120:$T/a:$T/watch.txt:串流考題C17-唯一字串"
+    for i in $(seq 1 140); do [ -s "$T/watch.txt" ] && break; sleep 1; done
     stop; for p in $(pids "$FAKE"); do kill "$p"; done
     check "代送前已卸載" "$(head -1 "$T/p1.txt" 2>/dev/null)" "hasWeb=false inWindow=false"
     check "畫面輪詢涵蓋回合完成" "$(grep -c 'finished=true' "$T/watch.txt" 2>/dev/null || true)" "1"
@@ -1086,9 +1100,18 @@ C68)
     check "存：末四碼對" "$([ "$(jq_ save last4)" = "${KEY: -4}" ] && echo 是 || echo 否)" "是"
     check "存：第二次送出的字沒有金鑰" "$(has "$(jq_ save sent)" "$KEY")" "否"
     check "存：第二次真的送出了（帶〔金鑰：NVIDIA，已存〕）" "$(has "$(jq_ save sent)" '〔金鑰：NVIDIA，已存〕')" "是"
-    kg send send "請用這個 $KEY 去連線"
+    kg send send "請用這個 token $KEY 去連線"
     check "仍要送出：送出的字還是原文" "$(has "$(jq_ send sent)" "$KEY")" "是"
     check "仍要送出：沒存進鑰匙圈" "$(jq_ send saved)" ""
+    check "仍要送出：記錄規則、長度、前後四字與上下文關鍵字，不含原文" "$(python3 - "$T/s-send/out.json" "$KEY" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1])); key=sys.argv[2]
+rs=d['learningRecords']
+ok=bool(rs) and all(r.get('type')=='send-anyway' and r.get('rule') and r.get('length')==len(key) and r.get('prefix')==key[:4] and r.get('suffix')==key[-4:] and 'context' not in r and key not in json.dumps(r,ensure_ascii=False) for r in rs)
+ok=ok and all(any(w in r.get('keywords',[]) for w in ('key','token','secret')) for r in rs)
+print('是' if ok else '否')
+PY
+)" "是"
     kg cancel cancel "請用這個 $KEY 去連線"
     check "取消：沒送出" "$(jq_ cancel sent)" "[]"
     check "取消：輸入框的字原封不動" "$(has "$(jq_ cancel input2)" "$KEY")" "是"
@@ -1098,11 +1121,22 @@ C68)
     kg normal cancel "$NORMAL"
     check "正常長字串（雜湊、路徑、UUID）不誤攔：一次就送出" "$(has "$(jq_ normal sent)" 3f786850e387550fdab836ed7e6dc881de23001b)" "是"
     check "  卡片一次都沒跳" "$(jq_ normal asked)" "0"
+    kg shortgit cancel "git log --oneline：3f78685 修正輸入框"
+    check "7 位小寫 git log 雜湊不攔" "$(jq_ shortgit asked)" "0"
+    check "7 位小寫 git log 雜湊照常送出" "$(has "$(jq_ shortgit sent)" 3f78685)" "是"
     KEY2="nvapi-$(LC_ALL=C tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c 48)"      # 白名單會記在測試設定裡，用另一把，免得影響後面的案例
     kg notakey notakey "請看這段 $KEY2 不是金鑰"
     check "這段不是金鑰：第一次就送出（原文）" "$(has "$(jq_ notakey sent1)" "$KEY2")" "是"
     check "  兩次送出卡片只跳一次（第二次已記住）" "$(jq_ notakey asked)" "1"
     check "  沒存進鑰匙圈" "$(jq_ notakey saved)" ""
+    check "不是金鑰：記錄命中原文、上下文、規則與時間" "$(python3 - "$T/s-notakey/out.json" "$KEY2" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1])); key=sys.argv[2]
+rs=d['learningRecords']
+ok=len(rs)==1 and rs[0].get('type')=='false-positive' and rs[0].get('text')==key and key in rs[0].get('context','') and 'timestamp' in rs[0] and rs[0].get('rule')
+print('是' if ok else '否')
+PY
+)" "是"
     kg integ cancel "integrity: \"sha512-$(LC_ALL=C tr -dc 'A-Za-z0-9+/' </dev/urandom | head -c 86)==\""
     check "package-lock 的 sha512 integrity 不攔" "$(jq_ integ asked)" "0"
     kg fullw save "$(python3 -c "import sys;print(''.join(chr(ord(c)+0xFEE0) if 0x21<=ord(c)<=0x7e else c for c in sys.argv[1]))" "$KEY")"

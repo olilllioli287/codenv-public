@@ -42,6 +42,36 @@ if (id === 'A06') {
     assert.equal(turns().some(t => t.textContent.includes('另一則')), true);
     eq(messages.filter(m => m.type === 'quotes').at(-1).items.map(q => q.qid), ['u1']);
   }
+} else if (id === 'C86') {
+  const long = ('這是仿真的長段回覆，含 emoji 👇、全形標點，並跨過工具呼叫。\n').repeat(30);
+  const user = { type: 'user', uuid: 'threads-user', message: { role: 'user', content: [{ type: 'text', text: 'Threads 貼文是不是類似我的世界樹？' }] } };
+  const firstTool = { type: 'assistant', message: { id: 'fetch-message', role: 'assistant', content: [{ type: 'tool_use', id: 'fetch-1', name: 'Bash' }] } };
+  const fetched = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'fetch-1', content: '貼文內容 👇\n' + '關聯地圖。'.repeat(100) }] }, toolUseResult: { stdout: '貼文內容 👇\n' + '關聯地圖。'.repeat(100), stderr: '' } };
+  const replyID = 'reply-message';
+  const thought = { type: 'assistant', message: { id: replyID, role: 'assistant', content: [{ type: 'thinking', thinking: long }] } };
+  const reply = { type: 'assistant', message: { id: replyID, role: 'assistant', content: [{ type: 'text', text: long }] } };
+  const saveTool = { type: 'assistant', message: { id: replyID, role: 'assistant', content: [{ type: 'tool_use', id: 'save-1', name: 'Bash' }] } };
+  const saved = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'save-1', content: '已存進收藏。', is_error: false }] }, toolUseResult: { stdout: '已存進收藏。', stderr: '' } };
+  const final = { type: 'assistant', message: { id: 'final-message', role: 'assistant', content: [{ type: 'text', text: '重點也存進收藏了。' }] } };
+  const { wb, document, flushFrames } = dom(base);
+  const visibleText = () => document.body.textContent;
+  const plainText = () => visibleText().replace(/<br\s*\/?\s*>/g, '\n').replace(/<[^>]+>/g, '');
+  wb.localUser({ uuid: 'threads-user', text: 'Threads 貼文是不是類似我的世界樹？' });
+  wb.event(firstTool); wb.event(fetched); wb.event(thought);
+  const event = e => wb.event({ type: 'stream_event', event: e, parent_tool_use_id: null, api_message_id: replyID });
+  event({ type: 'message_start', message: { id: replyID } });
+  event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+  for (let i = 0; i < long.length; i += 97) event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: long.slice(i, i + 97) } });
+  event({ type: 'content_block_stop', index: 0 });
+  wb.event(reply); flushFrames(); wb.event(saveTool); wb.event(saved); wb.event(final); flushFrames();
+  assert.ok(plainText().includes(long), '即時串流的長文字泡泡完整保留');
+  assert.ok(visibleText().includes('重點也存進收藏了。'), '工具呼叫後的最後一句可見');
+  assert.equal(document.querySelectorAll('.tool').length, 2, '兩個工具步驟仍顯示');
+  wb.event({ type: 'result', subtype: 'success', is_error: false });
+  wb.history([user, firstTool, fetched, thought, reply, saveTool, saved, final]);
+  assert.ok(plainText().includes(long), '重新載入歷史後長文字泡泡完整保留');
+  assert.ok(visibleText().includes('重點也存進收藏了。'), '重新載入歷史後最後一句可見');
+  assert.ok(visibleText().includes('Thought for'), '長 thinking 被保留為可展開的思考區塊');
 } else if (['A01', 'A02'].includes(id)) {
   const context = vm.createContext({}, { codeGeneration: { strings: false, wasm: false } });
   context.window = context;
@@ -120,8 +150,13 @@ if (id === 'A06') {
   assert.match(source, /"argonWeek"\s*:\s*"Argon 每週"/);
   assert.match(source, /window\["model"\].*window\["modelName"\].*window\["label"\]/, '讀取窗口模型標籤');
   assert.match(source, /MagpieAccountQuota\(id: id, name: name, buckets: accountValues\[id\] \?\? \[:\]\)/);
-  assert.match(source, /ForEach\(m\.magpieAccounts\)/, '用量卡片列出各帳號');
+  if (id === 'C80') {
+    const card = source.match(/private func card\(_ p: UsagePool\) -> some View \{([\s\S]*?)\n    }\n}/)?.[1] || '';
+    assert.match(card, /ForEach\(m\.rows\(p\)\)/, 'Gemini 卡片呈現彙總額度列');
+    assert.doesNotMatch(card, /ForEach\(m\.magpieAccounts\)/, 'Gemini 卡片不列逐帳號明細');
+    assert.match(card, /UsageRowView\(row: r, detail: p == \.gemini \? m\.magpieQuotaTips\[r\.bucket\.label\] : nil\)/, '帳號明細保留在彙總列的 hover 提示');
+  }
   assert.doesNotMatch(source, /else if key == "agy", i == 2/, '狀態列不得硬填 Argon');
-  assert.match(source, /"Gemini 5 小時", "Gemini 每週", "Argon 每週"/, '卡片呈現三個合計 bucket');
+  if (id === 'C80') assert.ok(source.includes('阿公 \\(remaining("Argon 每週"))'), '狀態列保留阿公每週合計');
 } else throw Error('未知案例：' + id);
 console.log('斷言通過 ' + id);

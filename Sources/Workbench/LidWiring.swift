@@ -22,6 +22,7 @@ extension MainWindowController {
         let keeper = LidKeeper(env: sim ?? RealLidEnv(), logURL: paths.log, markerURL: paths.marker)
         sim?.onCall = { [weak keeper] s in keeper?.log(s) }
         keeper.enabled = { Prefs.shared.lidKeepWorking }
+        keeper.externalIdleSleepEnabled = { Prefs.shared.lidExternalIdleSleep }
         keeper.resumeEnabled = { Prefs.shared.lidResumeNotifyEnabled }
         keeper.workingIDs = { [weak self] in
             guard let self else { return [] }
