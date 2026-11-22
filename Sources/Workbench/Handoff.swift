@@ -178,11 +178,12 @@ enum Handoff {
         try p.run()
         let pid = p.processIdentifier
         let flag = TimeoutFlag()
+        let escalation = DispatchWorkItem { flag.killGroupIfUnfinished(process: p, pid: pid) }
         let timer = DispatchWorkItem {
-            guard pid > 1, p.isRunning else { return }      // killpg(0) 會殺到 codenv 自己的群組
-            flag.set()
-            killpg(pid, SIGTERM)
-            DispatchQueue.global().asyncAfter(deadline: .now() + grace) { if killpg(pid, 0) == 0 { killpg(pid, SIGKILL) } }
+            guard pid > 1 else { return }      // killpg(0) 會殺到 codenv 自己的群組
+            if flag.terminateGroupForTimeout(process: p, pid: pid, grace: grace) {
+                DispatchQueue.global().asyncAfter(deadline: .now() + grace, execute: escalation)
+            }
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
         // stdout、stderr 要同時讀：只先讀 stdout 的話，claude 的 stderr 寫滿管子（約 64 KB）會卡住，stdout 也就永遠沒有結尾
@@ -194,14 +195,80 @@ enum Handoff {
         errDone.wait()
         p.waitUntilExit()
         timer.cancel()
-        // 正常結束後群組裡若還有殘留的子程序（背景啟動的），一併清掉
-        if pid > 1, killpg(pid, 0) == 0 { killpg(pid, SIGKILL) }
+        // 結束後清理同群組殘留子程序（例如已關閉 stdout／stderr 的背景子程序）：
+        // 未逾時立即送 SIGKILL；已逾時則保留 grace SIGKILL，等群組清空或 grace 期滿再確保送出 SIGKILL。
+        flag.cleanupAfterExit(process: p, pid: pid, escalation: escalation)
         return GroupRun(stdout: data, stderr: String(data: errData, encoding: .utf8) ?? "", timedOut: flag.value, status: p.terminationStatus)
     }
 
     private final class TimeoutFlag {
-        private let lock = NSLock(); private var v = false
-        func set() { lock.lock(); v = true; lock.unlock() }
+        private let lock = NSLock()
+        private var v = false
+        private var graceDeadline: TimeInterval?
+        private var finished = false
+
+        private func isOwnedGroupPresent(process: Process, pid: pid_t) -> Bool {
+            guard pid > 1, killpg(pid, 0) == 0 else { return false }
+            let runningBefore = process.isRunning
+            let currentGroup = getpgid(pid)
+            let runningAfter = process.isRunning
+            if runningBefore != runningAfter {
+                // leader 剛好在檢查期間從活著／zombie 變成已回收：再檢一次穩定的群組狀態。
+                return killpg(pid, 0) == 0 && getpgid(pid) != pid
+            }
+            // leader 尚存時必須仍是我們建立的 group leader；leader 已退出時，pgid == pid
+            // 代表該數字 pid 可能已被新 group leader 重用，不可把它當成原群組殺掉。
+            return runningAfter ? currentGroup == pid : currentGroup != pid
+        }
+
+        func terminateGroupForTimeout(process: Process, pid: pid_t, grace: TimeInterval) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard !finished else { return false }
+            v = true
+            graceDeadline = ProcessInfo.processInfo.systemUptime + max(0, grace)
+            if isOwnedGroupPresent(process: process, pid: pid) { _ = killpg(pid, SIGTERM) }
+            return true
+        }
+
+        func killGroupIfUnfinished(process: Process, pid: pid_t) {
+            lock.lock(); defer { lock.unlock() }
+            guard !finished, isOwnedGroupPresent(process: process, pid: pid) else { return }
+            _ = killpg(pid, SIGKILL)
+        }
+
+        func cleanupAfterExit(process: Process, pid: pid_t, escalation: DispatchWorkItem) {
+            let deadline: TimeInterval?
+            lock.lock()
+            if !v {
+                // 正常結束後群組裡若還有殘留的子程序（背景啟動且已關閉 stdout／stderr），一併清掉。
+                finished = true
+                if isOwnedGroupPresent(process: process, pid: pid) { _ = killpg(pid, SIGKILL) }
+                lock.unlock()
+                escalation.cancel()
+                return
+            }
+            // 已逾時：不可因握管程序收到 SIGTERM 退出、管子關閉就取消 grace SIGKILL；先讓 grace 繼續生效。
+            deadline = graceDeadline
+            lock.unlock()
+
+            if let deadline {
+                while ProcessInfo.processInfo.systemUptime < deadline {
+                    lock.lock()
+                    let stillPresent = isOwnedGroupPresent(process: process, pid: pid)
+                    lock.unlock()
+                    if !stillPresent { break }
+                    let remaining = deadline - ProcessInfo.processInfo.systemUptime
+                    Thread.sleep(forTimeInterval: min(0.02, max(0.005, remaining)))
+                }
+            }
+
+            lock.lock()
+            if isOwnedGroupPresent(process: process, pid: pid) { _ = killpg(pid, SIGKILL) }
+            finished = true
+            lock.unlock()
+            escalation.cancel()
+        }
+
         var value: Bool { lock.lock(); defer { lock.unlock() }; return v }
     }
 }

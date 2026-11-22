@@ -18,7 +18,10 @@ class Element {
       toggle: (c, on) => { on = on ?? !this.classList.contains(c); on ? this.classList.add(c) : this.classList.remove(c); return on; }
     };
   }
-  appendChild(child) { child.remove(); this.children.push(child); child.parentElement = this; return child; }
+  appendChild(child) {
+    if (child.nodeType === 11) { for (const nested of [...child.children]) this.appendChild(nested); return child; }
+    child.remove(); this.children.push(child); child.parentElement = this; return child;
+  }
   insertBefore(child, before) { child.remove(); const i = this.children.indexOf(before); this.children.splice(i < 0 ? this.children.length : i, 0, child); child.parentElement = this; return child; }
   remove() { if (this.parentElement) this.parentElement.children.splice(this.parentElement.children.indexOf(this), 1); this.parentElement = null; }
   replaceChildren(...children) { for (const c of [...this.children]) c.remove(); this._text = ''; children.forEach((c) => this.appendChild(c)); }
@@ -60,15 +63,20 @@ class Element {
   contains(e) { return e === this || this.children.some((c) => c.contains(e)); }
   scrollIntoView() { this.scrolled = true; }
 }
-const document = { body: new Element('body'), documentElement: new Element('html'), readyState: 'complete', addEventListener() {},
+const document = { activeElement: null, body: new Element('body'), documentElement: new Element('html'), readyState: 'complete',
+  visibilityState: 'visible', scrollingElement: null, title: '', hasFocus: () => true, addEventListener() {}, execCommand: () => false,
+  createDocumentFragment() { const f = new Element('fragment'); f.nodeType = 11; f.append = (...items) => items.forEach((item) => f.appendChild(typeof item === 'string' ? this.createTextNode(item) : item)); return f; },
   createElement: (tag) => new Element(tag), createTextNode: (t) => { const e = new Element('text'); e.nodeType = 3; e.textContent = t; return e; },
   querySelectorAll(s) { return this.body.querySelectorAll(s); }, getElementById() { return null; }, createTreeWalker() { return { nextNode() { return null; } }; }
 };
 const messages = [];
-const window = { cdvQuote: Q, requestAnimationFrame(fn) { frames.push(fn); }, addEventListener() {}, innerHeight: 500, matchMedia: () => ({ matches: true }),
+const window = { cdvQuote: Q, __LOCALE: {}, hljs: undefined, wbMath: undefined, wbPlot: undefined, isSecureContext: false,
+  requestAnimationFrame(fn) { frames.push(fn); }, scrollTo() {}, addEventListener() {}, innerHeight: 500, matchMedia: () => ({ matches: true }),
   webkit: { messageHandlers: { wb: { postMessage: (m) => messages.push(m) } } }
 };
-const context = { addEventListener() {}, window, document, console, setTimeout() {}, clearTimeout() {}, setInterval() {}, clearInterval() {},
+const context = { addEventListener() {}, queueMicrotask(fn) { fn(); }, requestAnimationFrame(fn) { frames.push(fn); }, URL,
+  window, document, console, setTimeout() {}, clearTimeout() {}, setInterval() {}, clearInterval() {},
+  MutationObserver: class { constructor(cb) {} observe() {} disconnect() {} takeRecords() { return []; } },
   IntersectionObserver: class { observe() {} unobserve() {} }, ResizeObserver: class { observe() {} }, NodeFilter: { SHOW_TEXT: 4, FILTER_REJECT: 2, FILTER_ACCEPT: 1 },
   marked: require(path.join(base, 'vendor/marked.umd.js')), performance: { now: () => 0 }, navigator: {} };
 vm.runInNewContext(fs.readFileSync(path.join(base, 'chat.js'), 'utf8'), context);

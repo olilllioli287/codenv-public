@@ -17,7 +17,7 @@ struct ScannedProcess: Equatable {
 }
 
 enum ProcessScan {
-    static let names: Set<String> = ["agy", "codex", "copilot"]
+    static let names: Set<String> = ["agy", "agyp", "codex", "copilot", "dspublic", "dsfree", "dsh-safe", "qwenapi", "groqfree", "gemfree"]
     /// 這些是直譯器：名字是 node 之類時，改看 argv[1]（腳本名）
     private static let interpreters: Set<String> = ["node", "bun", "deno", "python", "python3"]
 

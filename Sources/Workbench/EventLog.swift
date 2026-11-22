@@ -39,6 +39,20 @@ enum EventLog {
 
     private static let queue = DispatchQueue(label: "codenv.eventlog", qos: .utility)
     private static let lock = NSLock()
+    private static var _testSink: ((String, String) -> Void)?
+    /// 測試用可注入寫入槽（設定後 `EventLog.log` 直接轉交此 closure，不寫磁碟也不碰正式紀錄；nil 時維持原流程）
+    static var testSink: ((String, String) -> Void)? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _testSink
+        }
+        set {
+            lock.lock()
+            _testSink = newValue
+            lock.unlock()
+        }
+    }
     private static var recentLines: [String] = []
     private static var sequence: UInt64 = 0
     private static var started = false
@@ -91,15 +105,29 @@ enum EventLog {
         }
     }
 
+    /// 視窗診斷類類別（含多螢幕、cgAll 與呼叫堆疊欄位）允許較長單行上限，其餘維持 400 字；皆照常走隱私清洗。
+    static func maxMessageLength(for category: String) -> Int {
+        switch category {
+        case "視窗診斷", "視窗診斷!", "視窗快照", "視窗半透明", "視窗救援":
+            return 1600
+        default:
+            return 400
+        }
+    }
+
     /// 可從任何執行緒呼叫：在專用 serial queue 上清洗並寫檔，不卡主執行緒
     static func log(_ category: String, _ message: String) {
+        if let sink = testSink {
+            sink(category, message)
+            return
+        }
         guard enabled else { return }
         let now = Date()
         queue.async {
             let ts = lineFormatter.string(from: now)
             let day = dayFormatter.string(from: now)
             let cat = scrub(category, maxLen: 40)
-            let msg = scrub(message, maxLen: 400)
+            let msg = scrub(message, maxLen: maxMessageLength(for: category))
             let line = "[\(ts)] \(cat) - \(msg)"
 
             lock.lock()

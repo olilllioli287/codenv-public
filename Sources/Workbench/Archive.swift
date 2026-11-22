@@ -11,12 +11,20 @@ extension Store {
     func refreshActivity() {
         var out: [UUID: Date] = [:]
         for c in conversations {
-            let path = project(c.projectID)?.path ?? NSHomeDirectory()
+            let path = workingDirectory(for: c)
             let url = ContextMonitor.transcript(c, path: path)   // 非 Claude 聊天室看自己的紀錄檔，不然永遠找不到、被誤封存
             if let d = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate { out[c.id] = d }
         }
         if out != lastActivity { lastActivity = out }
         assignMissingOrders()
+        // 第一次掃描時已經封存的聊天室記成「舊封存」，不補寫 README；
+        // 之後才變成封存的（逾 7 天自動收、手動封存）才寫。取消封存後再封存就算新的。
+        if archivedAtLaunch == nil {
+            archivedAtLaunch = Set(conversations.filter { isArchived($0) }.map(\.id))
+        } else {
+            archivedAtLaunch = archivedAtLaunch?.filter { id in conversation(id).map { isArchived($0) } ?? false }
+        }
+        for c in conversations where isArchived(c) && !(archivedAtLaunch?.contains(c.id) ?? false) { archiveReadmeIfNeeded(c.id) }
     }
 
     func lastTouched(_ c: Conversation) -> Date { max(c.lastOpened, lastActivity[c.id] ?? .distantPast) }
@@ -35,7 +43,38 @@ extension Store {
         conversations[i].manualArchive = on ? true : nil
         // 取消封存：當作剛碰過，不然一個禮拜沒碰的規則又會馬上把它收回去
         if !on { conversations[i].lastOpened = Date() }
-        if on { pruneBundles() }   // 自己封存＝離開掛件框
+        if on {
+            clearInterrupted(id)
+            pruneBundles()
+            archiveReadmeIfNeeded(id)
+        }
+    }
+
+    func archiveReadmeIfNeeded(_ id: UUID) {
+        guard let c = conversation(id), isArchived(c),
+              status[id] != .working, status[id] != .waiting,
+              !c.isBrowser, !c.isGadget, c.draft != true, c.terminal != true,
+              c.archiveReadmeAt == nil else { return }
+        if let existing = ArchiveReadme.existingReadme(for: c.id) {
+            markArchiveReadmeWritten(id, at: ArchiveReadme.modificationDate(of: existing) ?? Date())
+            return
+        }
+        let path = workingDirectory(for: c)
+        ArchiveReadme.generate(c, transcript: ContextMonitor.transcript(c, path: path)) { [weak self] url, date, error in
+            guard let self else { return }
+            if let url, let date {
+                self.markArchiveReadmeWritten(id, at: date)
+                EventLog.log("封存", "聊天室摘要已寫入（\(url.lastPathComponent)）")
+            } else if let error {
+                EventLog.log("封存", "聊天室摘要失敗（\(String(id.uuidString.prefix(8)))）：\(String(error.prefix(200)))")
+            }
+        }
+    }
+
+    private func markArchiveReadmeWritten(_ id: UUID, at date: Date) {
+        guard let index = conversations.firstIndex(where: { $0.id == id }),
+              conversations[index].archiveReadmeAt == nil else { return }
+        conversations[index].archiveReadmeAt = date
     }
 
     /// 右鍵「在沙盒裡跑（nono）」

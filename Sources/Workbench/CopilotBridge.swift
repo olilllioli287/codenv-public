@@ -22,9 +22,20 @@ final class CopilotBridge {
 
     /// 有沒有裝 copilot（Homebrew 或使用者 PATH）
     static var installed: Bool {
+        if CommandLine.arguments.contains("--state-dir") { return testExecutable != nil }
         let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
         return (paths + ["/opt/homebrew/bin", "/usr/local/bin"]).contains { FileManager.default.isExecutableFile(atPath: ($0 as NSString).appendingPathComponent("copilot")) }
     }
+
+    /// 測試實例只執行明確提供的假 Copilot；不借用使用者登入中的 CLI。
+    static var testExecutable: String? {
+        let args = CommandLine.arguments
+        guard args.contains("--state-dir"), let i = args.firstIndex(of: "--copilot-bin"), i + 1 < args.count,
+              !args[i + 1].isEmpty, FileManager.default.isExecutableFile(atPath: args[i + 1]) else { return nil }
+        return args[i + 1]
+    }
+
+    static var executable: String { CommandLine.arguments.contains("--state-dir") ? (testExecutable ?? "/__codenv_test_copilot_unavailable__") : "copilot" }
 
     /// 開程序的參數
     static func arguments(model: String, effort: String?) -> [String] {
@@ -77,11 +88,30 @@ final class CopilotBridge {
     private var toolDone: Set<String> = []
     private var started = Date()
 
-    init(session: UUID, directory: String, model: String) {
+    func pendingForLidInterrupt() -> [LidQueuedMessage] {
+        queue.map { LidQueuedMessage(id: $0.uuid, text: LidQueuedMessage.text(in: $0.msg)) }
+    }
+
+    func clearForLidInterrupt() { queue.removeAll() }
+
+    /// 隔離闔蓋探針：建立正在等待一輪回覆、並有下一則排隊的橋接狀態，不啟動 Copilot 程序。
+    func prepareForLidInterruptProbe(queued: [LidQueuedMessage]) {
+        sessionID = "lid-probe-session"
+        loading = false
+        busy = true
+        nextID = 1
+        calls = [1: "session/prompt"]
+        queue = queued.map { item in
+            let message: [String: Any] = ["role": "user", "content": item.text]
+            return (item.id.lowercased(), Self.prompt(message), message)
+        }
+    }
+
+    init(session: UUID, directory: String, model: String, transcriptURL: URL? = nil) {
         self.session = session
         self.directory = directory
         self.model = model
-        transcriptURL = Self.transcript(for: session)
+        self.transcriptURL = transcriptURL ?? Self.transcript(for: session)
     }
 
     // MARK: 送進去

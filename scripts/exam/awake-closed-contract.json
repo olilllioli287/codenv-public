@@ -1,0 +1,1847 @@
+{
+  "C380": {
+    "name": "闔蓋中斷後保持醒著、風扇交回系統",
+    "simulation": {
+      "lid": [
+        "close"
+      ],
+      "sessions": [
+        "working-terminable"
+      ],
+      "external": false
+    },
+    "expected": {
+      "state": "awakeClosed",
+      "terminatedCount": 1,
+      "nosleepOn": true,
+      "sleepNowCount": 0,
+      "setFanAutoCount": 1
+    }
+  },
+  "C381": {
+    "name": "闔蓋時沒有工作交回系統睡眠",
+    "simulation": {
+      "scenarios": [
+        {
+          "id": "preheldNoWork",
+          "lid": [
+            "close"
+          ],
+          "sessions": [],
+          "preheld": true
+        },
+        {
+          "id": "workInterrupted",
+          "lid": [
+            "close"
+          ],
+          "sessions": [
+            "working-terminable"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "preheldNoWork": {
+        "state": "open",
+        "nosleepOffCount": 1,
+        "sleepNowCount": 1
+      },
+      "workInterrupted": {
+        "state": "awakeClosed",
+        "sleepNowCount": 0
+      }
+    }
+  },
+  "C382": {
+    "name": "滿 30 分鐘單調計時後睡眠",
+    "simulation": {
+      "lid": [
+        "close",
+        "continuous+1800"
+      ],
+      "wallClockJumps": [
+        7200,
+        -3600
+      ],
+      "sessions": [
+        "working-terminable"
+      ]
+    },
+    "expected": {
+      "sleepNowCount": 1,
+      "sleptByAwakeClosed": true,
+      "sleepNowElapsedSecondsFromAwakeClosedEntry": 1800
+    }
+  },
+  "C383": {
+    "name": "低於 20% 且未插電立刻睡",
+    "simulation": {
+      "lid": [
+        "close"
+      ],
+      "sessions": [
+        "working-terminable"
+      ],
+      "battery": 19,
+      "onAC": false
+    },
+    "expected": {
+      "sleepNowCount": 1,
+      "sleepReason": "lowBattery",
+      "sleepNowElapsedSecondsFromAwakeClosedEntry": 0
+    }
+  },
+  "C384": {
+    "name": "低電量插電不立即睡",
+    "simulation": {
+      "lid": [
+        "close",
+        "ac=0"
+      ],
+      "sessions": [
+        "working-terminable"
+      ],
+      "battery": 10,
+      "onAC": true
+    },
+    "expected": {
+      "sleepNowCount": 1,
+      "sleepNowInputs": [
+        {
+          "batteryPercent": 10,
+          "onAC": false
+        }
+      ],
+      "sleepReason": "lowBattery"
+    }
+  },
+  "C385": {
+    "name": "電量 20% 邊界不當低電量",
+    "simulation": {
+      "lid": [
+        "close",
+        "battery=19"
+      ],
+      "sessions": [
+        "working-terminable"
+      ],
+      "battery": 20,
+      "onAC": false
+    },
+    "expected": {
+      "sleepNowCount": 1,
+      "sleepNowInputs": [
+        {
+          "batteryPercent": 19,
+          "onAC": false
+        }
+      ],
+      "sleepReason": "lowBattery"
+    }
+  },
+  "C386": {
+    "name": "開蓋自動繼續只送被中斷者一次",
+    "simulation": {
+      "lid": [
+        "close",
+        "open<1800"
+      ],
+      "sessions": [
+        "terminated-foreground",
+        "idle"
+      ],
+      "queue": [
+        {
+          "session": "terminated-foreground",
+          "text": "QUEUE_RESUME_TEXT",
+          "image": false
+        }
+      ]
+    },
+    "expected": {
+      "resumeById": {
+        "terminated-foreground": 1,
+        "idle": 0
+      },
+      "noticeById": {
+        "terminated-foreground": 0
+      },
+      "resumeContainsSafetyText": true,
+      "resumeContainsOriginalQueueText": true,
+      "queuePendingClearedAfterSuccess": true
+    }
+  },
+  "C387": {
+    "name": "工作中、封存或草稿聊天室略過繼續",
+    "simulation": {
+      "lid": [
+        "close",
+        "open<1800"
+      ],
+      "sessions": [
+        "working",
+        "archived",
+        "draft"
+      ]
+    },
+    "expected": {
+      "resumeById": {
+        "working": 0,
+        "archived": 0,
+        "draft": 0
+      },
+      "amberById": {
+        "draft": true
+      }
+    }
+  },
+  "C388": {
+    "name": "30 分鐘睡過後開蓋只補送通知",
+    "simulation": {
+      "lid": [
+        "close",
+        "continuous+1800",
+        "open"
+      ],
+      "sessions": [
+        "working-terminable"
+      ]
+    },
+    "expected": {
+      "resumeCount": 0,
+      "noticeCount": 1,
+      "amberFlag": true,
+      "sleepNowCount": 1,
+      "sleepNowElapsedSecondsFromAwakeClosedEntry": 1800
+    }
+  },
+  "C389": {
+    "name": "繼續送失敗改走通知並標記",
+    "simulation": {
+      "lid": [
+        "close",
+        "open<1800"
+      ],
+      "sessions": [
+        "terminated-pane-send-fails"
+      ]
+    },
+    "expected": {
+      "resumeCount": 1,
+      "resumeSucceeded": false,
+      "noticeCount": 1,
+      "amberFlag": true
+    }
+  },
+  "C390": {
+    "name": "同週期 tick 重入及開蓋抖動不重複",
+    "simulation": {
+      "lid": [
+        "close",
+        "tick",
+        "tick",
+        "open",
+        "open"
+      ],
+      "sessions": [
+        "terminated-foreground"
+      ]
+    },
+    "expected": {
+      "resumeCount": 1,
+      "recordCount": 1
+    }
+  },
+  "C391": {
+    "name": "不同闔蓋週期五秒內各送一次",
+    "simulation": {
+      "lid": [
+        "close",
+        "open",
+        "close",
+        "open"
+      ],
+      "gapBetweenCycles": 2,
+      "sessions": [
+        "terminated-foreground"
+      ]
+    },
+    "expected": {
+      "resumeCount": 2,
+      "recordsByCycle": [
+        1,
+        1
+      ]
+    }
+  },
+  "C392": {
+    "name": "遠端連線暫停計時、斷線後重計三十分鐘",
+    "simulation": {
+      "lid": [
+        "close",
+        "remote=1",
+        "continuous+2400",
+        "remote=0",
+        "continuous+1799",
+        "continuous+1"
+      ],
+      "sessions": [
+        "working-terminable"
+      ],
+      "remote": [
+        false,
+        true,
+        true,
+        false,
+        false,
+        false
+      ]
+    },
+    "expected": {
+      "sleepBeforeDisconnect": false,
+      "sleepAfterRestarted30m": true,
+      "awakeClosedSinceReset": true
+    }
+  },
+  "C393": {
+    "name": "遠端期間低電量與過熱保護仍睡",
+    "simulation": {
+      "scenarios": [
+        {
+          "id": "lowBatteryDuringRemote",
+          "lid": [
+            "close",
+            "remote=1"
+          ],
+          "sessions": [
+            "working-terminable"
+          ],
+          "battery": 10,
+          "onAC": false
+        },
+        {
+          "id": "overheatDuringRemote",
+          "lid": [
+            "close",
+            "remote=1",
+            "temperature=95",
+            "continuous+60"
+          ],
+          "sessions": [
+            "working-terminable"
+          ],
+          "battery": 80,
+          "onAC": false,
+          "temperatureSequence": [
+            95
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "lowBatteryDuringRemote": {
+        "sleepNowCount": 1,
+        "sleepReason": "lowBattery",
+        "sleepNowElapsedSecondsFromAwakeClosedEntry": 0
+      },
+      "overheatDuringRemote": {
+        "sleepNowCount": 1,
+        "sleepReason": "overheat",
+        "sleepNowElapsedSecondsFromAwakeClosedEntry": 60
+      }
+    }
+  },
+  "C394": {
+    "name": "外接螢幕闔蓋三十分鐘後睡",
+    "simulation": {
+      "lid": [
+        "close",
+        "continuous+1800"
+      ],
+      "external": true,
+      "sessions": [
+        "working-terminable"
+      ]
+    },
+    "expected": {
+      "terminatedCount": 1,
+      "sleepNowCount": 1,
+      "sleepNowElapsedSecondsFromAwakeClosedEntry": 1800
+    }
+  },
+  "C395": {
+    "name": "沒有工作不進 awakeClosed",
+    "simulation": {
+      "lid": [
+        "close"
+      ],
+      "sessions": []
+    },
+    "expected": {
+      "state": "systemDefault",
+      "nosleepOnCount": 0,
+      "sleepNowCount": 0
+    }
+  },
+  "C396": {
+    "name": "過熱連續六十秒睡眠",
+    "simulation": {
+      "lid": [
+        "close",
+        "temperature=95",
+        "continuous+60"
+      ],
+      "sessions": [
+        "working-terminable"
+      ],
+      "temperature": 95
+    },
+    "expected": {
+      "sleepNowCount": 1,
+      "sleepReason": "overheat",
+      "sleepNowElapsedSecondsFromAwakeClosedEntry": 60
+    }
+  },
+  "C397": {
+    "name": "短睡或 DarkWake 後開蓋不自動繼續",
+    "simulation": {
+      "scenarios": [
+        {
+          "id": "shortSleep",
+          "lid": [
+            "close",
+            "sleepEvidence<10",
+            "open"
+          ],
+          "sessions": [
+            "terminated-foreground"
+          ]
+        },
+        {
+          "id": "darkWake",
+          "lid": [
+            "close",
+            "darkWake",
+            "open"
+          ],
+          "sessions": [
+            "terminated-foreground"
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "shortSleep": {
+        "resumeCount": 0,
+        "noticeCount": 1,
+        "amberFlag": true
+      },
+      "darkWake": {
+        "resumeCount": 0,
+        "noticeCount": 1,
+        "amberFlag": true
+      }
+    }
+  },
+  "C398": {
+    "name": "十秒 draining 中開蓋等程序清理",
+    "simulation": {
+      "lid": [
+        "close",
+        "open@5",
+        "terminationCompletes@8"
+      ],
+      "session": "ignoresTerm"
+    },
+    "expected": {
+      "resumeAt": 8,
+      "resumeBeforeTermination": false,
+      "sleepNowCount": 0
+    }
+  },
+  "C399": {
+    "name": "開蓋三秒內重闔不混合週期記錄",
+    "simulation": {
+      "lid": [
+        "close(A)",
+        "open@1",
+        "close@2(B)",
+        "open@5"
+      ],
+      "sessions": [
+        "A",
+        "B"
+      ],
+      "queue": [
+        {
+          "session": "A",
+          "text": "QUEUE_CYCLE_A"
+        },
+        {
+          "session": "B",
+          "text": "QUEUE_CYCLE_B"
+        }
+      ]
+    },
+    "expected": {
+      "recordsByCycle": [
+        {
+          "A": 1,
+          "B": 0
+        },
+        {
+          "A": 0,
+          "B": 1
+        }
+      ],
+      "resumeById": {
+        "A": 1,
+        "B": 1
+      },
+      "queueContentPreservedByCycle": {
+        "A": true,
+        "B": true
+      }
+    }
+  },
+  "C400": {
+    "name": "team 成員彙總一則、總指揮本人合併",
+    "simulation": {
+      "lid": [
+        "close",
+        "open"
+      ],
+      "team": [
+        "memberA",
+        "memberB"
+      ],
+      "commander": "chief",
+      "sessions": [
+        "memberA",
+        "memberB",
+        "chief"
+      ]
+    },
+    "expected": {
+      "commanderAggregateCount": 1,
+      "memberResumeCount": 0,
+      "commanderSelfResumeSeparateCount": 0,
+      "memberAmberFlags": true,
+      "commanderSelfResumeIncludedInAggregate": true
+    }
+  },
+  "C401": {
+    "name": "總指揮封存或無 pane 時成員不各自繼續",
+    "simulation": {
+      "scenarios": [
+        {
+          "id": "commanderArchived",
+          "lid": [
+            "close",
+            "open"
+          ],
+          "commander": {
+            "archived": true,
+            "paneAvailable": true
+          },
+          "team": [
+            "memberA"
+          ],
+          "sessions": [
+            "memberA"
+          ],
+          "queue": [
+            {
+              "session": "memberA",
+              "text": "QUEUE_ARCHIVED_COMMANDER_TEXT"
+            }
+          ]
+        },
+        {
+          "id": "commanderNoPane",
+          "lid": [
+            "close",
+            "open"
+          ],
+          "commander": {
+            "archived": false,
+            "paneAvailable": false
+          },
+          "team": [
+            "memberA"
+          ],
+          "sessions": [
+            "memberA"
+          ],
+          "queue": [
+            {
+              "session": "memberA",
+              "text": "QUEUE_NO_PANE_COMMANDER_TEXT"
+            }
+          ]
+        }
+      ]
+    },
+    "expected": {
+      "commanderArchived": {
+        "memberResumeCount": 0,
+        "memberNoticeCount": 1,
+        "memberAmberFlag": true,
+        "memberNoticeContainsOriginalQueueText": true,
+        "queueDeletedOnlyAfterNoticeSuccess": true
+      },
+      "commanderNoPane": {
+        "memberResumeCount": 0,
+        "memberNoticeCount": 1,
+        "memberAmberFlag": true,
+        "memberNoticeContainsOriginalQueueText": true,
+        "queueDeletedOnlyAfterNoticeSuccess": true
+      }
+    }
+  },
+  "C402": {
+    "name": "排隊文字與圖片附件跨續送保留原文",
+    "simulation": {
+      "queue": [
+        {
+          "session": "terminated-foreground",
+          "text": "QUEUE_TEST_TEXT",
+          "image": true
+        }
+      ],
+      "sessions": [
+        "terminated-foreground"
+      ],
+      "path": "resume-success",
+      "outboxReadFails": true
+    },
+    "expected": {
+      "messageContainsOriginal": true,
+      "imageMarker": "（含圖片附件）",
+      "outboxReadFailed": true,
+      "resumeWarning": "寄件匣讀取失敗，可能有沒送出的訊息",
+      "queueContentPreservedInResumeText": true,
+      "queuePendingClearedAfterSuccess": true
+    }
+  },
+  "C403": {
+    "name": "草稿略過時排隊訊息仍保留",
+    "simulation": {
+      "queue": [
+        {
+          "session": "terminated-draft-with-draft",
+          "text": "QUEUE_DRAFT_TEXT",
+          "image": true
+        }
+      ],
+      "sessions": [
+        "terminated-draft-with-draft"
+      ],
+      "draft": "DRAFT_TEST",
+      "path": "draft-skip"
+    },
+    "expected": {
+      "resumeCount": 0,
+      "amberFlag": true,
+      "queueStillInOutboxOrRescue": true
+    }
+  },
+  "C404": {
+    "name": "送失敗與通知失敗時排隊訊息持久保留",
+    "simulation": {
+      "queue": [
+        {
+          "session": "terminated-foreground",
+          "text": "QUEUE_FAIL_TEXT",
+          "image": true
+        }
+      ],
+      "sessions": [
+        "terminated-foreground"
+      ],
+      "path": "resume-and-notice-fail"
+    },
+    "expected": {
+      "rescueRecordPresent": true,
+      "queueDeleted": false,
+      "queueStillInRescue": true
+    }
+  },
+  "C405": {
+    "name": "已轉 working 略過時排隊訊息不丟",
+    "simulation": {
+      "queue": [
+        {
+          "session": "already-working",
+          "text": "QUEUE_WORKING_TEXT"
+        }
+      ],
+      "sessions": [
+        "already-working"
+      ],
+      "path": "already-working"
+    },
+    "expected": {
+      "resumeCount": 0,
+      "queueStillInOutbox": true
+    }
+  },
+  "C406": {
+    "name": "總指揮彙總包含成員排隊訊息與圖片標記",
+    "simulation": {
+      "queue": [
+        {
+          "session": "memberA",
+          "member": "memberA",
+          "text": "QUEUE_TEAM_TEXT",
+          "image": true
+        }
+      ],
+      "team": [
+        "memberA"
+      ],
+      "sessions": [
+        "memberA"
+      ],
+      "path": "commander-aggregate"
+    },
+    "expected": {
+      "aggregateContainsOriginal": true,
+      "imageMarker": "（含圖片附件）",
+      "queuePreserved": true,
+      "queuePendingClearedAfterSuccess": true
+    }
+  },
+  "C407": {
+    "name": "awakeClosed 寫 rescue 後退出再開 App 補送",
+    "simulation": {
+      "phases": [
+        "prepare-write-rescue",
+        "terminate-process",
+        "restart-same-state-dir",
+        "resume-notice"
+      ],
+      "queue": [
+        {
+          "text": "QUEUE_RESTART_TEXT",
+          "session": "terminated-foreground"
+        }
+      ],
+      "lid": [
+        "close"
+      ],
+      "sessions": [
+        "terminated-foreground"
+      ]
+    },
+    "expected": {
+      "rescueSurvivesRestart": true,
+      "resumeCount": 0,
+      "noticeCount": 1,
+      "noticeContainsOriginalQueueText": true,
+      "queueDeletedOnlyAfterNoticeSuccess": true
+    }
+  },
+  "C408": {
+    "name": "中途關閉設定清狀態釋放預擋且不睡",
+    "simulation": {
+      "lid": [
+        "close",
+        "setting=off"
+      ],
+      "sessions": [
+        "working-terminable"
+      ],
+      "queue": [
+        {
+          "session": "working-terminable",
+          "text": "QUEUE_SETTING_TEXT"
+        }
+      ]
+    },
+    "expected": {
+      "awakeClosedCleared": true,
+      "recordsCleared": true,
+      "nosleepReleased": true,
+      "sleepNowCount": 0,
+      "queueStillInOutboxOrRescue": true
+    }
+  },
+  "C409": {
+    "name": "本機模型與背景工作不送續訊、不標旗",
+    "simulation": {
+      "lid": [
+        "close",
+        "open"
+      ],
+      "sessions": [
+        "local-model",
+        "background-only"
+      ]
+    },
+    "expected": {
+      "resumeById": {
+        "local-model": 0,
+        "background-only": 0
+      },
+      "amberById": {
+        "local-model": false,
+        "background-only": false
+      }
+    }
+  },
+  "C410": {
+    "name": "風扇失敗只記錄、電量 nil 不提早睡",
+    "simulation": {
+      "lid": [
+        "close",
+        "continuous+1799"
+      ],
+      "sessions": [
+        "working-terminable"
+      ],
+      "setFanAutoSucceeds": false,
+      "battery": null
+    },
+    "expected": {
+      "setFanAutoCount": 1,
+      "fanFailureLogged": true,
+      "sleepNowCount": 0,
+      "state": "awakeClosed",
+      "awakeClosedElapsedSeconds": 1799
+    }
+  },
+  "C411": {
+    "name": "小幫手斷線重擋重試、設定切換清理",
+    "simulation": {
+      "lid": [
+        "close",
+        "helper=disconnect",
+        "continuous+5",
+        "helper=ok",
+        "setting=off"
+      ],
+      "sessions": [
+        "working-terminable"
+      ]
+    },
+    "expected": {
+      "nosleepRetryCount": 1,
+      "awakeClosedCleared": true,
+      "recordsCleared": true,
+      "sleepNowCount": 0
+    }
+  },
+  "C412": {
+    "name": "sleepNow 失敗只記錄不崩潰不重複呼叫",
+    "simulation": {
+      "lid": [
+        "close",
+        "continuous+1800"
+      ],
+      "sessions": [
+        "working-terminable"
+      ],
+      "sleepNowSucceeds": false
+    },
+    "expected": {
+      "crashed": false,
+      "sleepNowCallCount": 1,
+      "sleepFailureLogged": true
+    }
+  },
+  "C413": {
+    "name": "舊設定遷移並阻止舊撐住路徑",
+    "simulation": {
+      "legacyPrefs": {
+        "lidKeepWorking": true,
+        "lidExternalIdleSleep": true,
+        "lidResumeNotifyEnabled": true
+      },
+      "explicitInterruptClose": null,
+      "sessions": [
+        "working-terminable"
+      ],
+      "sequence": [
+        "close"
+      ]
+    },
+    "expected": {
+      "lidKeepWorking": false,
+      "lidInterruptOnClose": true,
+      "legacyPathEntered": false,
+      "legacySettingsVisible": false,
+      "legacyPreferenceCleared": true,
+      "persistedInterruptValue": true
+    }
+  },
+  "C35": {
+    "name": "舊闔蓋外接防抖／上限路徑不可進入",
+    "simulation": {
+      "legacyPrefs": {
+        "lidKeepWorking": true,
+        "lidExternalIdleSleep": true,
+        "lidInterruptOnClose": false
+      },
+      "external": true,
+      "sequence": [
+        "close",
+        "display-flash",
+        "10m"
+      ]
+    },
+    "expected": {
+      "migration": {
+        "lidKeepWorking": false,
+        "lidInterruptOnClose": true,
+        "legacyPathEntered": false
+      },
+      "holdingCount": 0,
+      "externalIdleSleepCount": 0
+    }
+  },
+  "C38": {
+    "name": "舊外接睡醒寬限／重擋路徑不可進入",
+    "simulation": {
+      "legacyPrefs": {
+        "lidKeepWorking": true,
+        "lidExternalIdleSleep": true,
+        "lidInterruptOnClose": false
+      },
+      "sequence": [
+        "close",
+        "wakeGap",
+        "external-return",
+        "helper-failure"
+      ]
+    },
+    "expected": {
+      "migration": {
+        "lidKeepWorking": false,
+        "lidInterruptOnClose": true,
+        "legacyPathEntered": false
+      },
+      "legacyWakeGraceCount": 0,
+      "legacyReholdCount": 0
+    }
+  },
+  "C86": {
+    "name": "舊外接閒置睡眠路徑不可進入",
+    "simulation": {
+      "legacyPrefs": {
+        "lidKeepWorking": true,
+        "lidExternalIdleSleep": true,
+        "lidInterruptOnClose": false
+      },
+      "external": true,
+      "sequence": [
+        "close",
+        "work-finished",
+        "idle=600"
+      ]
+    },
+    "expected": {
+      "migration": {
+        "lidKeepWorking": false,
+        "lidInterruptOnClose": true,
+        "legacyPathEntered": false
+      },
+      "sleepNowCount": 0,
+      "legacyFanAutoCount": 0
+    }
+  },
+  "C108": {
+    "name": "舊等待做完一段路徑遷移為新模式",
+    "simulation": {
+      "legacyPrefs": {
+        "lidKeepWorking": true,
+        "lidInterruptOnClose": null
+      },
+      "sessions": [
+        "codex-working",
+        "background-only"
+      ],
+      "sequence": [
+        "close"
+      ]
+    },
+    "expected": {
+      "migration": {
+        "lidKeepWorking": false,
+        "lidInterruptOnClose": true,
+        "legacyPathEntered": false
+      },
+      "terminableSessionTerminated": true,
+      "legacyStopCount": 0,
+      "state": "awakeClosed"
+    }
+  },
+  "C133": {
+    "name": "舊外接閃現撐住路徑遷移為新模式",
+    "simulation": {
+      "legacyPrefs": {
+        "lidKeepWorking": true,
+        "lidInterruptOnClose": null
+      },
+      "external": true,
+      "sequence": [
+        "close",
+        "display-flash",
+        "reclose"
+      ]
+    },
+    "expected": {
+      "migration": {
+        "lidKeepWorking": false,
+        "lidInterruptOnClose": true,
+        "legacyPathEntered": false
+      },
+      "holdStarted": false,
+      "perClosureInterrupts": [
+        1,
+        1
+      ]
+    }
+  },
+  "C313": {
+    "name": "舊 KeepWorking 旗標遷移為新模式",
+    "simulation": {
+      "legacyPrefs": {
+        "lidKeepWorking": true,
+        "lidInterruptOnClose": null
+      },
+      "sequence": [
+        "close",
+        "open"
+      ]
+    },
+    "expected": {
+      "migration": {
+        "lidKeepWorking": false,
+        "lidInterruptOnClose": true,
+        "legacyPathEntered": false
+      },
+      "mode": "interrupt",
+      "sleepNowCount": 0
+    }
+  },
+  "C318": {
+    "name": "舊設定選項消失且明確新設定優先",
+    "simulation": {
+      "legacyPrefs": {
+        "lidKeepWorking": true,
+        "lidExternalIdleSleep": true,
+        "lidResumeNotifyEnabled": true,
+        "lidInterruptOnClose": null
+      },
+      "separateExplicitFalseScenario": true
+    },
+    "expected": {
+      "legacyMigration": {
+        "lidKeepWorking": false,
+        "lidInterruptOnClose": true,
+        "legacyPathEntered": false
+      },
+      "explicitFalse": {
+        "lidKeepWorking": false,
+        "lidInterruptOnClose": false,
+        "legacyPathEntered": false
+      },
+      "legacySettingsVisible": false
+    }
+  },
+  "C414": {
+    "name": "Codex Luna max 直連成功且不留在 Reconnecting",
+    "simulation": {
+      "engine": "codex",
+      "modelId": "gpt-6-luna",
+      "effort": "max",
+      "prompt": "只回覆 OK",
+      "timeoutSeconds": 300,
+      "liveConnection": true
+    },
+    "expected": {
+      "connected": true,
+      "turnStarted": true,
+      "finalStatus": "completed",
+      "reconnectingAtEnd": false,
+      "reconnectingTransitions": 0,
+      "elapsedSecondsMax": 300
+    }
+  },
+  "C415": {
+    "name": "救援通知刪檔失敗後限制重送次數且只提醒一次",
+    "simulation": {
+      "maxMessageSendAttempts": 3,
+      "scenarios": {
+        "deleteFailure": {
+          "phases": [
+            "attempt1",
+            "attempt2",
+            "attempt3",
+            "attempt4",
+            "attempt5"
+          ],
+          "sendSucceeds": true,
+          "rescueDeleteSucceeds": false
+        },
+        "attemptCounterWriteFailure": {
+          "phases": [
+            "writeFailure1",
+            "writeFailure2"
+          ],
+          "attemptCountWriteSucceeds": false
+        }
+      }
+    },
+    "expected": {
+      "scenarios": {
+        "deleteFailure": {
+          "phases": {
+            "attempt1": {
+              "attemptCountPersistedBeforeSend": 1,
+              "messageSendCountThisLaunch": 1,
+              "rescueDeleteSucceeded": false,
+              "keeperNotifyCallsThisLaunch": 0
+            },
+            "attempt2": {
+              "attemptCountPersistedBeforeSend": 2,
+              "messageSendCountThisLaunch": 1,
+              "rescueDeleteSucceeded": false,
+              "keeperNotifyCallsThisLaunch": 0
+            },
+            "attempt3": {
+              "attemptCountPersistedBeforeSend": 3,
+              "messageSendCountThisLaunch": 1,
+              "rescueDeleteSucceeded": false,
+              "keeperNotifyCallsThisLaunch": 0
+            },
+            "attempt4": {
+              "attemptCountPersistedBeforeSend": 3,
+              "messageSendCountThisLaunch": 0,
+              "keeperNotifyCallsThisLaunch": 1
+            },
+            "attempt5": {
+              "attemptCountPersistedBeforeSend": 3,
+              "messageSendCountThisLaunch": 0,
+              "keeperNotifyCallsThisLaunch": 0,
+              "cumulativeKeeperNotifyCalls": 1
+            }
+          },
+          "cumulative": {
+            "messageSendCount": 3,
+            "keeperNotifyCalls": 1,
+            "rescueFileExists": true
+          }
+        },
+        "attemptCounterWriteFailure": {
+          "phases": {
+            "writeFailure1": {
+              "attemptCountWriteSucceeded": false,
+              "messageSendCountThisLaunch": 0,
+              "keeperNotifyCallsThisLaunch": 1
+            },
+            "writeFailure2": {
+              "attemptCountWriteSucceeded": false,
+              "messageSendCountThisLaunch": 0,
+              "keeperNotifyCallsThisLaunch": 0,
+              "cumulativeKeeperNotifyCalls": 1
+            }
+          },
+          "cumulative": {
+            "messageSendCount": 0,
+            "keeperNotifyCalls": 1,
+            "rescueFileExists": true
+          }
+        }
+      }
+    }
+  },
+  "C416": {
+    "name": "損壞救援 JSON 依隔離結果限制提醒",
+    "simulation": {
+      "scenarios": {
+        "quarantineSuccess": {
+          "phases": [
+            "scan1",
+            "scan2"
+          ],
+          "rescueJSON": "invalid-json",
+          "quarantineSucceeds": true,
+          "sameRecordReminderDedupe": {
+            "phases": [
+              "repeatReminder"
+            ],
+            "firstAttemptCountWriteSucceeds": false,
+            "advanceAttemptsAfterFirstReminder": 3
+          }
+        },
+        "quarantineFailure": {
+          "phases": [
+            "scan1",
+            "scan2"
+          ],
+          "rescueJSON": "invalid-json",
+          "quarantineSucceeds": false,
+          "originalFilename": "lid-rescue.json",
+          "repeatCorruptLoadCountPerLaunch": 2,
+          "phaseActions": {
+            "scan1": {
+              "quarantineFailureMode": "move-failed"
+            },
+            "scan2": {
+              "quarantineFailureMode": "directory-unwritable"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "scenarios": {
+        "quarantineSuccess": {
+          "phases": {
+            "scan1": {
+              "crashed": false,
+              "autoSendCount": 0,
+              "quarantineSucceeded": true,
+              "badFileExists": true,
+              "badFileMode": "0600",
+              "keeperNotifyCallsThisLaunch": 1
+            },
+            "scan2": {
+              "crashed": false,
+              "autoSendCount": 0,
+              "badFileExists": true,
+              "rescueFileExists": false,
+              "keeperNotifyCallsThisLaunch": 0,
+              "cumulativeKeeperNotifyCalls": 1,
+              "sameRecordReminderDedupe": {
+                "firstAttemptWriteSucceeded": false,
+                "firstReminderCount": 1,
+                "remindedPersistedAfterFirstReminder": false,
+                "attemptsBeforeRepeatPath": 3,
+                "exhaustedPathLogCount": 0,
+                "secondPathAdditionalNotifyCalls": 0,
+                "keeperNotifyCallsThisLaunch": 1
+              }
+            }
+          },
+          "cumulative": {
+            "autoSendCount": 0,
+            "keeperNotifyCalls": 1,
+            "badFileMode": "0600"
+          }
+        },
+        "quarantineFailure": {
+          "phases": {
+            "scan1": {
+              "crashed": false,
+              "autoSendCount": 0,
+              "quarantineSucceeded": false,
+              "quarantineFailureMode": "move-failed",
+              "quarantineAttemptCountThisLaunch": 2,
+              "quarantineOriginalFilenames": [
+                "lid-rescue.json",
+                "lid-rescue.json"
+              ],
+              "quarantineFailureLogged": true,
+              "rescueFileExists": true,
+              "keeperNotifyCallsThisLaunch": {
+                "$atMost": 1
+              }
+            },
+            "scan2": {
+              "crashed": false,
+              "autoSendCount": 0,
+              "quarantineSucceeded": false,
+              "quarantineFailureMode": "directory-unwritable",
+              "quarantineAttemptCountThisLaunch": 2,
+              "quarantineOriginalFilenames": [
+                "lid-rescue.json",
+                "lid-rescue.json"
+              ],
+              "quarantineFailureLogged": true,
+              "rescueFileExists": true,
+              "keeperNotifyCallsThisLaunch": {
+                "$atMost": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "C417": {
+    "name": "新訊息併入重置救援次數並以記錄與原因去重提醒",
+    "simulation": {
+      "maxMessageSendAttempts": 3,
+      "scenarios": {
+        "newMessageReset": {
+          "initialRecord": {
+            "recordID": "rescue-test-record",
+            "chatID": "chat-test-1",
+            "queuedMessageIDs": [
+              "queued-old"
+            ],
+            "attempts": 3,
+            "reminded": true
+          },
+          "newCycleID": "cycle-test-2",
+          "phases": [
+            "duplicateUpsert",
+            "newMessageUpsert",
+            "retry1",
+            "retry2",
+            "retry3",
+            "retry4",
+            "retry5"
+          ],
+          "phaseActions": {
+            "duplicateUpsert": {
+              "operation": "upsertQueuedMessage",
+              "chatID": "chat-test-1",
+              "cycleID": "cycle-test-2",
+              "messageID": "queued-old"
+            },
+            "newMessageUpsert": {
+              "operation": "upsertQueuedMessage",
+              "chatID": "chat-test-1",
+              "cycleID": "cycle-test-2",
+              "messageID": "queued-new"
+            },
+            "retry1": {
+              "operation": "recoveryLaunch",
+              "messageSendSucceeds": false,
+              "rescueDeleteSucceeds": false
+            },
+            "retry2": {
+              "operation": "recoveryLaunch",
+              "messageSendSucceeds": false,
+              "rescueDeleteSucceeds": false
+            },
+            "retry3": {
+              "operation": "recoveryLaunch",
+              "messageSendSucceeds": false,
+              "rescueDeleteSucceeds": false
+            },
+            "retry4": {
+              "operation": "recoveryLaunch",
+              "messageSendSucceeds": false,
+              "rescueDeleteSucceeds": false
+            },
+            "retry5": {
+              "operation": "recoveryLaunch",
+              "messageSendSucceeds": false,
+              "rescueDeleteSucceeds": false
+            }
+          }
+        },
+        "inProcessReminderDedupe": {
+          "phases": [
+            "notifyDedupe"
+          ],
+          "events": [
+            {
+              "recordID": "rescue-record-a",
+              "reason": "attempts-exhausted"
+            },
+            {
+              "recordID": "rescue-record-a",
+              "reason": "attempts-exhausted"
+            },
+            {
+              "recordID": "rescue-record-b",
+              "reason": "attempts-exhausted"
+            },
+            {
+              "recordID": "rescue-record-a",
+              "reason": "attempt-counter-write-failed"
+            },
+            {
+              "recordID": "rescue-record-a",
+              "reason": "attempt-counter-write-failed"
+            }
+          ]
+        },
+        "emptyIDUpsertNoReset": {
+          "initialRecord": {
+            "recordID": "rescue-empty-id-record",
+            "chatID": "chat-test-empty-id",
+            "queuedMessageIDs": [
+              ""
+            ],
+            "attempts": 3,
+            "reminded": true
+          },
+          "newCycleID": "cycle-test-empty-id-2",
+          "phases": [
+            "emptyIDUpsert"
+          ],
+          "phaseActions": {
+            "emptyIDUpsert": {
+              "operation": "upsertQueuedMessage",
+              "chatID": "chat-test-empty-id",
+              "cycleID": "cycle-test-empty-id-2",
+              "messageID": ""
+            }
+          }
+        },
+        "sameSourceCorruptionDedupe": {
+          "phases": [
+            "corruptTwice"
+          ],
+          "originalFilename": "lid-rescue.json",
+          "reason": "corrupt-json",
+          "corruptions": [
+            {
+              "operation": "writeInvalidAndReadOriginal",
+              "quarantineAttempt": 1
+            },
+            {
+              "operation": "rewriteSameOriginalInvalidAndRead",
+              "quarantineAttempt": 2
+            }
+          ]
+        }
+      }
+    },
+    "expected": {
+      "scenarios": {
+        "newMessageReset": {
+          "phases": {
+            "duplicateUpsert": {
+              "recordID": "rescue-test-record",
+              "chatID": "chat-test-1",
+              "queuedMessageIDs": [
+                "queued-old"
+              ],
+              "attempts": 3,
+              "reminded": true,
+              "recordCountForChat": 1,
+              "newNonEmptyMessageIDAdded": false,
+              "messageSendCountThisLaunch": 0,
+              "keeperNotifyCallsThisLaunch": 0
+            },
+            "newMessageUpsert": {
+              "recordID": "rescue-test-record",
+              "chatID": "chat-test-1",
+              "queuedMessageIDs": [
+                "queued-old",
+                "queued-new"
+              ],
+              "attempts": 0,
+              "reminded": false,
+              "recordCountForChat": 1,
+              "newNonEmptyMessageIDAdded": true,
+              "messageSendCountThisLaunch": 0,
+              "keeperNotifyCallsThisLaunch": 0
+            },
+            "retry1": {
+              "attemptCountPersistedBeforeSend": 1,
+              "newMessageSendCountThisLaunch": 1,
+              "newMessageSendSucceeded": false,
+              "keeperNotifyCallsThisLaunch": 0,
+              "remindedAfterLaunch": false
+            },
+            "retry2": {
+              "attemptCountPersistedBeforeSend": 2,
+              "newMessageSendCountThisLaunch": 1,
+              "newMessageSendSucceeded": false,
+              "keeperNotifyCallsThisLaunch": 0,
+              "remindedAfterLaunch": false
+            },
+            "retry3": {
+              "attemptCountPersistedBeforeSend": 3,
+              "newMessageSendCountThisLaunch": 1,
+              "newMessageSendSucceeded": false,
+              "keeperNotifyCallsThisLaunch": 0,
+              "remindedAfterLaunch": false
+            },
+            "retry4": {
+              "attemptCountPersistedBeforeSend": 3,
+              "newMessageSendCountThisLaunch": 0,
+              "keeperNotifyCallsThisLaunch": 1,
+              "remindedAfterLaunch": true
+            },
+            "retry5": {
+              "attemptCountPersistedBeforeSend": 3,
+              "newMessageSendCountThisLaunch": 0,
+              "keeperNotifyCallsThisLaunch": 0,
+              "cumulativeKeeperNotifyCalls": 1,
+              "remindedAfterLaunch": true
+            }
+          },
+          "cumulative": {
+            "newMessageSendCount": 3,
+            "keeperNotifyCalls": 1,
+            "attempts": 3,
+            "reminded": true,
+            "recordCountForChat": 1
+          }
+        },
+        "inProcessReminderDedupe": {
+          "phases": {
+            "notifyDedupe": {
+              "keeperNotifyCallsThisLaunch": 3,
+              "duplicateReminderEventsSuppressed": 2,
+              "notifiedRecordReasonPairs": [
+                {
+                  "recordID": "rescue-record-a",
+                  "reason": "attempts-exhausted"
+                },
+                {
+                  "recordID": "rescue-record-b",
+                  "reason": "attempts-exhausted"
+                },
+                {
+                  "recordID": "rescue-record-a",
+                  "reason": "attempt-counter-write-failed"
+                }
+              ]
+            }
+          }
+        },
+        "emptyIDUpsertNoReset": {
+          "phases": {
+            "emptyIDUpsert": {
+              "recordID": "rescue-empty-id-record",
+              "chatID": "chat-test-empty-id",
+              "queuedMessageIDs": [
+                "",
+                ""
+              ],
+              "attempts": 3,
+              "reminded": true,
+              "recordCountForChat": 1,
+              "newNonEmptyMessageIDAdded": false,
+              "messageSendCountThisLaunch": 0,
+              "keeperNotifyCallsThisLaunch": 0
+            }
+          }
+        },
+        "sameSourceCorruptionDedupe": {
+          "phases": {
+            "corruptTwice": {
+              "corruptOriginalFilename": "lid-rescue.json",
+              "quarantineCountThisLaunch": 2,
+              "quarantineOriginalFilenames": [
+                "lid-rescue.json",
+                "lid-rescue.json"
+              ],
+              "quarantinePathsDistinct": true,
+              "keeperNotifyCallsThisLaunch": 1,
+              "duplicateReminderEventsSuppressed": 1,
+              "notifiedSourceReasonPairs": [
+                {
+                  "sourceFilename": "lid-rescue.json",
+                  "reason": "corrupt-json"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "C418": {
+    "name": "闔蓋反彈資料保全：M1 恰送一次、M2 不遺失、救援清空",
+    "simulation": {
+      "scenarios": {
+        "bouncePreservesM1": {
+          "phases": [
+            "bounceAndResume",
+            "restartAfterDelivery"
+          ],
+          "phaseActions": {
+            "bounceAndResume": {
+              "operation": "simulateCloseOpenRecloseAndResume",
+              "selectedChatID": "chat-C418",
+              "initialOutbox": [
+                {
+                  "messageID": "M1",
+                  "text": "M1_ORIGINAL_TEXT_第一輪排隊原文",
+                  "imageMarker": "（含圖片附件）"
+                }
+              ],
+              "lidTimeline": [
+                {
+                  "atSeconds": 0.5,
+                  "event": "close"
+                },
+                {
+                  "atSeconds": 2.0,
+                  "event": "open"
+                },
+                {
+                  "atSeconds": 3.0,
+                  "event": "newWork",
+                  "chatID": "chat-C418"
+                },
+                {
+                  "atSeconds": 4.5,
+                  "event": "close"
+                },
+                {
+                  "atSeconds": 6.0,
+                  "event": "open"
+                }
+              ],
+              "sameStateDirAcrossPhases": true,
+              "newWorkDuringBounce": true,
+              "secondCloseOutboxMustBeEmpty": true,
+              "waitForContinuationAfterSecondOpen": true
+            },
+            "restartAfterDelivery": {
+              "operation": "relaunchSameStateDirAndRecoverRescue",
+              "selectedChatID": "chat-C418",
+              "messageSendSucceeds": true
+            }
+          }
+        },
+        "bouncePreservesM1AndM2": {
+          "phases": [
+            "bounceAndResume",
+            "restartAfterDelivery"
+          ],
+          "phaseActions": {
+            "bounceAndResume": {
+              "operation": "simulateCloseOpenRecloseAndResume",
+              "selectedChatID": "chat-C418",
+              "initialOutbox": [
+                {
+                  "messageID": "M1",
+                  "text": "M1_ORIGINAL_TEXT_第一輪排隊原文",
+                  "imageMarker": "（含圖片附件）"
+                }
+              ],
+              "lidTimeline": [
+                {
+                  "atSeconds": 0.5,
+                  "event": "close"
+                },
+                {
+                  "atSeconds": 2.0,
+                  "event": "open"
+                },
+                {
+                  "atSeconds": 3.0,
+                  "event": "newWork",
+                  "chatID": "chat-C418"
+                },
+                {
+                  "atSeconds": 4.5,
+                  "event": "close"
+                },
+                {
+                  "atSeconds": 6.0,
+                  "event": "open"
+                }
+              ],
+              "sameStateDirAcrossPhases": true,
+              "newWorkDuringBounce": true,
+              "secondCloseOutboxMustBeEmpty": true,
+              "waitForContinuationAfterSecondOpen": true,
+              "addAfterSecondClose": {
+                "messageID": "M2",
+                "text": "M2_ORIGINAL_TEXT_第二輪新增原文"
+              }
+            },
+            "restartAfterDelivery": {
+              "operation": "relaunchSameStateDirAndRecoverRescue",
+              "selectedChatID": "chat-C418",
+              "messageSendSucceeds": true
+            }
+          }
+        },
+        "normalSingleCycleCleanup": {
+          "phases": [
+            "singleCycleDelivery",
+            "restartAfterDelivery"
+          ],
+          "phaseActions": {
+            "singleCycleDelivery": {
+              "operation": "simulateSingleCloseOpenAndResume",
+              "selectedChatID": "chat-C418",
+              "initialOutbox": [
+                {
+                  "messageID": "M1",
+                  "text": "M1_ORIGINAL_TEXT_第一輪排隊原文",
+                  "imageMarker": "（含圖片附件）"
+                }
+              ],
+              "lidTimeline": [
+                {
+                  "atSeconds": 0.5,
+                  "event": "close"
+                },
+                {
+                  "atSeconds": 2.0,
+                  "event": "open"
+                }
+              ],
+              "messageSendSucceeds": true,
+              "waitForContinuationAfterOpen": true
+            },
+            "restartAfterDelivery": {
+              "operation": "relaunchSameStateDirAndCheckNoResend",
+              "selectedChatID": "chat-C418"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "scenarios": {
+        "bouncePreservesM1": {
+          "phases": {
+            "bounceAndResume": {
+              "selectedChatID": "chat-C418",
+              "sameChatIDAcrossBounce": true,
+              "newWorkDuringBounce": true,
+              "openToSecondCloseSeconds": 2.5,
+              "initialOutboxMessageIDs": [
+                "M1"
+              ],
+              "firstCloseChatID": "chat-C418",
+              "firstCloseOutboxMessageIDs": [],
+              "firstCloseRescueMessageIDs": [
+                "M1"
+              ],
+              "firstCloseRescueEntryCountForChat": 1,
+              "secondCloseChatID": "chat-C418",
+              "secondCloseOutboxMessageIDs": [],
+              "secondCloseRescueMessageIDs": [
+                "M1"
+              ],
+              "secondCloseRescueEntryCountForChat": 1,
+              "m1RecoverableAtSecondClose": true,
+              "m1DeliveryCount": 0,
+              "rescueEntryPresentAfterDelivery": true,
+              "rescueEntryCountForChatAfterDelivery": 1,
+              "outboxMessageIDsAfterDelivery": {
+                "$notContains": [
+                  "M1"
+                ]
+              }
+            },
+            "restartAfterDelivery": {
+              "selectedChatID": "chat-C418",
+              "rescueEntryPresentForChat": false,
+              "rescueEntryCountForChat": 0,
+              "outboxMessageIDs": {
+                "$notContains": [
+                  "M1"
+                ]
+              },
+              "cumulative": {
+                "m1DeliveryCount": 1,
+                "m2DeliveryCount": 0,
+                "rescueEntryCountForChat": 0
+              }
+            }
+          },
+          "cumulative": {
+            "m1DeliveryCount": 1,
+            "m2DeliveryCount": 0,
+            "rescueEntryCountForChat": 0
+          }
+        },
+        "bouncePreservesM1AndM2": {
+          "phases": {
+            "bounceAndResume": {
+              "selectedChatID": "chat-C418",
+              "sameChatIDAcrossBounce": true,
+              "newWorkDuringBounce": true,
+              "openToSecondCloseSeconds": 2.5,
+              "initialOutboxMessageIDs": [
+                "M1"
+              ],
+              "firstCloseChatID": "chat-C418",
+              "firstCloseOutboxMessageIDs": [],
+              "firstCloseRescueMessageIDs": [
+                "M1"
+              ],
+              "firstCloseRescueEntryCountForChat": 1,
+              "secondCloseChatID": "chat-C418",
+              "secondCloseOutboxMessageIDs": [],
+              "secondCloseRescueMessageIDs": [
+                "M1"
+              ],
+              "secondCloseRescueEntryCountForChat": 1,
+              "m1RecoverableAtSecondClose": true,
+              "m1DeliveryCount": 0,
+              "rescueEntryPresentAfterDelivery": true,
+              "rescueEntryCountForChatAfterDelivery": 1,
+              "outboxMessageIDsAfterDelivery": {
+                "$notContains": [
+                  "M1"
+                ]
+              }
+            },
+            "restartAfterDelivery": {
+              "selectedChatID": "chat-C418",
+              "rescueEntryPresentForChat": false,
+              "rescueEntryCountForChat": 0,
+              "outboxMessageIDs": {
+                "$notContains": [
+                  "M1"
+                ]
+              },
+              "cumulative": {
+                "m1DeliveryCount": 1,
+                "rescueEntryCountForChat": 0
+              }
+            }
+          },
+          "cumulative": {
+            "m1DeliveryCount": 1,
+            "rescueEntryCountForChat": 0
+          }
+        },
+        "normalSingleCycleCleanup": {
+          "phases": {
+            "singleCycleDelivery": {
+              "selectedChatID": "chat-C418",
+              "initialOutboxMessageIDs": [
+                "M1"
+              ],
+              "m1DeliveryCount": 1,
+              "m2DeliveryCount": 0,
+              "rescueEntryPresentAfterDelivery": false,
+              "rescueEntryCountForChatAfterDelivery": 0,
+              "outboxMessageIDsAfterDelivery": {
+                "$notContains": [
+                  "M1"
+                ]
+              }
+            },
+            "restartAfterDelivery": {
+              "selectedChatID": "chat-C418",
+              "automatedSendAttempts": [],
+              "resumeCountThisLaunch": 0,
+              "noticeSendCountThisLaunch": 0,
+              "rescueEntryPresentForChat": false,
+              "rescueEntryCountForChat": 0,
+              "outboxMessageIDs": {
+                "$notContains": [
+                  "M1"
+                ]
+              },
+              "cumulative": {
+                "m1DeliveryCount": 1,
+                "m2DeliveryCount": 0,
+                "rescueEntryCountForChat": 0
+              }
+            }
+          },
+          "cumulative": {
+            "m1DeliveryCount": 1,
+            "m2DeliveryCount": 0,
+            "rescueEntryCountForChat": 0
+          }
+        }
+      }
+    }
+  }
+}

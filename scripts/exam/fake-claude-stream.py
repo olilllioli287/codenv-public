@@ -9,6 +9,7 @@ import uuid
 
 
 ANSWER = "串流考題C17-唯一字串"
+PREWARM = "C17預熱完成"
 
 
 def emit(obj):
@@ -71,6 +72,8 @@ def main():
 
         message = request.get("message") or {}
         content = message.get("content") or []
+        user_text = "".join(block.get("text", "") for block in content if isinstance(block, dict))
+        answer = PREWARM if user_text == "C17預熱" else ANSWER
         message_uuid = request.get("uuid") or str(uuid.uuid4())
         user_record = {
             "type": "user",
@@ -94,10 +97,10 @@ def main():
                 "type": "message",
                 "role": "assistant",
                 "model": "claude-test",
-                "content": [{"type": "text", "text": ANSWER}],
+                "content": [{"type": "text", "text": answer}],
                 "stop_reason": "end_turn",
                 "stop_sequence": None,
-                "usage": {"input_tokens": 1, "output_tokens": len(ANSWER)},
+                "usage": {"input_tokens": 1, "output_tokens": len(answer)},
             },
         }
         # 先把完整回覆落到歷史，再送串流，刻意讓 loadHistory 和 queued 事件重疊。
@@ -120,7 +123,7 @@ def main():
             },
             "api_message_id": message_id,
         })
-        parts = [ANSWER[i * len(ANSWER) // 10:(i + 1) * len(ANSWER) // 10] for i in range(10)]
+        parts = [answer[i * len(answer) // 10:(i + 1) * len(answer) // 10] for i in range(10)]
         for part in parts:
             time.sleep(0.5)
             emit({
@@ -145,8 +148,8 @@ def main():
         emit(assistant_record)
         # 完整回答送出後先等一下才結束這輪：考題要趁這段時間（格子還在、還在忙）讀畫面；
         # 結束後不在版面上的閒置格子會被整格收掉（Workspace.releaseUnplaced），就看不到了
-        time.sleep(float(os.environ.get("FAKE_RESULT_DELAY", "75")))
-        emit({"type": "result", "subtype": "success", "is_error": False, "result": ANSWER})
+        time.sleep(float(os.environ.get("FAKE_RESULT_DELAY", "4")))
+        emit({"type": "result", "subtype": "success", "is_error": False, "result": answer})
 
     return 0
 

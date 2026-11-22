@@ -29,8 +29,7 @@ enum LocalCompact {
 
     /// 模型上限：讀下載下來的 config.json（max_position_embeddings，或多模態的 text_config 裡的）
     static func contextWindow(_ model: String) -> Int? {
-        let snaps = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/huggingface/hub/models--" + model.replacingOccurrences(of: "/", with: "--") + "/snapshots")
+        let snaps = LocalBridge.snapshotsDirectory(model)
         for s in (try? FileManager.default.contentsOfDirectory(at: snaps, includingPropertiesForKeys: nil)) ?? [] {
             guard let d = try? Data(contentsOf: s.appendingPathComponent("config.json")),
                   let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
@@ -98,8 +97,26 @@ enum LocalCompact {
     private static let fake: Bool = CommandLine.arguments.contains("--state-dir") && CommandLine.arguments.contains("--local-compact-fake")
 
     /// 請 Claude 整理摘要。done(摘要, 失敗原因)，在主執行緒回呼
+    /// 真的送給 claude 的內容：render 之後一律先遮金鑰（07-32）；單元測試直接驗這個
+    static func outgoingInput(_ messages: [[String: Any]], model: String) -> String {
+        KeyScan.redact(render(messages, model: model))
+    }
+
+    /// 設定裡選的壓縮模型（haiku／sonnet；off 回 nil＝不送出去）
+    static func claudeModel(_ pref: String) -> String? {
+        switch pref {
+        case "off": return nil
+        case "sonnet": return "sonnet"
+        default: return "haiku"
+        }
+    }
+
     static func summarize(_ messages: [[String: Any]], model: String, done: @escaping (String?, String?) -> Void) {
-        let input = render(messages, model: model)
+        guard let claudeModel = claudeModel(Prefs.shared.localCompactModel) else {
+            DispatchQueue.main.async { done(nil, L("設定裡選了「不送出去」，這次不壓縮")) }
+            return
+        }
+        let input = outgoingInput(messages, model: model)
         if CommandLine.arguments.contains("--state-dir") && CommandLine.arguments.contains("--local-compact-fail") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { done(nil, "（測試）假裝 claude 失敗") }
             return
@@ -111,7 +128,7 @@ enum LocalCompact {
         DispatchQueue.global(qos: .userInitiated).async {
             let q = { (s: String) in "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
             // 不開工具、不留紀錄（--no-session-persistence：~/.claude/projects 不會多一份）、在暫存資料夾跑（不讀專案的 CLAUDE.md）
-            let args = ["-p", "--model", "haiku", "--tools", "", "--no-session-persistence", "--output-format", "text", "--system-prompt", instructions]
+            let args = ["-p", "--model", claudeModel, "--tools", "", "--no-session-persistence", "--output-format", "text", "--system-prompt", instructions]
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/zsh")
             p.arguments = ["-l", "-c", "exec claude " + args.map(q).joined(separator: " ")]
@@ -119,40 +136,17 @@ enum LocalCompact {
             var env: [String: String] = [:]
             for kv in Workspace.environment() { if let i = kv.firstIndex(of: "=") { env[String(kv[..<i])] = String(kv[kv.index(after: i)...]) } }
             p.environment = env
-            let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
-            p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = errPipe
-            var out = Data(), err = Data()
-            let lock = NSLock()
-            outPipe.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; lock.lock(); out.append(d); lock.unlock() }
-            errPipe.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; lock.lock(); err.append(d); lock.unlock() }
-            do { try p.run() } catch {
-                DispatchQueue.main.async { done(nil, L("開不了 claude：\(error.localizedDescription)")) }
+            guard let r = BoundedProcess.run(p, input: Data(input.utf8), timeout: timeout) else {
+                DispatchQueue.main.async { done(nil, L("開不了 claude")) }
                 return
             }
-            // 逾時就停掉：要在寫 stdin 之前先排好——claude 要是不讀 stdin，輸入又比管子大（最多約 30 萬字），下面的寫入會卡住，
-            // 逾時器排在寫入之後的話永遠排不到。停掉之後寫入會收到錯誤（SIGPIPE 已忽略），就放掉
-            let killer = DispatchWorkItem {
-                guard p.isRunning else { return }
-                p.terminate()
-                DispatchQueue.global().asyncAfter(deadline: .now() + 3) { if p.isRunning { kill(p.processIdentifier, SIGKILL) } }      // 擋掉 SIGTERM 的話 waitUntilExit 會永遠等
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-            try? inPipe.fileHandleForWriting.write(contentsOf: Data(input.utf8))
-            try? inPipe.fileHandleForWriting.close()
-            p.waitUntilExit()
-            killer.cancel()
-            outPipe.fileHandleForReading.readabilityHandler = nil
-            errPipe.fileHandleForReading.readabilityHandler = nil
-            lock.lock()
-            out.append(outPipe.fileHandleForReading.readDataToEndOfFile())
-            let text = String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            let e = String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            lock.unlock()
-            let ok = p.terminationReason == .exit && p.terminationStatus == 0 && !text.isEmpty
+            let text = String(decoding: r.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            let e = String(decoding: r.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            let ok = !r.timedOut && r.reason == .exit && r.status == 0 && !text.isEmpty
             DispatchQueue.main.async {
                 if ok { done(text, nil) }
-                else if p.terminationReason == .uncaughtSignal { done(nil, L("Claude 整理太久（超過 \(Int(timeout)) 秒）")) }
-                else { done(nil, L("Claude 沒整理成功（代碼 \(p.terminationStatus)）") + (e.isEmpty ? "" : L("：") + String(e.prefix(200)))) }
+                else if r.timedOut || r.reason == .uncaughtSignal { done(nil, L("Claude 整理太久（超過 \(Int(timeout)) 秒）")) }
+                else { done(nil, L("Claude 沒整理成功（代碼 \(r.status)）") + (e.isEmpty ? "" : L("：") + String(e.prefix(200)))) }
             }
         }
     }

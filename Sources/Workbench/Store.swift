@@ -15,6 +15,14 @@ struct Project: Codable, Identifiable, Hashable {
     var groupID: UUID? = nil
 }
 
+/// `codenv-todo send` 派工的一則訊息；收到該訊息回送後，等同一輪 result 才通知派工者。
+struct CommanderDispatch: Codable, Hashable {
+    var messageID: String
+    var assignerID: UUID
+    var sequence: Int
+    var started = false
+}
+
 struct Conversation: Codable, Identifiable, Hashable {
     var id = UUID()
     var projectID: UUID
@@ -37,6 +45,9 @@ struct Conversation: Codable, Identifiable, Hashable {
     var effort: String? = nil
     /// 權限模式（⇧ Tab 換的）；nil＝照設定頁
     var permissionMode: String? = nil
+    /// 總指揮派工用的獨立 Git 工作目錄；左欄仍歸原專案。既有 Claude 對話不會被搬到 worktree。
+    var worktreePath: String? = nil
+    var worktreeBranch: String? = nil
     /// 這段的 Claude 跑在 nono 沙盒裡（右鍵「在沙盒裡跑」；NonoSandbox.swift）。nil／false＝一般
     var sandbox: Bool? = nil
     /// 自己指定的組（沒指定就跟著資料夾的預設組）
@@ -45,6 +56,7 @@ struct Conversation: Codable, Identifiable, Hashable {
     var order: Double? = nil
     /// 右鍵「封存」的：true＝自己封存（打開也留在封存）；nil＝照一個禮拜沒碰的規則
     var manualArchive: Bool? = nil
+    var archiveReadmeAt: Date? = nil
     /// 側欄「新對話」（⌘ N）開的草稿：只列在「最近項目」，沒聊就自動刪（Drafts.swift）；nil＝一般對話
     var draft: Bool? = nil
     /// 瀏覽器格子（BrowserPane.swift）：目前的網址；nil＝聊天／終端機
@@ -64,6 +76,12 @@ struct Conversation: Codable, Identifiable, Hashable {
     var topic: String? = nil
     /// 說明是總指揮（codenv-todo topic／new --topic）寫的；使用者在 App 裡改過就清掉。總指揮只能改這種說明或空的說明（除非右鍵勾了「讓總指揮改名」）
     var topicByCommander: Bool? = nil
+    /// 尚未完成的總指揮派工（只存非 --wait 的訊息）；舊 state 沒有此欄時為空。
+    var commanderDispatches: [CommanderDispatch]? = nil
+    /// 每個聊天室單獨遞增，讓完成通知可以對回派工序號。
+    var commanderDispatchSequence: Int? = nil
+    /// 休眠／闔蓋主動中斷時標記尚未做完的時間；舊 state 沒有此欄時為 nil（nil 不寫出）。
+    var interruptedAt: Date? = nil
 }
 
 extension Conversation {
@@ -81,12 +99,29 @@ extension Conversation {
 }
 
 final class Store: ObservableObject {
+    static let hydrogenModelMigrationDoneKey = "agyHydrogenModelMigration.1"
+
     @Published var projects: [Project] = []
+    /// 總指揮 Git 分頁的額外 repo 路徑（跟隨 state.json 保存）
+    @Published var relatedGitRepos: [String] = []
     @Published var conversations: [Conversation] = []
     /// 「選取整個 Window」（點上方 Window 分頁、或 ⌘ 數字之後，當成框選目前 Window 的全部格子；此時 F2 改的是 Window 名字）。
     /// 點任一格、換紫框、打字就離開；不存檔
     @Published var windowSelected = false
-    @Published var selected: UUID?          // 目前打開的對話
+    private var readyForSelectionClear = false
+    private var selectionClearSeq = 0
+    @Published var selected: UUID? {        // 目前打開的對話
+        didSet {
+            guard readyForSelectionClear, selected != oldValue else { return }
+            selectionClearSeq &+= 1
+            let seq = selectionClearSeq
+            guard let id = selected else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self, self.selectionClearSeq == seq, self.selected == id, NSApp?.isActive == true else { return }
+                self.clearInterrupted(id)
+            }
+        }
+    }
     @Published var selectedProject: UUID?   // 「新對話」要開在哪個專案
     /// 每段對話現在的狀態（側欄燈號用，不存檔）：工作中、等你；做完但還沒看的放 unread
     @Published var status: [UUID: ChatStatus] = [:] {
@@ -94,6 +129,9 @@ final class Store: ObservableObject {
             for id in Set(status.keys).union(oldValue.keys) {
                 let now = status[id] ?? .idle, was = oldValue[id] ?? .idle
                 if now == .idle { busySince[id] = nil } else if was == .idle { busySince[id] = Date() }
+                if now == .idle && was != .idle {
+                    DispatchQueue.main.async { [weak self] in self?.refreshActivity() }
+                }
             }
         }
     }
@@ -117,6 +155,8 @@ final class Store: ObservableObject {
     @Published var unread: Set<UUID> = []
     /// 每段對話最後一次有新內容的時間（讀紀錄檔的修改時間；不存檔，啟動和切回 App 時重讀）
     @Published var lastActivity: [UUID: Date] = [:]
+    /// 本次啟動當下就已封存的聊天室（規格 07-6：封存「當下」才寫 README，啟動時的舊封存不補寫）
+    var archivedAtLaunch: Set<UUID>? = nil
     /// 版面：Session → Window → Pane（Layout.swift）
     @Published var sessions: [SessionLayout] = []
     /// 側欄最上層的分組（A 組、B 組…）；空的就照舊只列資料夾
@@ -178,6 +218,7 @@ final class Store: ObservableObject {
 
     private struct State: Codable {
         var projects: [Project]
+        var relatedGitRepos: [String]? = nil
         var conversations: [Conversation]
         var selected: UUID?
         var selectedProject: UUID?
@@ -190,28 +231,68 @@ final class Store: ObservableObject {
     }
     struct ClosedWindow: Codable { var session: UUID; var index: Int; var window: WindowLayout; var placeholder: UUID? }
 
+    /// 僅主檔為空檔或不存在（非「非空但損壞」），且備份有不可恢復資料時才走空／缺主檔保護分支；
+    /// 兩檔皆非空且損壞時交由後續損壞主檔分支統一另存與記日誌，避免先寫一筆「空檔或不存在」日誌。
+    static func shouldProtectEmptyOrMissingPrimary(raw: Data?, primaryMissing: Bool, backupHasUnrecoverableData: Bool) -> Bool {
+        (raw?.isEmpty ?? primaryMissing) && backupHasUnrecoverableData
+    }
+
     init(directory: URL? = nil) {
         let dir = directory ?? Edition.supportDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         url = dir.appendingPathComponent("state.json")
+        relatedGitRepos = Self.defaultRelatedGitRepos
         var raw = try? Data(contentsOf: url)
-        // 空檔（0 位元組）或讀不懂：有能讀的 state.json.bak 就用它還原（壞掉的原檔照下面的規則另存一份）
         let bakURL = dir.appendingPathComponent("state.json.bak")
-        // 整個檔被刪掉（不存在）但有備份：也用備份（Flash 11/6：不然開成空工作台，一小時後備份輪替會把好的備份蓋成空的）
-        if raw.map({ $0.isEmpty || (try? JSONDecoder().decode(State.self, from: $0)) == nil }) ?? !FileManager.default.fileExists(atPath: url.path),
-           let b = try? Data(contentsOf: bakURL), (try? JSONDecoder().decode(State.self, from: b)) != nil {
+        let primaryMissing = !FileManager.default.fileExists(atPath: url.path)
+        let primaryEmptyOrUnreadable = raw.map { $0.isEmpty || (try? JSONDecoder().decode(State.self, from: $0)) == nil } ?? primaryMissing
+        let backupExists = FileManager.default.fileExists(atPath: bakURL.path)
+        let backupData = try? Data(contentsOf: bakURL)
+        let backupState = backupData.flatMap { try? JSONDecoder().decode(State.self, from: $0) }
+        let backupHasUnrecoverableData: Bool
+        if !backupExists {
+            backupHasUnrecoverableData = false
+        } else if let backupData {
+            backupHasUnrecoverableData = !backupData.isEmpty && backupState == nil
+        } else {
+            let size = (try? FileManager.default.attributesOfItem(atPath: bakURL.path))?[.size] as? NSNumber
+            // 屬性也讀不到時，不把「不知道是否有內容」當成空備份。
+            backupHasUnrecoverableData = size?.intValue != 0
+        }
+        // 空檔或遺失的主檔有可解的備份才還原。另存損壞主檔失敗時仍可載入備份供畫面讀取，但整次啟動禁止寫檔。
+        if primaryEmptyOrUnreadable, let b = backupData, !b.isEmpty, backupState != nil {
             if let bad = raw, !bad.isEmpty {
                 let f = DateFormatter(); f.dateFormat = "MMdd-HHmmss"
-                try? bad.write(to: dir.appendingPathComponent("state.json.讀不到-\(f.string(from: Date()))"))
+                let asideURL = dir.appendingPathComponent("state.json.讀不到-\(f.string(from: Date()))")
+                do {
+                    try bad.write(to: asideURL)
+                } catch {
+                    protectOriginal = true
+                    loadFailed = true
+                    startupProblem = L("state.json 已損壞，原檔無法另存（\(error.localizedDescription)）。畫面會暫用 state.json.bak 載入，但本次不會存檔；原檔仍保留在原位置，請先手動複製保存後再修復。")
+                    EventLog.log("檔案", "state.json 損壞且另存副本失敗；以 state.json.bak 暫時載入並保護原檔")
+                }
             }
             raw = b
             let when = ((try? FileManager.default.attributesOfItem(atPath: bakURL.path))?[.modificationDate] as? Date).map { DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .short) } ?? "?"
-            startupTitle = L("設定檔已用備份還原")
-            startupProblem = L("設定檔 state.json 是空的或壞掉了，已經用備份（\(when)）還原。之後的改動照常存檔。")
-            EventLog.log("檔案", "state.json 空檔或讀不懂，用 state.json.bak（\(when)）還原")
+            if protectOriginal {
+                startupTitle = nil
+                EventLog.log("檔案", "state.json 備份已載入記憶體，但原檔另存失敗，本次不存檔")
+            } else {
+                startupTitle = L("設定檔已用備份還原")
+                startupProblem = L("設定檔 state.json 是空的或壞掉了，已經用備份（\(when)）還原。之後的改動照常存檔。")
+                EventLog.log("檔案", "state.json 空檔或讀不懂，用 state.json.bak（\(when)）還原")
+            }
+        } else if Self.shouldProtectEmptyOrMissingPrimary(raw: raw, primaryMissing: primaryMissing, backupHasUnrecoverableData: backupHasUnrecoverableData) {
+            // 主檔是空檔或不存在、備份卻非空且讀不懂／讀不到：不能讓空狀態存回主檔，再於下一次輪替蓋掉唯一備份。
+            protectOriginal = true
+            loadFailed = true
+            startupProblem = L("state.json 是空檔或不存在，但 state.json.bak 非空且讀不懂或讀不到。為了保留備份，這次執行不會存檔；請先手動複製保存備份再修復。")
+            EventLog.log("檔案", "state.json 空檔或不存在，state.json.bak 非空但讀不懂／讀不到，本次不存檔以保護備份")
         }
         if let data = raw, let s = try? JSONDecoder().decode(State.self, from: data) {
             projects = s.projects
+            relatedGitRepos = s.relatedGitRepos ?? Self.defaultRelatedGitRepos
             conversations = s.conversations
             selected = s.selected
             selectedProject = s.selectedProject
@@ -252,6 +333,19 @@ final class Store: ObservableObject {
                 EventLog.log("檔案", "state.json 存在但讀不出來，本次不存檔以保護原檔")
             }
         }
+        let shouldMigrateHydrogenModels = !appDefaults.bool(forKey: Self.hydrogenModelMigrationDoneKey) && !loadFailed && !protectOriginal
+        var migratedConversationModels = false
+        if shouldMigrateHydrogenModels {
+            if let model = Prefs.shared.defaultModel, let migrated = AgyBridge.hydrogenModel(forLegacy: model) {
+                Prefs.shared.defaultModel = migrated
+            }
+            for index in conversations.indices {
+                guard let model = conversations[index].model,
+                      let migrated = AgyBridge.hydrogenModel(forLegacy: model) else { continue }
+                conversations[index].model = migrated
+                migratedConversationModels = true
+            }
+        }
         ensureLayout()
         refreshActivity()
         // 有變動就（稍等一下合併成一次）存檔
@@ -262,8 +356,15 @@ final class Store: ObservableObject {
         }.store(in: &bag)
         migrateCommandersIfNeeded()
         migrateCommanderKinds()
+        if shouldMigrateHydrogenModels {
+            // 狀態檔寫入成功後才標記完成；失敗或受保護時，下次啟動仍會再遷移。
+            if !migratedConversationModels || saveNow() {
+                appDefaults.set(true, forKey: Self.hydrogenModelMigrationDoneKey)
+            }
+        }
         // 用備份還原的：馬上寫回 state.json，不要讓硬碟上一直是壞的那份
         if startupTitle != nil { scheduleSave() }
+        readyForSelectionClear = true
     }
 
     func scheduleSave() {
@@ -275,8 +376,19 @@ final class Store: ObservableObject {
 
     /// 回傳寫成功沒有（要「先確定存好才做下一步」的呼叫端看這個）
     @discardableResult
+    /// 把檔案內容真的寫到磁碟（F_FULLFSYNC，不支援時退回 fsync）；失敗不影響流程
+    static func fsyncFile(_ path: String) {
+        let fd = Darwin.open(path, O_RDONLY)
+        guard fd >= 0 else { return }
+        if fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }
+        close(fd)
+    }
+
+    private(set) var probeSaveCount = 0
+
     func saveNow() -> Bool {
-        let s = State(projects: projects, conversations: conversations, selected: selected, selectedProject: selectedProject,
+        if CommandLine.arguments.contains("--state-dir") { probeSaveCount += 1 }
+        let s = State(projects: projects, relatedGitRepos: relatedGitRepos, conversations: conversations, selected: selected, selectedProject: selectedProject,
                       sessions: sessions, currentSession: currentSession, groups: groups, browserZoom: browserZoom,
                       closedWindows: Store.closed.compactMap { if case .window(let s, let i, let w, let p) = $0 { return ClosedWindow(session: s, index: i, window: w, placeholder: p) } else { return nil } })
         guard !protectOriginal else {
@@ -307,6 +419,7 @@ final class Store: ObservableObject {
         let tmp = url.appendingPathExtension("tmp-\(getpid())")
         do {
             try data.write(to: tmp)
+            Store.fsyncFile(tmp.path)      // 改名前先把暫存檔落盤，當機時不會留下改名成功但內容是空的檔
             if FileManager.default.fileExists(atPath: url.path) { _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp) }
             else { try FileManager.default.moveItem(at: tmp, to: url) }      // 第一次存、或檔案被刪了：沒有東西可以替換，直接放進去
             if saveFailures > 0 { EventLog.log("檔案", "state.json 存檔恢復（之前連續失敗 \(saveFailures) 次）") }
@@ -333,6 +446,26 @@ final class Store: ObservableObject {
 
     // MARK: 專案
 
+    static var defaultRelatedGitRepos: [String] {
+        let projectsDirectory = "claude-" + "projects"
+        return [URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(projectsDirectory, isDirectory: true)
+            .appendingPathComponent("ai-workbench").standardizedFileURL.path]
+    }
+
+    func addRelatedGitRepo(path: String) {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard !relatedGitRepos.contains(where: { URL(fileURLWithPath: $0).standardizedFileURL.path == normalized }) else { return }
+        relatedGitRepos.append(normalized)
+        scheduleSave()
+    }
+
+    func removeRelatedGitRepo(path: String) {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard relatedGitRepos.contains(where: { URL(fileURLWithPath: $0).standardizedFileURL.path == normalized }) else { return }
+        relatedGitRepos.removeAll { URL(fileURLWithPath: $0).standardizedFileURL.path == normalized }
+        scheduleSave()
+    }
+
     @discardableResult
     func addProject(path: String) -> Project {
         if let p = projects.first(where: { $0.path == path }) { selectedProject = p.id; return p }
@@ -355,6 +488,12 @@ final class Store: ObservableObject {
     }
 
     func project(_ id: UUID) -> Project? { projects.first { $0.id == id } }
+
+    /// 聊天引擎實際使用的工作目錄；worktree 聊室仍保留原 projectID 與左欄歸屬。
+    func workingDirectory(for conversation: Conversation) -> String {
+        if let path = conversation.worktreePath?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty { return path }
+        return project(conversation.projectID)?.path ?? NSHomeDirectory()
+    }
 
     // MARK: 對話
 
@@ -400,6 +539,7 @@ final class Store: ObservableObject {
     /// 已經擺出來的照樣跳到它那格。⌥ 點是八宮格（RadialMenu 在事件最前面就吃掉了），不會進到這裡
     func open(_ id: UUID, replaceFocused: Bool? = nil) {
         guard let c = conversation(id), Prefs.shared.webFeaturesEnabled || !c.isBrowser else { return }
+        clearInterrupted(id)
         routeUnplacedToCommander(id)   // 總指揮模式：還沒擺出來的聊天室先回到它所屬的總指揮 Session
         let shift = replaceFocused ?? (NSApp.currentEvent.map { $0.modifierFlags.intersection([.command, .control, .option, .shift]) == .shift } ?? false)
         if shift, locate(id) == nil { show(id, replaceFocused: true); return }
@@ -447,6 +587,20 @@ final class Store: ObservableObject {
 
     func conversation(_ id: UUID) -> Conversation? { conversations.first { $0.id == id } }
 
+    func markInterrupted(_ id: UUID, at date: Date = Date()) {
+        guard let i = conversations.firstIndex(where: { $0.id == id }) else { return }
+        conversations[i].interruptedAt = date
+        saveWork?.cancel()
+        _ = saveNow()
+    }
+
+    func clearInterrupted(_ id: UUID) {
+        guard let i = conversations.firstIndex(where: { $0.id == id }), conversations[i].interruptedAt != nil else { return }
+        conversations[i].interruptedAt = nil
+        saveWork?.cancel()
+        _ = saveNow()
+    }
+
     // MARK: Claude Code 的對話紀錄
 
     /// Claude Code 把每段對話存在 ~/.claude/projects/<資料夾路徑，非英數字換成 -> /<編號>.jsonl
@@ -463,14 +617,18 @@ final class Store: ObservableObject {
 /// 設定類小檔讀不懂（壞了或新版格式）時，原檔另存一份「<檔名>.讀不到-MMdd-HHmmss」再照空的開起來：
 /// 不然下次存檔會把原檔蓋掉。空檔不算（沒東西可保護）。回傳另存成功沒有（沒有原檔可存＝true）
 enum UnreadableFile {
-    @discardableResult
     static func setAside(_ url: URL, data: Data) -> Bool {
         guard !data.isEmpty else { return true }
         let f = DateFormatter(); f.dateFormat = "MMdd-HHmmss"
         let bad = url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + ".讀不到-\(f.string(from: Date()))")
         let ok = (try? data.write(to: bad)) != nil
-        NSLog("%@ 讀不到，已另存成 %@", url.lastPathComponent, bad.lastPathComponent)
-        EventLog.log("檔案", "\(url.lastPathComponent) 無法讀取，已備份為 \(bad.lastPathComponent)")
+        if ok {
+            NSLog("%@ 讀不到，已另存成 %@", url.lastPathComponent, bad.lastPathComponent)
+            EventLog.log("檔案", "\(url.lastPathComponent) 無法讀取，已備份為 \(bad.lastPathComponent)")
+        } else {
+            NSLog("%@ 讀不到，另存副本失敗；原檔仍保留", url.lastPathComponent)
+            EventLog.log("檔案", "\(url.lastPathComponent) 無法讀取，另存副本失敗；原檔仍保留")
+        }
         return ok
     }
 }

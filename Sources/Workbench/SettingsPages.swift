@@ -20,7 +20,7 @@ struct ChatPrefsPage: View {
                 }
                 Picker(L("預設思考強度"), selection: Binding(get: { p.defaultEffort ?? "" }, set: { p.defaultEffort = $0.isEmpty ? nil : $0 })) {
                     Text(L("跟 Claude 的設定")).tag("")
-                    ForEach(Effort.order, id: \.self) { e in Text("\(Effort.name(e))（\(e)）").tag(e) }
+                    ForEach(Effort.order, id: \.self) { e in Text(Effort.name(e)).tag(e) }
                 }
                 Text(L("之後每段對話還是可以在輸入框右下角自己換。")).font(.caption).foregroundStyle(.secondary)
             }
@@ -42,7 +42,7 @@ struct ChatPrefsPage: View {
                 .pickerStyle(.radioGroup)
                 Text(L("ctrl+x ctrl+s 兩種都可以送出；⌃ C 停止（Esc 不會停止）；Claude 還在做的時候 ⌃ Enter 馬上插話（停下目前這一步，先讀你的訊息）。")).font(.caption).foregroundStyle(.secondary)
                 Toggle(L("回答完用灰字猜下一句（Tab 採用）"), isOn: $p.promptSuggestions)
-                Toggle(L("模型清單列出全部（關著只列 Opus／Sonnet／Haiku 5.5、Gemini 3.8 Flash 和全部本機模型）"), isOn: $p.allModels)
+                Toggle(L("模型清單列出全部（關著只列 Opus／Sonnet／Haiku 5.5、Gemini 4 Hydrogen 和全部本機模型）"), isOn: $p.allModels)
                 Toggle(L("讓 Claude 能操作 Chrome（Claude in Chrome，新開的對話生效）"), isOn: $p.claudeInChrome)
                 Toggle(L("讓 Claude 能發布網頁（Artifact，claude.ai/artifact 網址，新開的對話生效）"), isOn: $p.artifacts)
                 Toggle(L("記錄 Claude 的除錯紀錄（查 MCP 斷線等問題用；存在 ~/Library/Logs/codenv，3 天前的自動刪；新開的對話生效）"), isOn: $p.claudeDebugLog)
@@ -56,21 +56,44 @@ struct ChatPrefsPage: View {
                 }
                 Toggle(L("打開 App 時接回版面裡每一格的 Claude（不用先送訊息，其他聊天室就聯絡得到；每格約 400 MB 記憶體）"), isOn: $p.reconnectOnLaunch)
             }
+            Section(L("背景工作進度")) {
+                Toggle(L("用模型摘要背景工作進度（預設關閉）"), isOn: $p.runningProgressSummaryEnabled)
+                Text(L("目前只留介面開關，不會呼叫模型，背景進度仍只讀本機紀錄檔。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section(L("agy（Google Antigravity CLI）")) {
                 Toggle(L("使用 agy：Gemini 聊天室、灰字建議、用量查詢、看板 @agy 自動做事"), isOn: Binding(
                     get: { p.agyEnabled },
                     set: { on in if !on { p.agyEnabled = false } else if Prefs.confirmEnableAgy() { p.agyEnabled = true } }))
                 Text(L("呼叫官方 agy -p；Google 寫明個人方案不支援包進 App，風險自負。")).font(.caption).foregroundStyle(.secondary)
-                Toggle(L("agy 走 magpie 號池（本機 127.0.0.1:3425 的閘道；連不上時自動改用 agy 自己的登入）"), isOn: $p.agyMagpie)
-                Text(L("走號池時模型名稱換成 magpie/antigravity/…，思考強度由 magpie 決定（這裡的拉桿不會傳過去）；用量列改讀 magpie 的 Antigravity 帳號額度並平均顯示。完整用量頁仍直接問 agy。")).font(.caption).foregroundStyle(.secondary)
             }
             Section(L("協作看板")) {
                 Toggle(L("Claude 開的目標自動生效"), isOn: Binding(get: { board.autoApprove }, set: { board.setAutoApprove($0) }))
                 Text(L("打開時，Claude 用 codenv-todo 開的目標直接是「進行中」，不用你在看板上按「同意」。「使用者驗收」那一步還是只有你本人能勾；agy 的每日件數上限、退回三次就卡住、來回太多次的警告都照舊。這個設定 Claude 不能用指令改。")).font(.caption).foregroundStyle(.secondary)
+                Toggle(L("施工步驟自動交給阿公審查"), isOn: Binding(get: { board.autoReview }, set: { board.setAutoReview($0) }))
+                Text(L("開啟後，一般施工步驟標完成時若 Git 有變更，先由 gemini-4-argon-high 檢查 diff；通過才完成，退回會附原因送回施工方。決定、外部模型、出版與使用者驗收步驟不會自動審查；退回超過 3 次才停下交給你。會使用阿公額度，預設關閉。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section(L("總指揮")) {
+                Picker(L("總指揮開的聊天室預設權限"), selection: Binding(get: { p.commanderChatPermission ?? "default" }, set: { p.commanderChatPermission = $0 == "default" ? nil : $0 })) {
+                    Text(L("跟一般新聊天室一樣（預設）")).tag("default")
+                    Text(L("自動（Codex、Claude；Copilot、agy 聊天室會顯示成「全都不問」，並真的全部放行）")).tag("auto")
+                    Text(L("全部不問")).tag("bypassPermissions")
+                }
+                Text(L("選了之後，總指揮用 codenv-todo new／handoff 開的聊天室一開始就是這個模式，等於把放寬權限交給總指揮。總指揮聊天室和你自己開的聊天室不受影響；已存在的聊天室不會改。"))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section(L("額度衝刺")) {
                 Toggle(L("衝刺聊天室每輪結束時檢查有沒有停在一半"), isOn: $p.sprintCheck)
-                Text(L("只在額度衝刺執行聊天室生效；Qwen3.6 正在執行時優先使用，否則使用 agy Gemini Flash low。關閉時不判斷、不提醒。")).font(.caption).foregroundStyle(.secondary)
+                Text(L("只在額度衝刺執行聊天室生效；Bolt-E4B 正在執行時優先使用，快取沒有 Bolt-E4B 時改用第一個可用的本機模型，否則使用 agy Gemini Hydrogen low。關閉時不判斷、不提醒。")).font(.caption).foregroundStyle(.secondary)
+            }
+            Section(L("總指揮監督")) {
+                Toggle(L("施工聊天室完成或出錯時，通知派工者"), isOn: $p.commanderCompletionNotices)
+                Text(L("只追蹤 codenv-todo send（不含 --wait）派出的工作；權限詢問期間不通知，等該輪收到結果後才通知一次。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Stepper(L("卡住處理階段間隔 \(p.commanderStuckMinutes) 分鐘"), value: $p.commanderStuckMinutes, in: 1...180)
+                Text(L("預設每 5／10／15 分鐘處理一階段：先輕推，再停止並重送一次，最後通知派工者；有活躍外部程序時暫停計時。等你回答時不會中斷，1 分鐘後提醒一次。"))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if Edition.updateRepo != nil {
                 Section(L("更新與回報")) {
@@ -105,14 +128,8 @@ struct ChatPrefsPage: View {
                 }
             }
             Section(L("闔蓋")) {
-                Toggle(L("闔上螢幕時，讓正在做事的聊天室做完這一段"), isOn: $p.lidKeepWorking)
-                Toggle(L("接外接螢幕闔蓋時，做完且 10 分鐘沒操作就關風扇並睡眠"), isOn: $p.lidExternalIdleSleep)
-                    .padding(.leading, 20)
-                    .disabled(!p.lidKeepWorking)
-                Toggle(L("打開螢幕時通知它們繼續"), isOn: $p.lidResumeNotifyEnabled)
-                    .padding(.leading, 20)
-                    .disabled(!p.lidKeepWorking)
-                Text(L("有聊天室正在做事時 Mac 不會睡（要 Battery 的小幫手 v6，電量低於 30% 且沒插電時除外）；闔上螢幕後，聊天室做完目前這一段就停。接外接螢幕時，預設等工作完成且 HID 鍵盤／滑鼠閒置 10 分鐘，請 Battery 小幫手交還風扇再主動睡眠；此功能需 Battery 小幫手 v9。全部停下、撐滿 1 小時、電量低於 30% 或溫度太高就恢復正常睡眠。紀錄在 ~/Library/Logs/codenv-lid.log。"))
+                Toggle(L("闔蓋時中斷聊天室（保持醒著，30 分鐘後睡眠）"), isOn: $p.lidInterruptOnClose)
+                Text(LidIndicatorSettingsText.explanation)
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L("瀏覽器格子")) {
@@ -143,10 +160,23 @@ struct ChatPrefsPage: View {
                 }
                 Text(L("對話長到這裡，Claude 自己把前面整理成摘要。codenv 裡的 Claude 聊天室以這裡為準（蓋過 ~/.claude/settings.json 的 autoCompactWindow；iTerm 裡直接開的 claude 不受影響）。實際取這個值和模型上限的較小值；Gemini、Codex、Copilot 由它們自己的程式決定，這裡管不到。新開的對話生效。"))
                     .font(.caption).foregroundStyle(.secondary)
+                Toggle(L("壓縮後自動補回上下文"), isOn: $p.compactGuard)
+                Text(L("壓縮前把最近 5 則你的原話、還在跑的背景任務、未完成清單、最近工具動作與改過的檔存成快照，壓縮後自動補回上下文（避免壓縮摘要漏掉原話與進度；只用本機腳本、不花模型額度，新開的對話生效）。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle(L("子聊天室不能直接改記憶"), isOn: $p.childMemoryWriteGuard)
+                Text(L("子聊天室的 Claude 會禁止直接改寫共用 memory，並把要記的事寫到 memory-drafts；總指揮聊天室不受限制。已辨識的 Bash 寫檔也會套用路徑限制，任意 Python／Node 子程序仍可能繞過；新開的 Claude 對話生效。"))
+                    .font(.caption).foregroundStyle(.secondary)
                 Stepper(value: $p.localCompactTokens, in: 20_000...1_000_000, step: 20_000) {
                     Text(L("本機模型：\(p.localCompactTokens / 1000)K token"))
                 }
-                Text(L("本機模型的對話長到這裡，下一則送出前先請 Claude（Haiku）把前面整理成摘要，本機模型接著用摘要聊（會用到一點 Claude 額度）。實際取這個值和模型上限的 80% 的較小值，多數本機模型上限是 128K～262K。"))
+                Text(L("本機模型的對話長到這裡，下一則送出前先請 Claude 把前面整理成摘要，本機模型接著用摘要聊（會用到一點 Claude 額度）。實際取這個值和模型上限的 80% 的較小值，多數本機模型上限是 128K～262K。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Picker(L("壓縮用的模型"), selection: $p.localCompactModel) {
+                    Text(L("Claude Haiku（預設，較省額度）")).tag("haiku")
+                    Text(L("Claude Sonnet（摘要較細）")).tag("sonnet")
+                    Text(L("不送出去（資料不離開本機，不壓縮）")).tag("off")
+                }
+                Text(L("選 Claude 時，那段本機對話會經你登入的 claude 送到 Anthropic 雲端整理（送出前會先遮掉辨識得出來的金鑰，但一般文字、程式碼、檔案內容都會送出）。對話涉及不想離開本機的內容，請選「不送出去」；這樣超過門檻時不會壓縮，對話太長時請自己開新對話或交接。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L("程式碼學習專區")) {
@@ -160,6 +190,14 @@ struct ChatPrefsPage: View {
                 Stepper(value: $p.archiveDays, in: 1...60) { Text(L("幾天沒碰收進封存：\(p.archiveDays) 天")) }
                 Stepper(value: $p.historyLimit, in: 100...2000, step: 100) { Text(L("打開時先載入：\(p.historyLimit) 則（往上捲再載入更早的）")) }
                 Toggle(L("自動加入正在 tmux／iTerm 裡進行的對話（每 30 秒檢查）"), isOn: $p.autoImportLive)
+            }
+            Section(L("封存摘要")) {
+                Toggle(L("封存摘要依聊天室引擎選模型"), isOn: $p.archiveSummaryByEngine)
+                Text(L("Codex 聊天室用 Codex 免費群組，agy 聊天室用 Hydrogen；Claude 與其他引擎沿用本機模型優先、再依下方設定使用 Hydrogen。關閉後全部回到原本的本機模型優先流程。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle(L("封存摘要也可以用 Hydrogen（agy）"), isOn: $p.archiveSummaryUseAgy)
+                Text(L("預設開啟：本機模型不可用或忙碌時，改用 Hydrogen（agy）整理，會用到聊天額度池"))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section(L("每日交接")) {
                 Toggle(L("定期自動交接有新對話的聊天室"), isOn: $p.dailyHandoffEnabled)
@@ -377,6 +415,7 @@ struct InterfacePrefs: View {
                 Button(L("預設")) { scale.reset() }
             }
             Picker(L("對話文字"), selection: $p.chatFont) {
+                Text(L("跟介面字型")).tag("interface")
                 Text(L("跟終端機一樣（字型、粗細、大小）")).tag("terminal")
                 Text(L("系統字型")).tag("system")
             }
@@ -397,4 +436,9 @@ struct InterfacePrefs: View {
             Text(L("對話內容、輸入框、側欄、用量欄都跟著這個大小（⌘ = 放大、⌘ - 縮小、⌘ 0 回預設）。下面是終端機（用終端機打開的對話）的字。")).font(.caption).foregroundStyle(.secondary)
         }
     }
+}
+
+/// 設定頁與隔離探針使用同一段說明。
+enum LidIndicatorSettingsText {
+    static let explanation = L("闔上螢幕時，結束 Claude、Codex、Copilot、agy 聊天室的模型程序，並歸還風扇控制、讓 Mac 保持醒著最多 30 分鐘（需要 Battery 小幫手；接外接螢幕也會中斷；本機模型、看板 agy-runs 與脫離的背景程序不會主動停止）。30 分鐘內開蓋且未曾睡眠，會自動送出繼續訊息並附帶排隊訊息（草稿中除外；總指揮成員改彙總一則給總指揮）；若期間偵測到已建立的 SSH／螢幕共享／遠端管理連線（即使連線閒置未操作也算），會暫停 30 分鐘計時，全部斷線後重新計時 30 分鐘。電量低於 20%（未插電）、過熱或逾時（遠端連線期間電量與過熱保護仍生效）會讓 Mac 睡眠，睡過後開蓋改送未完成通知。舊版「做完這一段」與外接閒置選項已移除並由本模式取代；關掉即交回系統預設闔蓋睡眠且不會預擋（關掉時不會有休眠後未完成燈號）。被中斷時沒送出的訊息會暫存在 codenv 的資料夾，送達後刪除。紀錄在 ~/Library/Logs/codenv-lid.log。")
 }

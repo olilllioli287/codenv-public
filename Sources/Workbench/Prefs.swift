@@ -15,6 +15,12 @@ final class Prefs: ObservableObject {
     @Published var defaultEffort: String? { didSet { d.set(defaultEffort, forKey: "defaultEffort") } }
     /// 權限模式（沒設過＝auto，跟使用者在終端機用的一樣；nil＝跟 Claude 的設定；default、acceptEdits、auto、plan）
     @Published var permissionMode: String? { didSet { d.set(permissionMode ?? "", forKey: "permissionMode") } }
+    /// 總指揮派工卡住處理各階段的間隔；階段為基準、2 倍、3 倍（分鐘）
+    @Published var commanderStuckMinutes: Int { didSet { d.set(commanderStuckMinutes, forKey: "commanderStuckMinutes") } }
+    /// 非 --wait 派工完成或出錯時主動通知派工者；預設開啟。
+    @Published var commanderCompletionNotices: Bool { didSet { d.set(commanderCompletionNotices, forKey: "commanderCompletionNotices") } }
+    /// codenv-todo 由總指揮建立的新聊天室權限；nil＝一般新聊天室
+    @Published var commanderChatPermission: String? { didSet { d.set(commanderChatPermission ?? "", forKey: "commanderChatPermission") } }
     /// true：Enter 送出、Shift+Enter 換行；false：Enter 換行、⌘ Enter 送出（使用者在 Claude Code 的習慣）
     @Published var sendWithEnter: Bool { didSet { d.set(sendWithEnter, forKey: "sendWithEnter") } }
     /// 回答完在輸入框用灰字猜你下一句（Tab 採用），跟 Claude Code 一樣
@@ -24,17 +30,35 @@ final class Prefs: ObservableObject {
     @Published var artifacts: Bool { didSet { d.set(artifacts, forKey: "artifacts") } }
     @Published var reconnectOnLaunch: Bool { didSet { d.set(reconnectOnLaunch, forKey: "reconnectOnLaunch") } }
     @Published var claudeDebugLog: Bool { didSet { d.set(claudeDebugLog, forKey: "claudeDebugLog") } }
+    /// 背景進度的模型摘要預留開關；摘要功能尚未接線，預設關閉。
+    @Published var runningProgressSummaryEnabled: Bool { didSet { d.set(runningProgressSummaryEnabled, forKey: "runningProgressSummaryEnabled") } }
     /// 雲端（Claude）自動壓縮的上下文門檻，token：啟動 claude 時帶 CLAUDE_CODE_AUTO_COMPACT_WINDOW（Claude Code 接受 10 萬～100 萬；實際取它和模型上限的較小值）
     @Published var cloudCompactTokens: Int { didSet { d.set(cloudCompactTokens, forKey: "cloudCompactTokens") } }
+    /// 壓縮後自動補回上下文（compact-guard.py）：壓縮前把最近原話、背景任務、未完成清單存成快照，壓縮後補回；預設開
+    @Published var compactGuard: Bool { didSet { d.set(compactGuard, forKey: "compactGuard") } }
+    /// 子聊天室禁止直接修改 Claude 共用記憶；總指揮聊天室除外，預設開
+    @Published var childMemoryWriteGuard: Bool { didSet { d.set(childMemoryWriteGuard, forKey: "childMemoryWriteGuard") } }
     /// 本機模型自動壓縮的門檻，token：超過就先請 Claude 把前面整理成摘要（LocalCompact.swift；實際取它和模型上限 × 0.8 的較小值）
     @Published var localCompactTokens: Int { didSet { d.set(localCompactTokens, forKey: "localCompactTokens") } }
-    /// 網頁外掛的總開關：只切換呈現與執行中的網頁，不改聊天室、掛件或版面資料。
-    /// 闔蓋時讓正在做事的聊天室做完這一段（LidKeeper.swift），預設開
-    @Published var lidKeepWorking: Bool { didSet { d.set(lidKeepWorking, forKey: "lidKeepWorking") } }
+    /// 本機模型壓縮要請誰整理：haiku（預設，維持原行為）／sonnet／off（不送出去，資料不離開本機；超過門檻也不壓縮）。
+    /// 不論選哪個，送出前都會先遮掉金鑰（KeyScan.redact）；選 haiku／sonnet 對話內容會經 claude 送到 Anthropic
+    @Published var localCompactModel: String { didSet { d.set(localCompactModel, forKey: "localCompactModel") } }
+    /// 闔蓋時中斷聊天室但保持醒著（30 分鐘後睡眠）；沒設定或由舊版「做完這一段」遷來時預設開。
+    @Published var lidInterruptOnClose: Bool {
+        didSet { d.set(lidInterruptOnClose, forKey: "lidInterruptOnClose") }
+    }
+    /// 舊「做完這一段」模式開關（00.07.11 起停用，永遠視為 false；保留屬性供既有參考／測試編譯相容）。
+    @Published var lidKeepWorking: Bool {
+        didSet {
+            if lidKeepWorking { lidKeepWorking = false }
+            d.set(false, forKey: "lidKeepWorking")
+        }
+    }
     /// 合蓋接實體外接螢幕時，工作完成且 HID 閒置 10 分鐘後交還風扇並主動睡眠
     @Published var lidExternalIdleSleep: Bool { didSet { d.set(lidExternalIdleSleep, forKey: "lidExternalIdleSleep") } }
     /// 闔蓋時收到停止指示的聊天室，開蓋後通知繼續；預設開
     @Published var lidResumeNotifyEnabled: Bool { didSet { d.set(lidResumeNotifyEnabled, forKey: "lidResumeNotifyEnabled") } }
+    /// 網頁外掛的總開關：只切換呈現與執行中的網頁，不改聊天室、掛件或版面資料。
     @Published var webFeaturesEnabled: Bool {
         didSet {
             d.set(webFeaturesEnabled, forKey: "webFeaturesEnabled")
@@ -53,6 +77,10 @@ final class Prefs: ObservableObject {
     @Published var geminiCmdEnter: Bool { didSet { d.set(geminiCmdEnter, forKey: "geminiCmdEnter"); BrowserPane.setGeminiKeys(geminiCmdEnter) } }
     /// 幾天沒碰收進封存
     @Published var archiveDays: Int { didSet { d.set(archiveDays, forKey: "archiveDays") } }
+    /// 封存摘要本機模型不可用或忙碌時是否改用 agy Hydrogen（使用聊天額度池）；預設開，關閉時只用本機模型
+    @Published var archiveSummaryUseAgy: Bool { didSet { d.set(archiveSummaryUseAgy, forKey: "archiveSummaryUseAgy") } }
+    /// 封存摘要依聊天室引擎選摘要模型；關閉時回到 07-6 的本機模型優先流程。
+    @Published var archiveSummaryByEngine: Bool { didSet { d.set(archiveSummaryByEngine, forKey: "archiveSummaryByEngine") } }
     /// 每日交接（DailyHandoff.swift）：開關、分界時間（時，本地）、一天最多幾件
     @Published var dailyHandoffEnabled: Bool { didSet { d.set(dailyHandoffEnabled, forKey: "dailyHandoffEnabled") } }
     /// 每日交接後用本機 E4B 產生只供看板審核的記憶／技能提議
@@ -71,11 +99,13 @@ final class Prefs: ObservableObject {
     /// 程式碼顏色的配色（CodeColors.schemes）和自訂的顏色
     @Published var codeScheme: String { didSet { d.set(codeScheme, forKey: "codeScheme") } }
     @Published var customCode: [String: String] { didSet { d.set(customCode, forKey: "customCode") } }
-    /// 對話文字的字型：terminal＝跟終端機（iTerm）一樣的字型、粗細、大小（預設）；system＝系統字型
+    /// 聊天內容字型：terminal／system 保留舊設定；interface 跟著介面字型。
     @Published var chatFont: String { didSet { d.set(chatFont, forKey: "chatFont") } }
+    /// 介面字型的 PostScript 名稱；空白或字型不存在時使用系統字型。
+    @Published var interfaceFont: String { didSet { d.set(interfaceFont, forKey: "interfaceFont") } }
     /// 自動加入正在 tmux／iTerm 裡進行的對話（跟匯入視窗裡的同一個開關）
     @Published var autoImportLive: Bool { didSet { d.set(autoImportLive, forKey: "autoImportLive") } }
-    /// 模型清單列出全部；關著（預設）只列常用的：Opus／Sonnet／Haiku 5.5 (cc)、Gemini 3.8 Flash、本機模型
+    /// 模型清單列出全部；關著（預設）只列常用的：Opus／Sonnet／Haiku 5.5 (cc)、Gemini 4 Hydrogen、本機模型
     @Published var allModels: Bool { didSet { d.set(allModels, forKey: "allModels") } }
     /// agy（Google Antigravity CLI）功能的總開關：Gemini 聊天室、灰字建議、用量、看板 @agy 自動做事都靠它。預設開（Edition.agyDefault）；公版第一次用前要先看過提醒（agyNoticeSeen）；
     /// 從關到開要先看警告（Prefs.confirmEnableAgy），所以設定頁的開關不直接改這個值
@@ -83,11 +113,63 @@ final class Prefs: ObservableObject {
     @Published var autoCheckUpdates: Bool { didSet { d.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
     /// 介面語言：system（跟系統：中文就繁中、其他英文）／zh／en；改了要重開才生效（I18n.swift 啟動時決定一次）
     @Published var language: String { didSet { d.set(language, forKey: "language") } }
-    /// agy 走 magpie 號池（預設開；閘道連不上時自動退回 agy 自己的登入）。看板的執行器看不到 UserDefaults，靠標記檔 agy-magpie-off
-    @Published var agyMagpie: Bool { didSet { d.set(agyMagpie, forKey: "agyMagpie"); Self.syncMagpieMarker(agyMagpie) } }
     @Published var agyEnabled: Bool { didSet { d.set(agyEnabled, forKey: "agyEnabled"); Self.syncAgyMarker(agyEnabled) } }
     /// 程式碼學習專區的預設版面（CodeLabView.Mode）：1＝右上程式碼右下結果、2＝F10 整塊換成執行畫面、3＝F10 跳出執行視窗、4＝不用 AI
     @Published var codeLabLayout: Int { didSet { d.set(codeLabLayout, forKey: "codeLabLayout") } }
+
+    /// 命令列覆蓋（-key YES）進 NSArgumentDomain 時一律是字串：Bool／Int 偏好要認得字串，考卷才能不寫共用網域。
+    private static func boolPref(_ d: UserDefaults, _ key: String) -> Bool? {
+        let v = d.object(forKey: key)
+        if let b = v as? Bool { return b }
+        if let t = (v as? String)?.lowercased() {
+            if ["yes", "true", "1"].contains(t) { return true }
+            if ["no", "false", "0"].contains(t) { return false }
+        }
+        return nil
+    }
+    private static func intPref(_ d: UserDefaults, _ key: String) -> Int? {
+        let v = d.object(forKey: key)
+        if let i = v as? Int { return i }
+        if let t = v as? String { return Int(t) }
+        return nil
+    }
+
+    enum LidModeSelection { case interrupt, keepWorking }
+
+    /// 00.07.11 相容包裝：已移除舊「做完這一段」模式與互斥切換；lidKeepWorking 一律寫回 false。
+    @discardableResult
+    static func applyLidModeSelection(_ selection: LidModeSelection, isOn: Bool,
+                                      currentInterrupt: Bool, currentKeepWorking: Bool,
+                                      defaults: UserDefaults) -> (interrupt: Bool, keepWorking: Bool) {
+        let interrupt: Bool
+        switch selection {
+        case .interrupt:
+            interrupt = isOn
+        case .keepWorking:
+            interrupt = currentInterrupt
+        }
+        defaults.set(interrupt, forKey: "lidInterruptOnClose")
+        defaults.set(false, forKey: "lidKeepWorking")
+        return (interrupt, false)
+    }
+
+    /// 00.07.11 遷移：lidKeepWorking 一律視為 false；未設定或從 lidKeepWorking=true 遷來者開啟 lidInterruptOnClose，明確設為 false 者維持 false。
+    static func initialLidModeValues(defaults d: UserDefaults) -> (interrupt: Bool, keepWorking: Bool) {
+        let requestedKeep = Self.boolPref(d, "lidKeepWorking") ?? false
+        let interruptWasExplicit = d.object(forKey: "lidInterruptOnClose") != nil
+        let requestedInterrupt = Self.boolPref(d, "lidInterruptOnClose")
+        let initialInterrupt: Bool
+        if requestedKeep {
+            initialInterrupt = true
+            d.set(true, forKey: "lidInterruptOnClose")
+            d.set(false, forKey: "lidKeepWorking")
+        } else if interruptWasExplicit {
+            initialInterrupt = requestedInterrupt ?? false
+        } else {
+            initialInterrupt = true
+        }
+        return (initialInterrupt, false)
+    }
 
     private init() {
         // 舊版用同一個鍵記 home／codelab；這些舊值視為尚未選過側欄模式
@@ -97,15 +179,25 @@ final class Prefs: ObservableObject {
         defaultModel = d.string(forKey: "defaultModel")
         defaultEffort = d.string(forKey: "defaultEffort")
         permissionMode = d.object(forKey: "permissionMode") == nil ? "auto" : d.string(forKey: "permissionMode").flatMap { $0.isEmpty ? nil : $0 }
+        commanderStuckMinutes = min(180, max(1, Self.intPref(d, "commanderStuckMinutes") ?? 5))
+        commanderCompletionNotices = Self.boolPref(d, "commanderCompletionNotices") ?? true
+        commanderChatPermission = d.string(forKey: "commanderChatPermission").flatMap { $0.isEmpty || $0 == "default" ? nil : $0 }
         sendWithEnter = d.bool(forKey: "sendWithEnter")
         promptSuggestions = d.object(forKey: "promptSuggestions") as? Bool ?? true
         claudeInChrome = d.object(forKey: "claudeInChrome") as? Bool ?? true
         artifacts = d.object(forKey: "artifacts") as? Bool ?? true
         reconnectOnLaunch = d.object(forKey: "reconnectOnLaunch") as? Bool ?? true
         claudeDebugLog = d.object(forKey: "claudeDebugLog") as? Bool ?? false
+        runningProgressSummaryEnabled = d.object(forKey: "runningProgressSummaryEnabled") as? Bool ?? false
         cloudCompactTokens = d.object(forKey: "cloudCompactTokens") as? Int ?? 640_000   // 定的預設
+        compactGuard = d.object(forKey: "compactGuard") as? Bool ?? true
+        childMemoryWriteGuard = d.object(forKey: "childMemoryWriteGuard") as? Bool ?? true
         localCompactTokens = d.object(forKey: "localCompactTokens") as? Int ?? 400_000
-        lidKeepWorking = d.object(forKey: "lidKeepWorking") as? Bool ?? true
+        let storedCompactModel = d.string(forKey: "localCompactModel")
+        localCompactModel = ["haiku", "sonnet", "off"].contains(storedCompactModel ?? "") ? storedCompactModel! : "haiku"
+        let initialLidModes = Self.initialLidModeValues(defaults: d)
+        lidKeepWorking = initialLidModes.keepWorking
+        lidInterruptOnClose = initialLidModes.interrupt
         lidExternalIdleSleep = d.object(forKey: "lidExternalIdleSleep") as? Bool ?? true
         lidResumeNotifyEnabled = d.object(forKey: "lidResumeNotifyEnabled") as? Bool ?? AppDefaults.lidResumeNotifyEnabled
         webFeaturesEnabled = d.bool(forKey: "webFeaturesEnabled")
@@ -114,6 +206,8 @@ final class Prefs: ObservableObject {
         geminiSkin = d.object(forKey: "geminiSkin") as? Bool ?? false
         notebookSkin = d.object(forKey: "notebookSkin") as? Bool ?? false
         archiveDays = d.object(forKey: "archiveDays") as? Int ?? 7
+        archiveSummaryUseAgy = Self.boolPref(d, "archiveSummaryUseAgy") ?? true
+        archiveSummaryByEngine = d.object(forKey: "archiveSummaryByEngine") as? Bool ?? true
         dailyHandoffEnabled = d.object(forKey: "dailyHandoffEnabled") as? Bool ?? true
         e4bDailyReviewEnabled = d.object(forKey: "e4bDailyReviewEnabled") as? Bool ?? AppDefaults.e4bDailyReviewEnabled
         dailyHandoffHour = min(23, max(0, d.object(forKey: "dailyHandoffHour") as? Int ?? 6))
@@ -128,21 +222,21 @@ final class Prefs: ObservableObject {
         codeLabLayout = d.object(forKey: "codeLabLayout") as? Int ?? 1
         language = d.string(forKey: "language") ?? "system"
         autoCheckUpdates = d.object(forKey: "autoCheckUpdates") as? Bool ?? true
-        let agy = d.object(forKey: "agyEnabled") as? Bool ?? Edition.agyDefault
+        let agy = Self.boolPref(d, "agyEnabled") ?? Edition.agyDefault
         agyEnabled = agy
-        let mp = d.object(forKey: "agyMagpie") as? Bool ?? true
-        agyMagpie = mp
-        Self.syncMagpieMarker(mp)
         Self.syncAgyMarker(agy)
-        chatFont = d.string(forKey: "chatFont") ?? "terminal"
+        chatFont = d.string(forKey: "chatFont") ?? "interface"
+        let storedInterfaceFont = d.string(forKey: "interfaceFont")
+        let initialInterfaceFont: String
+        if storedInterfaceFont == InterfaceFont.legacyDefaultPostScriptName {
+            initialInterfaceFont = InterfaceFont.defaultPostScriptName
+            d.set(initialInterfaceFont, forKey: "interfaceFont")
+        } else {
+            initialInterfaceFont = storedInterfaceFont ?? InterfaceFont.defaultPostScriptName
+        }
+        interfaceFont = initialInterfaceFont
         codeScheme = d.string(forKey: "codeScheme") ?? "claude"
         customCode = d.dictionary(forKey: "customCode") as? [String: String] ?? [:]
-    }
-
-    static func syncMagpieMarker(_ on: Bool) {
-        let url = CollabBoardModel.todoFile.deletingLastPathComponent().appendingPathComponent("agy-magpie-off")
-        if on { try? FileManager.default.removeItem(at: url) }
-        else { FileManager.default.createFile(atPath: url.path, contents: Data("agy 走 magpie 號池在 codenv 的設定裡是關著的\n".utf8)) }
     }
 
     /// 看板的背景執行器（scripts/codenv-todo，Python）看不到 UserDefaults：關著時在看板資料夾放一個 agy-disabled 檔，它看到就不叫 agy

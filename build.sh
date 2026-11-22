@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")"
 APP="${APP:-$HOME/Applications/codenv.app}"
-# 簽章用的憑證名字：環境變數 CODENV_SIGN_IDENTITY > 同資料夾的 .sign-identity 檔（私人版放自己的自簽憑證名字，公版匯出時不帶）> 臨時簽名（-）
+# 簽章用的憑證名字：環境變數 CODENV_SIGN_IDENTITY > 同資料夾的 .sign-identity 檔（私人版放 Apple Development 憑證名；有 Team ID，鑰匙圈的允許清單才能跨版本保留；公版匯出時不帶）> 臨時簽名（-）
 IDENTITY="${CODENV_SIGN_IDENTITY:-$(cat .sign-identity 2>/dev/null || echo -)}"
 # 指定的憑證不在這台電腦（別人的電腦）就用臨時簽名，一樣能跑
 # 自簽憑證不在系統信任清單裡：不能加 -v（只列受信任的），不然會一直退回臨時簽章，每次編譯完整磁碟取用權限都會掉
@@ -16,7 +16,8 @@ swift build -c release
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
 # App 記住建置它的原始碼目錄；打包／匯出流程可用空值避免留下建置機路徑。
-SOURCE_DIR="$(pwd -P)"
+# CODENV_SOURCE_DIR 有設（含空字串）就用它：release.sh 從 /tmp 暫存副本編譯時，傳正式原始碼路徑進來，避免記住會被刪掉的暫存路徑
+SOURCE_DIR="${CODENV_SOURCE_DIR-$(pwd -P)}"
 # plutil 把路徑當獨立參數：資料夾名稱有空白、引號也不會寫錯（PlistBuddy -c 會把空白當分隔）
 /usr/bin/plutil -replace CodenvSourceDir -string "$SOURCE_DIR" "$APP/Contents/Info.plist"
 # 先刪再放：正在跑的 App 還用著舊檔（不同的檔案），不會被改到一半而當掉，下次打開才換新版
@@ -38,7 +39,7 @@ rm -rf "$APP/Contents/Resources/pet"
 [ -d Resources/pet ] && rsync -a Resources/pet "$APP/Contents/Resources/"   # 公版沒有角色圖（桌寵框右半就不畫）
 # 命令列工具（聊天室的 Claude 靠 PATH 找到這份；~/.local/bin 有就用那邊的，見 CLITools.swift）
 rm -rf "$APP/Contents/Resources/bin"; mkdir -p "$APP/Contents/Resources/bin"
-for t in codenv-todo codenv-browser memory-check; do cp scripts/$t "$APP/Contents/Resources/bin/$t"; chmod +x "$APP/Contents/Resources/bin/$t"; done
+for t in codenv-todo codenv-browser memory-check compact-guard.py handoff-prep; do cp scripts/$t "$APP/Contents/Resources/bin/$t"; chmod +x "$APP/Contents/Resources/bin/$t"; done
 rm -rf "$APP/Contents/Resources/i18n"
 rsync -a Resources/i18n "$APP/Contents/Resources/"   # 英文介面的對照表（I18n.swift 用）
 rm -rf "$APP/Contents/Resources/icons"

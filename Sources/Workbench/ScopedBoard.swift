@@ -4,7 +4,7 @@ import CryptoKit
 /// 沙盒聊天室的看板讀寫（nono 收緊 11/8）。沙盒裡讀不到 AI 工作台資料夾，codenv-todo 改經 socket 要資料：
 ///   board_read  → {data: 整份 collab.json, rev: 檔案內容的 SHA-256}
 ///   board_write → {data: 改完的整份, rev: 讀到的那份的 rev}；rev 對不上（中間有人改過）回 conflict，呼叫端重讀重做
-/// 寫入沿用 CollabBoard 的做法：同一個 .lock 的 flock、覆蓋前留 .bak、暫存檔＋改名。
+/// 寫入沿用 CollabBoard 的做法：同一個 .lock 的 flock、防縮水備份、暫存檔＋改名。
 /// 伺服器端驗證（沙盒裡的 Claude 不可信）：
 ///   1. 沙盒不可建立 autoApprove；其他未知最上層欄位也不能變
 ///   2. 新目標一律是 proposed、不能帶 autoApproved；既有目標不能從 proposed 變成 active（同意只有使用者在看板上按）
@@ -12,6 +12,8 @@ import CryptoKit
 enum ScopedBoard {
     private static let allowedTop: Set<String> = ["items", "goals", "findings"]
     private static let maxBytes = 6_000_000
+    private static let maxDeletion = 5
+    private static let backupCount = 5
 
     private static func rev(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }
 
@@ -53,14 +55,18 @@ enum ScopedBoard {
                 return ["ok": false, "error": "看板修改不能省略既有欄位「\(key)」"]
             }
             if let why = validate(old: old, new: new) { return ["ok": false, "error": "沙盒聊天室的看板修改被擋下：" + why] }
+            let oldCount = CollabBoardModel.elementCount(old)
+            let newCount = CollabBoardModel.elementCount(new)
+            if oldCount > 0, newCount == 0 {
+                return ["ok": false, "error": "沙盒聊天室不能清空看板"]
+            }
+            if oldCount - newCount > maxDeletion {
+                return ["ok": false, "error": "沙盒聊天室一次最多刪除 \(maxDeletion) 個看板元素"]
+            }
             guard let out = try? JSONSerialization.data(withJSONObject: new, options: [.prettyPrinted, .sortedKeys]), out.count <= maxBytes else {
                 return ["ok": false, "error": "看板資料太大或無法編碼"]
             }
-            if FileManager.default.fileExists(atPath: url.path) {
-                let bak = URL(fileURLWithPath: url.path + ".bak")
-                try? FileManager.default.removeItem(at: bak)
-                try? FileManager.default.copyItem(at: url, to: bak)
-            }
+            if FileManager.default.fileExists(atPath: url.path) { preserveBackups(for: url, newCount: newCount) }
             let tmp = url.deletingLastPathComponent().appendingPathComponent(".collab.\(getpid()).scoped.tmp")
             guard FileManager.default.createFile(atPath: tmp.path, contents: out, attributes: [.posixPermissions: 0o600]), rename(tmp.path, url.path) == 0 else {
                 try? FileManager.default.removeItem(at: tmp)
@@ -69,6 +75,34 @@ enum ScopedBoard {
             return ["ok": true, "rev": rev(out)]
         }) else { return ["ok": false, "error": "看板檔的鎖拿不到"] }
         return r
+    }
+
+    private static func preserveBackups(for url: URL, newCount: Int) {
+        let backups = (0..<backupCount).map { URL(fileURLWithPath: url.path + ".bak" + ($0 == 0 ? "" : ".\($0)")) }
+        let counts = backups.compactMap { backup -> Int? in
+            guard let data = try? Data(contentsOf: backup),
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+            return CollabBoardModel.elementCount(object)
+        }
+        guard counts.isEmpty || newCount >= (counts.max() ?? 0) else { return }
+
+        for index in stride(from: backupCount - 2, through: 0, by: -1) {
+            let source = backups[index]
+            guard let data = try? Data(contentsOf: source) else { continue }
+            writeBackup(data, to: backups[index + 1])
+        }
+        guard let current = try? Data(contentsOf: url) else { return }
+        writeBackup(current, to: backups[0])
+    }
+
+    private static func writeBackup(_ data: Data, to backup: URL) {
+        let temporary = backup.deletingLastPathComponent()
+            .appendingPathComponent(".\(backup.lastPathComponent).\(UUID().uuidString).tmp")
+        guard FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]),
+              rename(temporary.path, backup.path) == 0 else {
+            try? FileManager.default.removeItem(at: temporary)
+            return
+        }
     }
 
     /// 回傳原因＝拒絕

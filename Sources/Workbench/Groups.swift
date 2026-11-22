@@ -10,6 +10,8 @@ struct ConvGroup: Codable, Identifiable, Hashable {
     var archiveOpen = false
     /// 上一層的組（組可以套組）；nil＝最上層。舊的存檔沒有這欄，讀進來就是最上層
     var parentID: UUID? = nil
+    /// 這個「區」的區長聊天室；一般分組與舊存檔為 nil
+    var areaLeadID: UUID? = nil
 }
 
 /// 舊存檔沒有的欄位（expanded、archiveOpen、parentID）缺了就用預設值：Swift 自動產生的解碼不吃屬性的預設值，缺一個鍵整份 state.json 就讀不進來
@@ -21,6 +23,7 @@ extension ConvGroup {
         expanded = try c.decodeIfPresent(Bool.self, forKey: .expanded) ?? true
         archiveOpen = try c.decodeIfPresent(Bool.self, forKey: .archiveOpen) ?? false
         parentID = try c.decodeIfPresent(UUID.self, forKey: .parentID)
+        areaLeadID = try c.decodeIfPresent(UUID.self, forKey: .areaLeadID)
     }
 }
 

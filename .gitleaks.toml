@@ -2,9 +2,12 @@
 useDefault = true
 
 [allowlist]
-description = "Random fake credentials used by exam fixtures"
+description = "Known non-secret fixtures and generated or vendored assets"
 paths = [
   '''scripts/exam/.*''',
   '''scripts/test-precommit\.sh''',
   '''scripts/exam/fixtures/fake-secrets\.txt''',
+  '''Resources/codelab/monaco/.*''',
+  '''\.build/.*''',
+  '''Resources/chat/test\.html''',
 ]

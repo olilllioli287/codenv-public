@@ -124,6 +124,193 @@ $$\frac{d}{dx}[y^2]=2y\frac{dy}{dx}$$
       await wait(300);
       check(dist() <= 2, '恢復追隨後新增內容未貼底');
       wb.setBusy(false);
+    } else if (id === 'C330') {
+      const userText = 'C330 使用者引用樣本';
+      const assistantText = 'C330 助理引用樣本';
+      const userId = 'c330-user';
+      const assistantId = 'c330-assistant';
+      wb.localUser({ uuid: userId, text: userText });
+      wb.setBusy(true);
+      const event = e => wb.event({ type: 'stream_event', event: e, parent_tool_use_id: null, api_message_id: assistantId });
+      event({ type: 'message_start', message: { id: assistantId } });
+      event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+      event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: assistantText } });
+      event({ type: 'content_block_stop', index: 0 });
+      wb.event({ type: 'assistant', message: { id: assistantId, role: 'assistant', content: [{ type: 'text', text: assistantText }] } });
+      wb.event({ type: 'result', subtype: 'success', is_error: false });
+      wb.setBusy(false);
+
+      const userTurn = () => turn(userText);
+      const assistantTurn = () => [...document.querySelectorAll('.turn.assistant')].find(t => t.textContent.includes(assistantText));
+      await until(() => userTurn()?.querySelector('.user-actions .quote-toggle') &&
+        assistantTurn()?.querySelector('.turn-copy') && assistantTurn()?.querySelector('.quote-toggle'),
+      '引用樣本 turn／按鈕未建立');
+      await until(() => {
+        const row = assistantTurn();
+        if (!row) return false;
+        const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) if (walker.currentNode.textContent.includes('完成')) return true;
+        return false;
+      }, 'assistant 完成狀態文字未建立');
+
+      const userQuote = userTurn().querySelector('.user-actions .quote-toggle');
+      const assistant = assistantTurn();
+      const assistantCopy = assistant.querySelector('.turn-copy');
+      const assistantQuote = assistant.querySelector('.quote-toggle');
+      const checkSvg = (button, label) => {
+        check(button?.tagName === 'BUTTON', label + ' 是 button');
+        check(button.getAttribute('aria-label') === '引用' && button.getAttribute('title') === '引用',
+          label + ' aria-label／title 為「引用」');
+        const svgs = [...button.querySelectorAll('svg')];
+        const textWalker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
+        let visibleTextOutsideSvg = false;
+        while (textWalker.nextNode()) {
+          const node = textWalker.currentNode;
+          if (node.textContent.trim() && !node.parentElement.closest('svg')) visibleTextOutsideSvg = true;
+        }
+        check(svgs.length === 1 && !visibleTextOutsideSvg && !button.textContent.includes('❞'),
+          label + ' 以單一 SVG 呈現且沒有純文字圖示');
+        if (svgs.length !== 1) return;
+        const svg = svgs[0];
+        check(svg.getAttribute('viewBox') === '0 0 16 16' && svg.getAttribute('aria-hidden') === 'true',
+          label + ' SVG viewBox／aria-hidden 正確');
+        const shapes = [svg, ...svg.querySelectorAll('*')];
+        const hasNoFill = shapes.some(node => node.getAttribute('fill')?.toLowerCase() === 'none' ||
+          getComputedStyle(node).fill === 'none');
+        const hasStrokeWidth = shapes.some(node => {
+          const width = parseFloat(getComputedStyle(node).strokeWidth || node.getAttribute('stroke-width'));
+          return Number.isFinite(width) && Math.abs(width - 1.4) < 0.01;
+        });
+        const iconStyle = getComputedStyle(svg);
+        check(hasNoFill && hasStrokeWidth, label + ' SVG 使用 fill:none／stroke-width:1.4');
+        check(Math.abs(parseFloat(iconStyle.width) - 15) < 0.01 &&
+          Math.abs(parseFloat(iconStyle.height) - 15) < 0.01,
+        label + ' SVG 計算尺寸為 15×15px');
+      };
+      checkSvg(userQuote, '使用者泡泡引用鍵');
+      checkSvg(assistantQuote, 'assistant footer 引用鍵');
+
+      const ordered = [];
+      const walker = document.createTreeWalker(assistant, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) ordered.push(walker.currentNode);
+      const copyIndex = ordered.indexOf(assistantCopy);
+      const quoteIndex = ordered.indexOf(assistantQuote);
+      const statusIndex = ordered.findIndex(node => node.nodeType === Node.TEXT_NODE && node.textContent.includes('完成'));
+      check(copyIndex >= 0 && copyIndex < quoteIndex && quoteIndex < statusIndex,
+        'assistant footer DOM 順序為複製鍵、引用鍵、完成狀態文字');
+
+      for (const [button, label] of [[userQuote, '使用者泡泡'], [assistantQuote, 'assistant footer']]) {
+        const style = getComputedStyle(button);
+        const width = parseFloat(style.width), height = parseFloat(style.height);
+        const noBorder = ['Top', 'Right', 'Bottom', 'Left'].every(side => parseFloat(style['border' + side + 'Width']) === 0);
+        const transparent = style.backgroundColor === 'transparent' ||
+          /rgba\([^)]*,\s*0(?:\.0+)?\s*\)$/.test(style.backgroundColor);
+        check(width >= 32 && height >= 32 && noBorder && transparent,
+          label + ' 計算樣式為至少 32px、border 0、未引用背景透明');
+        check(button.getAttribute('aria-pressed') === 'false' && !button.closest('.turn').classList.contains('quoted'),
+          label + ' 初始 aria-pressed 與未引用狀態相符');
+      }
+
+      const setPointer = async (id, x, y) => {
+        window.__exam.pointerRequest = { id, x, y };
+        await until(() => window.__exam.pointerAck === id, '瀏覽器指標事件未完成');
+        await wait(40);
+      };
+      await setPointer(1, 899, 799);
+      check(!userTurn().matches(':hover') && !assistant.matches(':hover'), '基準狀態兩個 turn 都未 hover');
+      const userIdleOpacity = parseFloat(getComputedStyle(userQuote).opacity);
+      const assistantIdleOpacity = parseFloat(getComputedStyle(assistantQuote).opacity);
+      check(Number.isFinite(userIdleOpacity) && Number.isFinite(assistantIdleOpacity), '預設 opacity 可計算');
+
+      let box = assistantQuote.getBoundingClientRect();
+      await setPointer(2, box.left + box.width / 2, box.top + box.height / 2);
+      const assistantHoverOpacity = parseFloat(getComputedStyle(assistantQuote).opacity);
+      check(assistant.matches(':hover') && assistantQuote.matches(':hover') &&
+        Math.abs(assistantHoverOpacity - 1) < 0.01 &&
+        getComputedStyle(assistantQuote).visibility !== 'hidden' && assistantQuote.getClientRects().length > 0,
+      '未引用 assistant 引用鍵 hover 時 opacity 為 1 且可見');
+      await setPointer(3, 899, 799);
+      const assistantIdleStyle = getComputedStyle(assistantQuote);
+      check(!assistant.matches(':hover') && Math.abs(parseFloat(assistantIdleStyle.opacity) - 1) < 0.01 &&
+        assistantIdleStyle.visibility !== 'hidden' && assistantQuote.getClientRects().length > 0,
+        'assistant hover 結束後仍維持 opacity 1 且可見');
+
+      box = userQuote.getBoundingClientRect();
+      await setPointer(4, box.left + box.width / 2, box.top + box.height / 2);
+      const userHoverOpacity = parseFloat(getComputedStyle(userQuote).opacity);
+      check(userTurn().matches(':hover') && userQuote.matches(':hover') && userHoverOpacity >= userIdleOpacity,
+        '使用者泡泡沿用 turn hover 顯示');
+      await setPointer(5, 899, 799);
+      check(!userTurn().matches(':hover') &&
+        Math.abs(parseFloat(getComputedStyle(userQuote).opacity) - userIdleOpacity) < 0.01,
+      '使用者泡泡 hover 後恢復原預設 opacity');
+
+      const focusables = [...document.querySelectorAll('button, input, textarea, select, [tabindex]:not([tabindex="-1"])')]
+        .filter(node => !node.disabled && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden');
+      const focusIndex = focusables.indexOf(assistantQuote);
+      check(focusIndex > 0, 'assistant 引用鍵有前一個可聚焦元素，能用鍵盤 Tab 進入');
+      focusables[focusIndex - 1].focus();
+      window.__exam.keyboardRequest = { id: 1, key: 'Tab', shiftKey: false };
+      await until(() => window.__exam.keyboardAck === 1, '瀏覽器 Tab 事件未完成');
+      await until(() => document.activeElement === assistantQuote, 'Tab 未移到 assistant 引用鍵');
+      const focusStyle = getComputedStyle(assistantQuote);
+      check(assistant.matches(':focus-within') && Math.abs(parseFloat(focusStyle.opacity) - 1) < 0.01 &&
+        focusStyle.visibility !== 'hidden' && assistantQuote.getClientRects().length > 0,
+      'assistant 引用鍵 focus-within 時 opacity 為 1 且可見');
+      check(assistantQuote.matches(':focus-visible') && parseFloat(focusStyle.outlineWidth) > 0 &&
+        focusStyle.outlineStyle !== 'none' && focusStyle.outlineColor !== 'rgba(0, 0, 0, 0)',
+      '鍵盤 focus-visible 保留 outline');
+
+      assistantQuote.click();
+      await until(() => assistantQuote.getAttribute('aria-pressed') === 'true' &&
+        assistant.classList.contains('quoted') && document.querySelectorAll('.quote-tray .quote-chip').length === 1,
+      '引用 assistant 後 aria／狀態／tray 未同步');
+      const pressedStyle = getComputedStyle(assistantQuote);
+      const variableNames = new Set();
+      for (let node = assistantQuote; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        for (let index = 0; index < style.length; index++) {
+          const name = style.item(index);
+          if (name.startsWith('--') && name.toLowerCase().includes('accent')) variableNames.add(name);
+        }
+      }
+      const tokenValue = (name, property) => {
+        const probe = document.createElement('span');
+        probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
+        assistantQuote.append(probe);
+        probe.style.setProperty(property, `var(${name})`);
+        const value = getComputedStyle(probe).getPropertyValue(property).trim();
+        probe.remove();
+        return value;
+      };
+      const accentVars = [...variableNames].filter(name => !name.toLowerCase().includes('soft'));
+      const softAccentVars = [...variableNames].filter(name => name.toLowerCase().includes('soft'));
+      const accentMatch = accentVars.some(name => tokenValue(name, 'color') === pressedStyle.color);
+      const softAccentMatch = softAccentVars.some(name => tokenValue(name, 'background-color') === pressedStyle.backgroundColor);
+      check(accentMatch && softAccentMatch,
+        '已引用計算樣式使用 accent 文字與 accent-soft 背景');
+      assistantQuote.blur();
+      await setPointer(6, 899, 799);
+      const quotedStyle = getComputedStyle(assistantQuote);
+      check(!assistant.matches(':focus-within') && assistant.classList.contains('quoted') &&
+        Math.abs(parseFloat(quotedStyle.opacity) - 1) < 0.01 &&
+        quotedStyle.visibility !== 'hidden' && assistantQuote.getClientRects().length > 0,
+      '已引用 .quoted 狀態 opacity 為 1 且可見');
+
+      userQuote.click();
+      await until(() => userQuote.getAttribute('aria-pressed') === 'true' &&
+        userTurn().classList.contains('quoted') && document.querySelectorAll('.quote-tray .quote-chip').length === 2,
+      '引用使用者泡泡後 tray 未增加第二項');
+      assistantQuote.click();
+      await until(() => assistantQuote.getAttribute('aria-pressed') === 'false' &&
+        !assistant.classList.contains('quoted') && userQuote.getAttribute('aria-pressed') === 'true' &&
+        document.querySelectorAll('.quote-tray .quote-chip').length === 1,
+      '取消 assistant 引用後只移除該 tray 項目');
+      userQuote.click();
+      await until(() => userQuote.getAttribute('aria-pressed') === 'false' &&
+        !userTurn().classList.contains('quoted') && document.querySelectorAll('.quote-tray .quote-chip').length === 0,
+      '取消使用者引用後 tray 清空');
+      window.__exam.details.push('C330 DOM、SVG、aria／tray、計算樣式、hover／focus-visible／quoted 顯示斷言完成');
     } else if (id === 'C62') {
       check(false, 'C62 是 Node 純邏輯案例，請使用 logic.mjs');
     } else throw Error('未知案例：' + id);

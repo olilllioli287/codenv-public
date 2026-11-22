@@ -35,10 +35,27 @@ struct ModelRow: Identifiable, Equatable {
 
 enum ModelTab: String, CaseIterable {
     case claude, gemini, chatgpt, copilot, local
-    var title: String { switch self { case .claude: "Claude"; case .gemini: "Gemini"; case .chatgpt: "ChatGPT"; case .copilot: "Copilot"; case .local: L("本機") } }
-    /// 單色圖示（OpenAI、Copilot、本機）：跟著文字顏色上色
-    var monochrome: Bool { self == .chatgpt || self == .copilot || self == .local }
-    /// 圖示：Resources/icons 裡的 SVG（LobeHub Icons，MIT）；本機用系統圖示
+    /// 以下僅用於右側欄「正在跑」模型徽章，不出現在模型彈出框分頁
+    case deepseek, qwen, groq
+
+    /// 模型彈出框實際顯示的分頁清單（維持原本 5 頁，不隨徽章廠商增加）
+    static let popoverCases: [ModelTab] = [.claude, .gemini, .chatgpt, .copilot, .local]
+
+    var title: String {
+        switch self {
+        case .claude: "Claude"
+        case .gemini: "Gemini"
+        case .chatgpt: "ChatGPT"
+        case .copilot: "Copilot"
+        case .local: L("本機")
+        case .deepseek: "DeepSeek"
+        case .qwen: "Qwen"
+        case .groq: "Groq"
+        }
+    }
+    /// 單色圖示（OpenAI、Copilot、本機、Groq）：跟著文字顏色上色
+    var monochrome: Bool { self == .chatgpt || self == .copilot || self == .local || self == .groq }
+    /// 圖示：Resources/icons 裡的 SVG（LobeHub Icons，MIT，見 Resources/icons/ATTRIBUTION.md）；本機用系統圖示
     var image: NSImage? {
         switch self {
         case .claude: Self.load("claude")
@@ -46,6 +63,9 @@ enum ModelTab: String, CaseIterable {
         case .chatgpt: Self.load("openai")
         case .copilot: Self.load("copilot")
         case .local: NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: nil)
+        case .deepseek: Self.load("deepseek")
+        case .qwen: Self.load("qwen")
+        case .groq: Self.load("groq")
         }
     }
     private static var cache: [String: NSImage] = [:]
@@ -93,7 +113,7 @@ final class ModelPanelModel: ObservableObject {
     /// 有東西的分頁（本機一定有，裡面有「設定本機模型…」）
     var tabs: [ModelTab] {
         let have = Set(sections.joined().map(\.tab))
-        return ModelTab.allCases.filter { $0 == .local || have.contains($0) }
+        return ModelTab.popoverCases.filter { $0 == .local || have.contains($0) }
     }
     var shownTab: ModelTab {
         if let t = tab, tabs.contains(t) { return t }
@@ -191,7 +211,7 @@ struct ModelPanel: View {
             Button(L("設為預設")) { if let e { m.onSetDefault?(e) } }
                 .controlSize(.small)
                 .disabled(!can)
-                .help(L(isMax ? "「最高」Claude Code 只能每次手動選，不能存成預設"
+                .help(L(isMax ? "「max」Claude Code 只能每次手動選，不能存成預設"
                       : "存進 ~/.claude/settings.json：新對話和沒調過強度的對話都用這個；終端機的 Claude Code 也會跟著用"))
         }
         .padding(.top, 2)
@@ -317,8 +337,11 @@ final class FloatingPanel: NSPanel {
     private var monitors: [Any] = []
     var onClose: (() -> Void)?
     private(set) var wasKeyBeforeClose = false
-    init(content: NSView) {
-        super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+    init(content: NSView, resizable: Bool = false) {
+        let mask: NSWindow.StyleMask = resizable
+            ? [.borderless, .nonactivatingPanel, .resizable]
+            : [.borderless, .nonactivatingPanel]
+        super.init(contentRect: .zero, styleMask: mask, backing: .buffered, defer: true)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true

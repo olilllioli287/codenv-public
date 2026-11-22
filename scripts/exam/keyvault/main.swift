@@ -132,7 +132,7 @@ let normals = [
     "UUID 550e8400-e29b-41d4-a716-446655440000 就是它",
     "/home/dev/app/src/components/MainWindowController.swift",
     "~/Library/Application Support/codenv/transcripts/金鑰管理.md",
-    "https://github.com/olilllioli287/codenv/blob/main/Sources/Workbench/KeyVault.swift",
+    "https://github.com/example/codenv/blob/main/Sources/Workbench/KeyVault.swift",
     "ThisIsAVeryLongCamelCaseIdentifierNameForAFunction", "some_very_long_snake_case_identifier_name_here_for_testing",
     "請幫我把 ChatInputBar.swift 的 send() 加上攔截，然後跑 swift build",
     "sk-short", "nvapi-", "AIza123", "今天天氣很好，我想吃牛肉麵。",

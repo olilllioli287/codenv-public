@@ -63,9 +63,20 @@ with tempfile.TemporaryDirectory(prefix='codenv-test-resume-') as temp:
     git('config', 'tag.gpgsign', 'false')
     git('remote', 'add', 'origin', str(remote))
     shutil.copyfile(root / 'release.sh', repo / 'release.sh')
+    executable(repo / 'build.sh', '''#!/bin/bash
+set -eu
+mkdir -p "$APP"
+''')
+    (repo / 'scripts' / 'exam').mkdir(parents=True)
+    executable(repo / 'scripts' / 'exam.sh', '''#!/bin/bash
+set -eu
+[ -d "${EXAM_APP:?}" ]
+[ -f scripts/exam/release-required.txt ]
+''')
+    (repo / 'scripts' / 'exam' / 'release-required.txt').write_text('C110\nC120\n')
     with (repo / 'Info.plist').open('wb') as f:
         plistlib.dump({'CFBundleShortVersionString': '00.00.00', 'CFBundleVersion': '00.00.00'}, f)
-    git('add', 'release.sh', 'Info.plist')
+    git('add', 'release.sh', 'build.sh', 'scripts', 'Info.plist')
     git('commit', '-qm', '測試初始版本')
     (repo / 'dist').mkdir()
     for version in ('00.00.01', '00.00.02', '00.00.03', '00.00.04'):
@@ -122,8 +133,14 @@ case "$cmd" in
     *) exit 94 ;;
 esac
 ''')
+    executable(fakebin / 'hdiutil', '''#!/bin/bash
+set -eu
+for output; do :; done
+mkdir -p "$(dirname "$output")"
+printf '離線測試 DMG\\n' > "$output"
+''')
     release_env = dict(env, PATH=str(fakebin) + ':' + env['PATH'],
-                       CODENV_RELEASE_SKIP_BUILD='1', CODENV_RELEASE_REPO='offline/test')
+                       CODENV_RELEASE_SKIP_BUILD='0', CODENV_RELEASE_REPO='offline/test', INSTALL='0')
     def release(version, success=True):
         p = subprocess.run(['/bin/bash', str(repo / 'release.sh'), version, '離線續跑測試'],
                            env=release_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -131,6 +148,20 @@ esac
         return p.stdout
     def count(path, line):
         return path.read_text().splitlines().count(line)
+
+    # 新的 skip-build 旗標是安全離線驗證：在乾淨副本編測試 App、跑原生必跑題，不能改版本、推送或打 tag。
+    test_only_env = dict(release_env, CODENV_RELEASE_SKIP_BUILD='1')
+    before = (git('rev-parse', 'HEAD'), git('tag', '--list'), pushlog.read_text(), ghlog.read_text(),
+              (repo / 'Info.plist').read_bytes())
+    test_only = subprocess.run(['/bin/bash', str(repo / 'release.sh'), '00.00.05', '離線測試模式'],
+                               env=test_only_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    check(test_only.returncode == 0, test_only.stdout)
+    check('沒有修改版本、commit、tag' in test_only.stdout, '缺少離線驗證完成訊息')
+    after = (git('rev-parse', 'HEAD'), git('tag', '--list'), pushlog.read_text(), ghlog.read_text(),
+             (repo / 'Info.plist').read_bytes())
+    check(before == after, '離線驗證改了版本、commit、tag 或發布遠端')
+    print('通過：CODENV_RELEASE_SKIP_BUILD=1 只編測試版並跑必跑題，沒有 commit／tag／推送')
+
     output = release('00.00.01') + release('00.00.01')
     check(count(pushlog, 'v00.00.01') == 1, 'tag 被推送兩次')
     check(count(ghlog, 'created v00.00.01') == 1, 'Release 被建立兩次')

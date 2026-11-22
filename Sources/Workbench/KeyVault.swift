@@ -3,7 +3,7 @@ import Security
 import CryptoKit
 
 // 金鑰管理核心（只靠 Foundation＋Security，scripts/exam/keyvault 會單獨編起來測）。
-// 一、鑰匙圈：一律登入鑰匙圈的一般密碼項目，service＝<前綴><服務>（前綴預設 codenv-，例：codenv-nvidia），account＝api-key。
+// 一、鑰匙圈：一律登入鑰匙圈的一般密碼項目，正式 service＝codenv-<服務>、測試 service＝codenv-test-<亂數>-<服務>，account＝api-key。
 //    用 Security.framework（SecItemAdd／Update），金鑰不經過命令列參數（ps 看得到）。
 //    列表與狀態只讀「屬性」不讀金鑰本體（不會跳授權視窗）；末四碼在寫入時存進項目的註解欄。
 // 二、偵測：KeyScan 每行各自找出文字裡長得像 API 金鑰的片段（常見前綴＋高熵長字串），給輸入框送出前攔截、紀錄寫入前遮罩共用。已知限制：金鑰若被折行，不保證攔截；可用輸入框的「金鑰」按鈕安全存入。
@@ -65,12 +65,27 @@ enum KeyVaultPaste {
 
 enum KeyVault {
     static let account = "api-key"
-    /// service 的前綴。測試只能用 codenv-test-<亂數>-（--keyvault-prefix，且要帶 --state-dir；正式啟動不受影響）
-    static var prefix: String = {
-        let a = CommandLine.arguments
-        if a.contains("--state-dir"), let i = a.firstIndex(of: "--keyvault-prefix"), i + 1 < a.count, a[i + 1].hasPrefix("codenv-test-") { return a[i + 1] }
-        return "codenv-"
-    }()
+    /// Only isolated probes may substitute the write sink so synthetic credentials never touch Keychain.
+    static var testSetOverride: ((String, String) -> String?)?
+    /// state-dir 與其他測試旗標一律使用測試 service；沒有指定安全前綴時每個程序自動產生唯一值。
+    static var prefix: String = prefix(arguments: CommandLine.arguments)
+    static var isTestInstance: Bool { isTestInstance(CommandLine.arguments) }
+
+    static func isTestInstance(_ arguments: [String]) -> Bool {
+        if arguments.contains("--state-dir") { return true }
+        // 未附 state-dir 的長選項只會用於測試掛鉤／測試啟動；遇到未知旗標也採安全隔離。
+        return arguments.dropFirst().contains { $0.hasPrefix("--") }
+    }
+
+    static func prefix(arguments: [String], generatedSuffix: String = UUID().uuidString.lowercased()) -> String {
+        guard isTestInstance(arguments) else { return "codenv-" }
+        if let i = arguments.firstIndex(of: "--keyvault-prefix"), i + 1 < arguments.count,
+           arguments[i + 1].hasPrefix("codenv-test-"), arguments[i + 1].count > "codenv-test-".count {
+            return arguments[i + 1]
+        }
+        return "codenv-test-\(generatedSuffix)-"
+    }
+
     static func service(_ id: String) -> String { prefix + id }
 
     private static func base(_ service: String) -> [String: Any] {
@@ -84,6 +99,7 @@ enum KeyVault {
         defer { forget(service) }      // 先改鑰匙圈、再清快取（反過來的話，中間插進來的讀取會把舊值放回快取）
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return "金鑰是空的" }
+        if isTestInstance, let testSetOverride { return testSetOverride(service, key) }
         let data = Data(key.utf8)
         let last4 = String(key.suffix(4))
         var st = SecItemUpdate(base(service) as CFDictionary, [kSecValueData as String: data, kSecAttrComment as String: last4] as CFDictionary)
@@ -103,6 +119,7 @@ enum KeyVault {
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
+        noteCopyMatchingCall()
         guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
         return String(data: d, encoding: .utf8)
     }
@@ -116,12 +133,22 @@ enum KeyVault {
         case failed(Int32)
         case pending                     // 還在等（授權框還開著）
     }
+    private static let copyMatchingLock = NSLock()
+    private static var copyMatchingCalls = 0
+    static var copyMatchingCallCount: Int {
+        copyMatchingLock.lock(); defer { copyMatchingLock.unlock() }
+        return copyMatchingCalls
+    }
+    private static func noteCopyMatchingCall() {
+        copyMatchingLock.lock(); copyMatchingCalls += 1; copyMatchingLock.unlock()
+    }
     /// 讀金鑰的實作（測試可以換成假的，模擬拒絕、卡住，不用真的跳授權框）
     static var reader: (String) -> (status: Int32, value: String?) = { service in
         var q = base(service)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
+        noteCopyMatchingCall()
         let st = SecItemCopyMatching(q as CFDictionary, &out)
         return (st, (out as? Data).flatMap { String(data: $0, encoding: .utf8) })
     }
@@ -187,6 +214,7 @@ enum KeyVault {
         q[kSecReturnAttributes as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
+        noteCopyMatchingCall()
         guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let a = out as? [String: Any] else { return (false, nil) }
         let c = (a[kSecAttrComment as String] as? String).flatMap { $0.isEmpty ? nil : $0 }
         return (true, c)
@@ -197,6 +225,7 @@ enum KeyVault {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: account,
                                 kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitAll]
         var out: CFTypeRef?
+        noteCopyMatchingCall()
         guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let arr = out as? [[String: Any]] else { return [] }
         return arr.compactMap { $0[kSecAttrService as String] as? String }.filter { $0.hasPrefix(prefix) }.sorted()
     }
@@ -256,11 +285,87 @@ struct KeyHit: Equatable {
     var low = false           // 低信心（JWT）：卡片的「仍要送出」不用再確認第二次
     var clean = ""            // 正規化後的金鑰本體（全形變半形、拿掉零寬字元）；要存進鑰匙圈的是這個，不是原文
     var key: String { clean.isEmpty ? text : clean }
+    /// JWT 雖不是 strongOnly 要遮罩的明確前綴，仍屬永遠警告的強規則。
+    var isForceWarn: Bool { strong || low }
+    var isLearnableWeak: Bool { !isForceWarn && (kind == "十六進位金鑰" || kind == "高熵長字串") }
+}
+
+struct KeyScanFinding: Equatable {
+    let hit: KeyHit
+    let excluded: Bool
+    let allowlisted: Bool
+    let learnedSuppressed: Bool
+    let feature: String?
+    let learnedCount: Int
+    var shouldWarn: Bool { !excluded && !allowlisted && !learnedSuppressed }
 }
 
 enum KeyScan {
     /// 使用者按過「這段不是金鑰，以後別再攔」的內容雜湊（只記雜湊不記原文）。App 啟動後由 KeyGuard 接上設定檔
-    static var allowHashes: Set<String> = []
+    private static let stateLock = NSLock()
+    private static var storedAllowHashes: Set<String> = []
+    /// 前文特徵的弱規則誤報次數，由 KeyGuard 從本機 JSONL 載入。
+    private static var storedLearnedFeatureCounts: [String: Int] = [:]
+    /// 已學特徵命中時的紀錄回呼，由 KeyGuard.wire() 接線；保持掃描器可獨立編譯。
+    private static var storedOnLearnedSuppression: ((String, String, Int) -> Void)?
+
+    struct StateSnapshot {
+        let allowHashes: Set<String>
+        let learnedFeatureCounts: [String: Int]
+        let onLearnedSuppression: ((String, String, Int) -> Void)?
+    }
+
+    private static func withStateLock<T>(_ body: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return body()
+    }
+
+    static var allowHashes: Set<String> {
+        get { snapshot().allowHashes }
+        set { withStateLock { storedAllowHashes = newValue } }
+    }
+    static var learnedFeatureCounts: [String: Int] {
+        get { snapshot().learnedFeatureCounts }
+        set { withStateLock { storedLearnedFeatureCounts = newValue } }
+    }
+    static var onLearnedSuppression: ((String, String, Int) -> Void)? {
+        get { snapshot().onLearnedSuppression }
+        set { withStateLock { storedOnLearnedSuppression = newValue } }
+    }
+
+    static func snapshot() -> StateSnapshot {
+        withStateLock {
+            StateSnapshot(allowHashes: storedAllowHashes,
+                         learnedFeatureCounts: storedLearnedFeatureCounts,
+                         onLearnedSuppression: storedOnLearnedSuppression)
+        }
+    }
+
+    static func replaceState(allowHashes: Set<String>, learnedFeatureCounts: [String: Int],
+                             onLearnedSuppression: ((String, String, Int) -> Void)?) {
+        withStateLock {
+            storedAllowHashes = allowHashes
+            storedLearnedFeatureCounts = learnedFeatureCounts
+            storedOnLearnedSuppression = onLearnedSuppression
+        }
+    }
+
+    static func updateAllowAndLearned(allowHashes: Set<String>, learnedFeatureCounts: [String: Int]) {
+        withStateLock {
+            storedAllowHashes = allowHashes
+            storedLearnedFeatureCounts = learnedFeatureCounts
+        }
+    }
+
+    static func insertAllowHash(_ hash: String) {
+        withStateLock { storedAllowHashes.insert(hash) }
+    }
+
+    static func subtractAllowHashes(_ hashes: Set<String>) {
+        withStateLock { storedAllowHashes.subtract(hashes) }
+    }
+
     static func hash(_ s: String) -> String { SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined() }
 
     /// 有明確前綴的樣式（前面不能緊接字母數字或 _ -，免得誤抓長字串中間）
@@ -294,6 +399,12 @@ enum KeyScan {
     private static let hexRun = try! NSRegularExpression(pattern: "(?<![0-9A-Za-z_-])[0-9a-fA-F]{7,128}(?![0-9A-Za-z_-])")
     private static let keyWords = try! NSRegularExpression(pattern: "(?i)(api|key|token|secret|passw|credential|bearer|auth)")
     private static let gitWords = try! NSRegularExpression(pattern: "(?i)\\b(commit|sha\\d*|hash|head|rev|checksum|digest|blob|tree|parent|merge|cherry-pick|revert|md5|git)\\b")
+    private static let shaDigestWords = try! NSRegularExpression(pattern: #"(?i)\bsha(1|256|384|512)\b"#)
+
+    private struct Candidate {
+        let hit: KeyHit
+        let excluded: Bool
+    }
 
     static func shannon(_ s: String) -> Double {
         var freq: [Character: Int] = [:]
@@ -330,85 +441,257 @@ enum KeyScan {
         var base = View()
         var off = 0
         for s in text.unicodeScalars {
-            let len = String(s).utf16.count
+            let len = s.value > 0xFFFF ? 2 : 1
             defer { off += len }
             if invisible.contains(s.value) { continue }
-            for u in String(s).precomposedStringWithCompatibilityMapping.utf16 {
-                base.units.append(u); base.start.append(off); base.end.append(off + len)
+            if s.value < 0x80 {
+                let unit = UInt16(s.value)
+                base.units.append(unit); base.start.append(off); base.end.append(off + len)
+            } else {
+                for u in String(s).precomposedStringWithCompatibilityMapping.utf16 {
+                    base.units.append(u); base.start.append(off); base.end.append(off + len)
+                }
             }
         }
         return base
     }
 
-    private static func lineContext(_ ns: NSString, _ r: NSRange) -> (line: String, before: String, prev: String) {
-        let lr = ns.lineRange(for: r)
-        let line = ns.substring(with: lr)
-        let before = ns.substring(with: NSRange(location: lr.location, length: r.location - lr.location))
-        var prev = ""
-        if lr.location > 0 { prev = ns.substring(with: ns.lineRange(for: NSRange(location: lr.location - 1, length: 0))) }
-        return (line, before, prev)
+    private struct HexLineContext {
+        let range: NSRange
+        let line: String
+        let previous: String
+        let trimmed: String
+        let lineHasGitWord: Bool
+        let previousHasGitWord: Bool
+        let lineHasKeyWord: Bool
+        let previousHasKeyWord: Bool
+        let gitLogLine: Bool
+        let shaDigestEnds: [Int]
     }
 
-    private static func scanString(_ text: String) -> [KeyHit] {
+    private static func hexLineContext(_ ns: NSString, _ range: NSRange, previous: String) -> HexLineContext {
+        let line = ns.substring(with: range)
+        let lineNS = line as NSString
+        let whole = NSRange(location: 0, length: lineNS.length)
+        let previousNS = previous as NSString
+        let previousWhole = NSRange(location: 0, length: previousNS.length)
+        let lineHasGit = gitWords.firstMatch(in: line, range: whole) != nil
+        let previousHasGit = gitWords.firstMatch(in: previous, range: previousWhole) != nil
+        let lineHasKey = keyWords.firstMatch(in: line, range: whole) != nil
+        let previousHasKey = keyWords.firstMatch(in: previous, range: previousWhole) != nil
+        let isGitLogLine = line.range(of: #"^\s*[0-9a-f]{7,40}\s+\S"#, options: .regularExpression) != nil
+            || line.range(of: #"^\s*commit\s+[0-9a-f]{7,40}\b"#, options: .regularExpression) != nil
+        let shaEnds = shaDigestWords.matches(in: line, range: whole).map { $0.range.upperBound }
+        return HexLineContext(range: range, line: line, previous: previous,
+                              trimmed: line.trimmingCharacters(in: .whitespacesAndNewlines),
+                              lineHasGitWord: lineHasGit, previousHasGitWord: previousHasGit,
+                              lineHasKeyWord: lineHasKey, previousHasKeyWord: previousHasKey,
+                              gitLogLine: isGitLogLine, shaDigestEnds: shaEnds)
+    }
+
+    private static func scanString(_ text: String) -> [Candidate] {
         let ns = text as NSString
         let full = NSRange(location: 0, length: ns.length)
-        var hits: [KeyHit] = []
+        var hits: [Candidate] = []
+        let meta = metaTable(for: text)
         for p in patterns {
             for m in p.regex.matches(in: text, range: full) {
-                hits.append(KeyHit(range: m.range, text: ns.substring(with: m.range), kind: p.kind, service: p.service, strong: p.strong, low: p.low))
+                hits.append(Candidate(hit: KeyHit(range: m.range, text: ns.substring(with: m.range), kind: p.kind, service: p.service, strong: p.strong, low: p.low), excluded: false))
             }
         }
         // 十六進位：UUID 與 git 雜湊放行；其他 32～128 位的，前後文有 key／token／secret／api 才攔（Datadog、Mailgun 這類金鑰就是純十六進位）
+        var lineCache: HexLineContext?
+        var shaDigestIndex = 0
         for m in hexRun.matches(in: text, range: full) {
-            let ctx = lineContext(ns, m.range)
+            if lineCache == nil {
+                let range = ns.lineRange(for: m.range)
+                let previous: String = range.location > 0
+                    ? ns.substring(with: ns.lineRange(for: NSRange(location: range.location - 1, length: 0)))
+                    : ""
+                lineCache = hexLineContext(ns, range, previous: previous)
+            } else if let cached = lineCache, m.range.location >= cached.range.upperBound {
+                var range = cached.range
+                var previous = cached.line
+                while m.range.location >= range.upperBound && range.upperBound < ns.length {
+                    let nextRange = ns.lineRange(for: NSRange(location: range.upperBound, length: 0))
+                    guard nextRange.length > 0, nextRange.upperBound > range.upperBound else { break }
+                    range = nextRange
+                    lineCache = hexLineContext(ns, range, previous: previous)
+                    previous = lineCache?.line ?? ""
+                }
+                shaDigestIndex = 0
+            }
+            guard let ctx = lineCache else { continue }
             let tok = ns.substring(with: m.range)
+            if meta.name(containing: m.range) != nil {
+                // 讓 probe 能指出這個弱規則候選是由 meta 標籤排除；強規則不經過這段。
+                hits.append(Candidate(hit: KeyHit(range: m.range, text: tok, kind: "十六進位金鑰", service: nil, strong: false), excluded: true))
+                continue
+            }
             let isLowerHexHash = tok.count >= 7 && tok.count <= 40 && tok == tok.lowercased()
-            let gitContext = gitWords.firstMatch(in: ctx.line, range: NSRange(location: 0, length: (ctx.line as NSString).length)) != nil
-                || gitWords.firstMatch(in: ctx.prev, range: NSRange(location: 0, length: (ctx.prev as NSString).length)) != nil
-            let gitLogLine = ctx.line.range(of: #"^\s*[0-9a-f]{7,40}\s+\S"#, options: .regularExpression) != nil
-                || ctx.line.range(of: #"^\s*commit\s+[0-9a-f]{7,40}\b"#, options: .regularExpression) != nil
-            let shaDigest = ctx.before.range(of: #"\bsha(1|256|384|512)\b"#, options: .regularExpression.union(.caseInsensitive)) != nil
-            let alone = ctx.line.trimmingCharacters(in: .whitespacesAndNewlines) == tok
-            let around = ctx.line + (alone ? " " + ctx.prev : "")
+            let gitContext = ctx.lineHasGitWord || ctx.previousHasGitWord
+            let prefixLength = m.range.location - ctx.range.location
+            while shaDigestIndex < ctx.shaDigestEnds.count && ctx.shaDigestEnds[shaDigestIndex] <= prefixLength {
+                shaDigestIndex += 1
+            }
+            let shaDigest = shaDigestIndex > 0
+            let alone = ctx.trimmed == tok
             if shaDigest { continue } // sha256／sha512 摘要本身可能超過 40 位，沿用舊版的摘要放行
-            if isLowerHexHash && (gitContext || gitLogLine) { continue }
-            if tok.count >= 32 && keyWords.firstMatch(in: around, range: NSRange(location: 0, length: (around as NSString).length)) != nil {
-                hits.append(KeyHit(range: m.range, text: tok, kind: "十六進位金鑰", service: nil, strong: false))
+            if isLowerHexHash && (gitContext || ctx.gitLogLine) { continue }
+            if tok.count >= 32 && (ctx.lineHasKeyWord || (alone && ctx.previousHasKeyWord)) {
+                hits.append(Candidate(hit: KeyHit(range: m.range, text: tok, kind: "十六進位金鑰", service: nil, strong: false), excluded: false))
             }
         }
         for m in run.matches(in: text, range: full) {
             let t = ns.substring(with: m.range)
             guard looksRandom(t) else { continue }
             if m.range.location >= 7, ns.substring(with: NSRange(location: m.range.location - 7, length: 7)) == "base64," { continue }
-            hits.append(KeyHit(range: m.range, text: t, kind: "高熵長字串", service: nil, strong: false))
+            hits.append(Candidate(hit: KeyHit(range: m.range, text: t, kind: "高熵長字串", service: nil, strong: false), excluded: meta.name(containing: m.range) != nil))
         }
         return hits
     }
 
-    static func scan(_ text: String) -> [KeyHit] {
-        guard text.utf16.count >= 16 else { return [] }
-        let ns = text as NSString
-        func hits() -> [KeyHit] {
-            let v = makeView(text)
-            var out: [KeyHit] = []
-            for h in scanString(v.string) {
-                guard h.range.length > 0, h.range.upperBound <= v.units.count else { continue }
-                let o = NSRange(location: v.start[h.range.location], length: v.end[h.range.upperBound - 1] - v.start[h.range.location])
-                // 比對用的是正規化後的字；要遮的是原文那一段（hit.text），要存的是正規化後的本體（clean）
-                let hit = KeyHit(range: o, text: ns.substring(with: o), kind: h.kind, service: h.service, strong: h.strong, low: h.low, clean: h.text)
-                if allow(hit.text) || allow(h.text) { continue }
-                out.append(hit)
+    private static let metaTagRegex = try! NSRegularExpression(pattern: #"(?is)<meta\b[^>]*>"#)
+    private static let metaNameRegex = try! NSRegularExpression(pattern: #"(?i)\bname\s*=\s*["']?([A-Za-z0-9_-]+)"#)
+    private static let metaContentRegex = try! NSRegularExpression(pattern: #"(?i)\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#)
+    // 僅排除已知非祕密 meta 值；未列出的驗證碼照常掃描。
+    private static let nonSecretMetaNames: Set<String> = ["darkreader", "theme-color", "generator", "google-site-verification"]
+
+    /// 一次掃完整份文字的 <meta>，只留已知非祕密 meta 的 content 範圍，之後每個候選查表即可。
+    struct MetaTable {
+        fileprivate var entries: [(range: NSRange, name: String, known: Bool)] = []
+        private func entry(containing r: NSRange, knownOnly: Bool) -> (range: NSRange, name: String, known: Bool)? {
+            var lower = 0
+            var upper = entries.count
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2
+                if entries[middle].range.location <= r.location { lower = middle + 1 }
+                else { upper = middle }
             }
-            return out
+            guard lower > 0 else { return nil }
+            let candidate = entries[lower - 1]
+            guard (!knownOnly || candidate.known), r.location >= candidate.range.location,
+                  r.upperBound <= candidate.range.upperBound else { return nil }
+            return candidate
         }
-        var all = hits()
-        // 彼此重疊的只留先到的、最長的
-        all.sort { $0.range.location != $1.range.location ? $0.range.location < $1.range.location : $0.range.length > $1.range.length }
-        var out: [KeyHit] = []
-        for h in all where !out.contains(where: { NSIntersectionRange($0.range, h.range).length > 0 }) { out.append(h) }
-        return out
+        /// 已知非祕密 meta（darkreader 等）的 content 內：用來排除弱規則命中
+        func name(containing r: NSRange) -> String? {
+            entry(containing: r, knownOnly: true)?.name
+        }
+        /// 任何有 name 的 meta 的 content 內：只用來算學習特徵（使用者按兩次「不是金鑰」才會抑制，不直接排除）
+        func anyName(containing r: NSRange) -> String? {
+            entry(containing: r, knownOnly: false)?.name
+        }
     }
-    private static func allow(_ s: String) -> Bool { !allowHashes.isEmpty && allowHashes.contains(hash(s)) }
+
+    static func metaTable(for text: String) -> MetaTable {
+        var table = MetaTable()
+        let ns = text as NSString
+        // 沒有 "<meta" 的大檔直接略過，避免白跑正規式
+        guard ns.range(of: "<meta", options: .caseInsensitive).location != NSNotFound else { return table }
+        for tag in metaTagRegex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let value = ns.substring(with: tag.range)
+            let valueNS = value as NSString
+            let whole = NSRange(location: 0, length: valueNS.length)
+            guard let nameMatch = metaNameRegex.firstMatch(in: value, range: whole), nameMatch.numberOfRanges > 1 else { continue }
+            let name = valueNS.substring(with: nameMatch.range(at: 1)).lowercased()
+            guard let contentMatch = metaContentRegex.firstMatch(in: value, range: whole) else { continue }
+            let cr = (1..<contentMatch.numberOfRanges).map { contentMatch.range(at: $0) }
+                .first { $0.location != NSNotFound && $0.length > 0 }
+            guard let cr else { continue }
+            table.entries.append((NSRange(location: tag.range.location + cr.location, length: cr.length), name, nonSecretMetaNames.contains(name)))
+        }
+        return table
+    }
+
+    /// 只學明顯非祕密的特徵：meta name／integrity／data-hash。key／token／secret 與任意屬性名不收。
+    private static let safeFeatureRegex = try! NSRegularExpression(pattern: #"^(?:meta name=[a-z0-9_-]+|integrity=|data-hash=)$"#)
+    static func isSafeLearnedFeature(_ feature: String) -> Bool {
+        safeFeatureRegex.firstMatch(in: feature, range: NSRange(location: 0, length: (feature as NSString).length)) != nil
+    }
+    private static let integrityRegex = try! NSRegularExpression(pattern: #"(?i)\b(integrity|data-hash)\s*=\s*["'][^"']*$"#)
+
+    /// 從命中前 40 個 UTF-16 字元抽出穩定的標籤／屬性特徵，不保存金鑰本體。
+    static func feature(for hit: KeyHit, in source: String, meta: MetaTable? = nil) -> String? {
+        guard hit.isLearnableWeak else { return nil }
+        let ns = source as NSString
+        guard hit.range.location <= ns.length else { return nil }
+        if let name = (meta ?? metaTable(for: source)).anyName(containing: hit.range) { return "meta name=\(name)" }
+        let prefixRange = NSRange(location: max(0, hit.range.location - 40), length: min(40, hit.range.location))
+        let prefix = ns.substring(with: prefixRange)
+        if let match = integrityRegex.firstMatch(in: prefix, range: NSRange(location: 0, length: (prefix as NSString).length)), match.numberOfRanges > 1 {
+            return "\((prefix as NSString).substring(with: match.range(at: 1)).lowercased())="
+        }
+        return nil
+    }
+
+    static func learningKey(rule: String, feature: String) -> String { rule + "\u{1f}" + feature }
+
+    static func findings(_ text: String, using suppliedSnapshot: StateSnapshot? = nil,
+                         learnedSuppressionCollector: ((String, String, Int) -> Void)? = nil) -> [KeyScanFinding] {
+        guard text.utf16.count >= 16 else { return [] }
+        let state = suppliedSnapshot ?? snapshot()
+        let ns = text as NSString
+        let view = makeView(text)
+        var all: [(hit: KeyHit, excluded: Bool)] = []
+        let meta = metaTable(for: text)
+        for candidate in scanString(view.string) {
+            let h = candidate.hit
+            guard h.range.length > 0, h.range.upperBound <= view.units.count else { continue }
+            let original = NSRange(location: view.start[h.range.location], length: view.end[h.range.upperBound - 1] - view.start[h.range.location])
+            let hit = KeyHit(range: original, text: ns.substring(with: original), kind: h.kind, service: h.service, strong: h.strong, low: h.low, clean: h.text)
+            let excluded = candidate.excluded || (hit.isLearnableWeak && meta.name(containing: original) != nil)
+            all.append((hit, excluded))
+        }
+        // 彼此重疊的只留先到的、最長的；強規則（含 JWT）先判，弱規則不得吃掉強規則命中，
+        // 且與強規則重疊的弱規則直接丟掉（強規則任何情況都要警告）。
+        let order: ((hit: KeyHit, excluded: Bool), (hit: KeyHit, excluded: Bool)) -> Bool = {
+            $0.hit.range.location != $1.hit.range.location ? $0.hit.range.location < $1.hit.range.location : $0.hit.range.length > $1.hit.range.length
+        }
+        func overlaps(_ a: NSRange, _ b: NSRange) -> Bool { NSIntersectionRange(a, b).length > 0 }
+        let forceWarn = all.filter({ $0.hit.isForceWarn }).sorted(by: order)
+        let weak = all.filter({ !$0.hit.isForceWarn }).sorted(by: order)
+        var uniqueForceWarn: [(hit: KeyHit, excluded: Bool)] = []
+        for item in forceWarn {
+            if let last = uniqueForceWarn.last, overlaps(last.hit.range, item.hit.range) { continue }
+            uniqueForceWarn.append(item)
+        }
+        // 強規則與弱規則分兩組掃描，避免先把所有強規則 append 後再從較早的弱規則
+        // 開始比較，導致只檢查最後一筆而漏掉同起點重疊。兩組都已按位置排序。
+        var uniqueWeak: [(hit: KeyHit, excluded: Bool)] = []
+        var forceIndex = 0
+        for item in weak {
+            while forceIndex < uniqueForceWarn.count,
+                  uniqueForceWarn[forceIndex].hit.range.location + uniqueForceWarn[forceIndex].hit.range.length <= item.hit.range.location {
+                forceIndex += 1
+            }
+            let overlapsForce = forceIndex < uniqueForceWarn.count
+                && overlaps(uniqueForceWarn[forceIndex].hit.range, item.hit.range)
+            let overlapsPreviousWeak = uniqueWeak.last.map { overlaps($0.hit.range, item.hit.range) } ?? false
+            if !overlapsForce && !overlapsPreviousWeak { uniqueWeak.append(item) }
+        }
+        var unique = uniqueForceWarn + uniqueWeak
+        unique.sort(by: order)
+        return unique.map { item in
+            let hit = item.hit
+            let excluded = item.excluded && hit.isLearnableWeak
+            let allowlisted = hit.isLearnableWeak && (allow(hit.text, hashes: state.allowHashes) || allow(hit.key, hashes: state.allowHashes))
+            let feature = KeyScan.feature(for: hit, in: text, meta: meta)
+            let count = feature.map { state.learnedFeatureCounts[learningKey(rule: hit.kind, feature: $0)] ?? 0 } ?? 0
+            let learned = hit.isLearnableWeak && feature != nil && count >= 2
+            if learned, let feature {
+                if let learnedSuppressionCollector { learnedSuppressionCollector(hit.kind, feature, count) }
+                else { state.onLearnedSuppression?(hit.kind, feature, count) }
+            }
+            return KeyScanFinding(hit: hit, excluded: excluded, allowlisted: allowlisted, learnedSuppressed: learned, feature: feature, learnedCount: count)
+        }
+    }
+
+    static func scan(_ text: String, using snapshot: StateSnapshot? = nil,
+                     learnedSuppressionCollector: ((String, String, Int) -> Void)? = nil) -> [KeyHit] {
+        findings(text, using: snapshot, learnedSuppressionCollector: learnedSuppressionCollector).filter(\.shouldWarn).map(\.hit)
+    }
+    private static func allow(_ s: String, hashes: Set<String>) -> Bool { !hashes.isEmpty && hashes.contains(hash(s)) }
 
     /// 把命中的片段換成「〔金鑰…abcd〕」（只留末四碼）。
     /// strongOnly＝只遮有明確前綴的（草稿、各家 jsonl、寄件匣、標題用：高熵長字串可能是使用者自己的東西，誤遮會弄丟他的字）

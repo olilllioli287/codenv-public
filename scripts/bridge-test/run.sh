@@ -4,8 +4,8 @@ set -e
 here="$(cd -- "$(dirname -- "$0")" && pwd)"; src=$here/../../Sources/Workbench
 out=$(mktemp -d); trap 'rm -rf $out' EXIT
 mkdir -p "${TMPDIR}codenv-test-codex"
-swiftc -o "$out/codex" "$here/stubs.swift" "$here/codex/main.swift" "$src/CodexBridge.swift" "$src/CopilotBridge.swift"
-swiftc -o "$out/agy" "$here/stubs.swift" "$here/agystub.swift" "$here/agy/main.swift" "$src/AgyBridge.swift"
+swiftc -o "$out/codex" "$here/stubs.swift" "$here/codex/main.swift" "$src/CodexBridge.swift" "$src/CopilotBridge.swift" "$src/ImageCache.swift" "$src/LidQueuedMessage.swift"
+swiftc -o "$out/agy" "$here/stubs.swift" "$here/agystub.swift" "$here/agy/main.swift" "$src/AgyBridge.swift" "$src/RetryPolicy.swift" "$src/ImageCache.swift" "$src/LidQueuedMessage.swift"
 "$out/codex"
 "$out/agy"
 python3 - "$here/../exam/fake-codex-server.py" <<'PY'

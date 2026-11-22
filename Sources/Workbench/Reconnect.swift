@@ -36,7 +36,14 @@ extension MainWindowController {
     func wake(name raw: String, caller: String? = nil, done: @escaping ([String: Any]) -> Void) {
         let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return done(["ok": false, "error": "要寫聊天室的名字（側欄上的名字）"]) }
-        var hits = store.conversations.filter { $0.title == name && !$0.isGadget }
+        var hits: [Conversation]
+        if let lead = store.areaLeadContext(caller: caller) {
+            let (target, error) = store.areaLeadTarget(name, context: lead)
+            guard let target else { return done(["ok": false, "error": error ?? "目標不在區長管理範圍內"]) }
+            hits = [target]
+        } else {
+            hits = store.conversations.filter { $0.title == name && !$0.isGadget }
+        }
         // 同名的有封存的（舊的交接過、改過名又撞名）：只看沒封存的；剩一段就是它（使用者的「discord」有兩段，11/7）
         if hits.count > 1 { let live = hits.filter { !store.isArchived($0) }; if !live.isEmpty { hits = live } }
         // 還是同名：優先叫跟呼叫者同一個總指揮的那段（A 總指揮叫「x」＝A 底下那段，不是 B 底下那段）

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 // 計時器：桌寵空位左半的 pet-progress 進度列。訂閱桌寵同一個通知（com.local.desktoppet.progress），
 // 規則照 desktop-pet/ProgressModel.swift（下面那段是搬過來的純邏輯）：超時變紅停 99%、完成顯示 3 秒、沒消息太久自動拿掉。
@@ -14,6 +15,13 @@ struct TimerItem: Equatable {
     let state: State
 }
 
+struct ProgressHistoryEntry: Codable {
+    var totalSeconds: TimeInterval
+    var secondsPerItem: TimeInterval?
+    var samples: Int
+    var updatedAt: Date
+}
+
 struct PetProgressModel {
     struct Task {
         var label: String
@@ -24,23 +32,63 @@ struct PetProgressModel {
         var total: Int?
         var finishedAt: Date?
         var order = 0              // 開始的先後；同一秒開始的任務也排得穩，圈不會左右跳
+        var historyKey: String = ""
+        var historicSecondsPerItem: TimeInterval?
+        var emaSecondsPerItem: TimeInterval?
+        var speedSampleAt: Date?
+        var speedSampleDone: Int?
     }
 
     private(set) var tasks: [String: Task] = [:]
     private var nextOrder = 0
+    private(set) var history: [String: ProgressHistoryEntry] = [:]
+    private let historyURL: URL
     static let finishedShow: TimeInterval = 3
+    static let emaAlpha = 0.3
+
+    init(historyURL: URL? = nil) {
+        if let historyURL { self.historyURL = historyURL }
+        else {
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            self.historyURL = support.appendingPathComponent("com.local.desktoppet", isDirectory: true).appendingPathComponent("progress-history.json")
+        }
+        if let data = try? Data(contentsOf: self.historyURL), let rows = try? JSONDecoder.progressHistory.decode([String: ProgressHistoryEntry].self, from: data) { history = rows }
+    }
+
+    static func historyKey(label: String, id: String) -> String {
+        let source = label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? id : label
+        let stripped = source.replacingOccurrences(of: #"\d+"#, with: "", options: .regularExpression)
+        let words = stripped.lowercased().split(whereSeparator: { $0.isWhitespace })
+        return words.joined(separator: " ").isEmpty ? id.lowercased() : words.joined(separator: " ")
+    }
+
+    private mutating func saveHistory() {
+        guard let data = try? JSONEncoder.progressHistory.encode(history) else { return }
+        try? FileManager.default.createDirectory(at: historyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: historyURL, options: .atomic)
+    }
 
     /// 開始一個任務（同一個 id 再開一次＝重新計時）
     mutating func start(id: String, label: String, eta: TimeInterval?, total: Int?, now: Date = Date()) {
         nextOrder += 1
-        tasks[id] = Task(label: label, started: now, updated: now, eta: eta, done: total == nil ? nil : 0, total: total,
-                         order: tasks[id]?.order ?? nextOrder)
+        let key = Self.historyKey(label: label, id: id)
+        let old = history[key]
+        let chosenETA = old.map { $0.totalSeconds * 0.7 + (eta ?? $0.totalSeconds) * 0.3 } ?? eta
+        tasks[id] = Task(label: label, started: now, updated: now, eta: chosenETA, done: total == nil ? nil : 0, total: total,
+                         order: tasks[id]?.order ?? nextOrder, historyKey: key,
+                         historicSecondsPerItem: old?.secondsPerItem, emaSecondsPerItem: old?.secondsPerItem)
     }
 
     /// 回報完成幾題。沒開始過的任務直接當作現在開始
     mutating func update(id: String, done: Int, total: Int?, now: Date = Date()) {
         if tasks[id] == nil { nextOrder += 1 }
         var t = tasks[id] ?? Task(label: id, started: now, updated: now, order: nextOrder)
+        let oldDone = t.done ?? 0
+        if done > oldDone, oldDone >= 3, let sampleAt = t.speedSampleAt, let sampleDone = t.speedSampleDone, done > sampleDone {
+            let sample = max(0, now.timeIntervalSince(sampleAt)) / Double(done - sampleDone)
+            if sample.isFinite, sample > 0 { t.emaSecondsPerItem = (t.emaSecondsPerItem ?? sample) * (1 - Self.emaAlpha) + sample * Self.emaAlpha }
+        }
+        if done >= 3, done > oldDone { t.speedSampleAt = now; t.speedSampleDone = done }
         t.done = done
         if let total { t.total = total }
         t.updated = now
@@ -49,6 +97,14 @@ struct PetProgressModel {
 
     mutating func finish(id: String, now: Date = Date()) {
         guard var t = tasks[id] else { return }
+        let elapsed = max(0, now.timeIntervalSince(t.started))
+        let count = max(t.done ?? 0, t.done == nil ? (t.total ?? 0) : 0)
+        let perItem = count > 0 ? elapsed / Double(count) : nil
+        let old = history[t.historyKey]
+        history[t.historyKey] = ProgressHistoryEntry(totalSeconds: (old?.totalSeconds ?? elapsed) * (1 - Self.emaAlpha) + elapsed * Self.emaAlpha,
+            secondsPerItem: perItem.map { (old?.secondsPerItem ?? $0) * (1 - Self.emaAlpha) + $0 * Self.emaAlpha } ?? old?.secondsPerItem,
+            samples: (old?.samples ?? 0) + 1, updatedAt: now)
+        saveHistory()
         t.finishedAt = now
         t.updated = now
         tasks[id] = t
@@ -86,7 +142,10 @@ struct PetProgressModel {
             if let done = t.done, let total = t.total, total > 0 {
                 fraction = Double(min(done, total)) / Double(total)
                 // 用目前的速度推剩下的時間；剛開始還沒有速度可以參考時，退回用預計時間
-                if done > 0 { left = elapsed / Double(done) * Double(total - min(done, total)) }
+                let perItem: TimeInterval?
+                if done <= 3 { perItem = t.historicSecondsPerItem ?? (done > 0 ? elapsed / Double(done) : nil) }
+                else { perItem = t.emaSecondsPerItem ?? t.historicSecondsPerItem ?? elapsed / Double(done) }
+                if let perItem { left = perItem * Double(max(0, total - min(done, total))) }
                 else if let eta = t.eta { left = max(0, eta - elapsed) }
             } else if let eta = t.eta, eta > 0 {
                 fraction = elapsed / eta
@@ -177,19 +236,13 @@ struct PetTimersView: View {
         GeometryReader { geo in
             let _ = timers.tick
             let items = timers.model.items()
-            let fit = max(1, Int(geo.size.height / Self.rowH))
-            let shown = items.count > fit ? Array(items.prefix(fit - 1)) : items
-            let extra = items.count - shown.count
+            let visibleHeight = max(geo.size.height, CGFloat(items.count) * Self.rowH)
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
-                if extra > 0 {
-                    Text(L("＋\(extra)")).font(.system(size: 11)).foregroundStyle(.secondary)
-                        .frame(height: Self.rowH, alignment: .leading)
-                }
                 // 由下往上：最早開始的在最下面
-                ForEach(Array(shown.reversed()), id: \.id) { row($0) }
+                ForEach(Array(items.reversed()), id: \.id) { row($0) }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .frame(maxWidth: .infinity, minHeight: visibleHeight, maxHeight: visibleHeight, alignment: .bottomLeading)
         }
         .padding(.leading, 8).padding(.bottom, 4)
     }
@@ -218,9 +271,24 @@ struct PetTimersView: View {
     }
 }
 
+private extension JSONDecoder { static var progressHistory: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d } }
+private extension JSONEncoder { static var progressHistory: JSONEncoder { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.outputFormatting = [.prettyPrinted, .sortedKeys]; return e } }
+
 /// 放在 PetSlotView 左半；沒任務時整塊不吃滑鼠、不畫
 final class PetTimersHost: NSHostingView<PetTimersView> {
-    required init(rootView: PetTimersView) { super.init(rootView: rootView) }
+    private var timerObservation: AnyCancellable?
+    private var minimumHeight: CGFloat = 0
+    required init(rootView: PetTimersView) {
+        super.init(rootView: rootView)
+        timerObservation = PetTimers.shared.$tick.receive(on: RunLoop.main).sink { [weak self] _ in self?.resizeForTasks() }
+    }
     @MainActor required dynamic init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { PetTimers.shared.isEmpty ? nil : super.hitTest(point) }
+    func setMinimumHeight(_ height: CGFloat) { minimumHeight = height; resizeForTasks() }
+    private func resizeForTasks() {
+        guard let parent = superview else { return }
+        let wanted = min(parent.bounds.height, max(minimumHeight, CGFloat(PetTimers.shared.model.tasks.count) * PetTimersView.rowH + 10))
+        guard abs(frame.height - wanted) > 0.5 else { return }
+        frame.size.height = wanted
+    }
 }

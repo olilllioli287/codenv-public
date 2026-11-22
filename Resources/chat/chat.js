@@ -34,6 +34,8 @@
   };
 
   let followGuard = 0;
+  // 每次頁面載入產生新的文件代號，搭配頁面內序號避免重載前後的 editing 回報錯序。
+  const docId = Math.random().toString(36).slice(2) + Date.now().toString(36);
   function post(msg) {
     try { window.webkit.messageHandlers.wb.postMessage(msg); }
     catch (_) { console.log('[wb→Swift]', JSON.stringify(msg)); }
@@ -46,6 +48,7 @@
     busy: false,
     busySince: 0,
     agent: 'Claude',      // 這個聊天室實際在跑的模型（init 事件決定）：權限卡、選擇題上的名字
+    agentOverride: false,
     following: true,
     jumping: false,
     magnet: false,        // 卡扣：送出訊息（或 Claude 開始做時本來就在底）就扣上，一直貼底；只有使用者自己往上捲（滾輪、觸控、按鍵、按著滑鼠拖）才放開
@@ -63,7 +66,7 @@
   };
 
   // DOM 骨架（index.html 與 test.html 共用；這裡自己建，HTML 只要放 script 就好）
-  let root, log, queueBox, typing, jumpBtn, lightbox;
+  let root, log, queueBox, typing, bgLine, jumpBtn, lightbox;
   const queued = new Map();   // uuid → 排隊中的使用者泡泡（Claude 還沒讀進去）
   const unconfirmed = new Map();   // 一輪結束時先移進對話、但 Claude 還沒回送讀進的（下一輪結束或回送才算確定）
   function buildSkeleton() {
@@ -75,6 +78,8 @@
     typing = root.appendChild(el('div', 'typing'));
     typing.hidden = true;
     typing.innerHTML = `<span class="typing-dots"><i></i><i></i><i></i></span><span class="typing-t">${L('Claude 正在處理')}</span><span class="typing-s"></span>`;
+    bgLine = root.appendChild(el('div', 'bg-line'));   // 背景工作還在跑：一行較淡的字，跟「正在處理」不同時出現
+    bgLine.hidden = true;
     queueBox = root.appendChild(el('div', 'queue-box'));   // 排隊中的訊息放在「正在處理」下面
     jumpBtn = document.body.appendChild(el('button', 'jump', L('↓ 最新')));
     jumpBtn.type = 'button';
@@ -183,10 +188,56 @@
       updateJump();
       if (S.deferred.size && !flushDeferred.q) { flushDeferred.q = true; raf(flushDeferred); }
     }, { passive: true });
-    // 網頁裡有沒有正在打字的欄位：App 靠這個決定按 / 要不要跳回輸入框
-    const editable = (t) => t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-    document.addEventListener('focusin', (e) => post({ type: 'editing', on: !!editable(e.target) }));
-    document.addEventListener('focusout', () => post({ type: 'editing', on: false }));
+    // 網頁裡有沒有真的聚焦在可編輯欄位：元素可能在 focusout 前被移除，所以事件目標不足以維持狀態。
+    const editable = (t) => {
+      if (!t || !t.isConnected) return false;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) {
+        return !t.disabled && !t.hasAttribute('disabled')
+          && !t.readOnly && !t.hasAttribute('readonly');
+      }
+      return t.isContentEditable;
+    };
+    const editingState = () => {
+      const active = document.activeElement;
+      const documentHasFocus = document.hasFocus();
+      const visible = document.visibilityState !== 'hidden';
+      const activeConnected = !!active && active.isConnected;
+      const activeEditable = editable(active);
+      return {
+        documentHasFocus, visible, activeConnected, activeEditable,
+        expected: documentHasFocus && visible && activeConnected && activeEditable
+      };
+    };
+    let editingReported = false;
+    let editingSequence = 0;
+    const reportEditing = (force = false, allowActive = true) => {
+      const on = allowActive && editingState().expected;
+      if (force || on !== editingReported) {
+        editingReported = on;
+        post({ type: 'editing', on, docId, sequence: ++editingSequence });
+      }
+    };
+    const scheduleEditingCheck = () => queueMicrotask(() => reportEditing());
+    document.addEventListener('focusin', scheduleEditingCheck);
+    document.addEventListener('focusout', scheduleEditingCheck);
+    // 聚焦中的欄位若被框架重繪移除，WebKit 不一定送 focusout；DOM 變動後查 activeElement 補送 false。
+    const editingObserver = new MutationObserver(scheduleEditingCheck);
+    editingObserver.observe(document.documentElement, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: ['contenteditable', 'disabled', 'readonly']
+    });
+    window.addEventListener('blur', () => reportEditing(true, false));
+    window.addEventListener('focus', () => reportEditing(true));
+    window.addEventListener('pagehide', () => reportEditing(true, false));
+    document.addEventListener('visibilitychange', () => reportEditing(true, document.visibilityState !== 'hidden'));
+    window.__codenvRefreshEditing = () => reportEditing(true);
+    window.__codenvResetEditing = () => {
+      editingReported = false;
+      reportEditing(true);
+      return editingReported;
+    };
+    window.__codenvEditingSnapshot = editingState;
+    reportEditing(true);
     const ro = new ResizeObserver(() => { stick(); updateJump(); });
     ro.observe(log);
     ro.observe(typing);
@@ -361,6 +412,8 @@
   // 'sync'：馬上上色；'lazy'：捲到看得到才上色（接回舊對話時用）；'none'：不上色（串流中的大段程式碼）
   // 複製鈕的圖示（兩張卡；按了換成打勾一下）：程式碼區右上角、每輪回覆最下面共用
   const COPY_ICON = '<svg class="ic-copy" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1.6"/><path d="M10.5 3.2V3A1.5 1.5 0 0 0 9 1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h.2"/></svg><svg class="ic-done" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>';
+  // 引用鈕沿用複製鈕的 16px 線條圖示規格。
+  const QUOTE_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5H4A2 2 0 0 0 2 5.5v2A2 2 0 0 0 4 9.5h2.5v-4A2 2 0 0 0 4.5 3.5M14 3.5h-2.5a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2H14v-4a2 2 0 0 0-2-2" transform="translate(0 1)"/></svg>';
   function codeBlockHtml(text, lang, mode) {
     if (lang === 'plot' && window.wbPlot) {
       return `<div class="plot">${window.wbPlot.svg(text)}<details><summary>plot</summary><pre><code>${esc(text)}</code></pre></details></div>`;
@@ -459,7 +512,7 @@
     msg(id) {
       id = id || this.curMsg || '_';
       let m = this.msgs.get(id);
-      if (!m) { m = { blocks: [], byIndex: new Map() }; this.msgs.set(id, m); }
+      if (!m) { m = { blocks: [], byIndex: new Map(), ignoredIndices: new Set(), completedFromHistory: false }; this.msgs.set(id, m); }
       return m;
     }
   }
@@ -1654,6 +1707,21 @@
     S.ctxMain.endTurn();
     return n;
   }
+  // 看板佇列提示是模型輸入的一部分，但畫面上獨立顯示，不切斷目前正在串流的回合。
+  function queuedNotice(text, parent = log) {
+    const n = el('div', 'notice queued-notice');
+    n.appendChild(el('span', 'queued-notice-label', L('通知')));
+    n.appendChild(document.createTextNode(' ' + String(text || '')));
+    parent.appendChild(n);
+    return n;
+  }
+  function automatedNotice(text, source, parent = log) {
+    const n = el('div', 'notice queued-notice auto-notice');
+    n.appendChild(el('span', 'queued-notice-label', L('通知・' + String(source || '自動送出'))));
+    n.appendChild(document.createTextNode(' ' + String(text || '')));
+    parent.appendChild(n);
+    return n;
+  }
   function smallNote(ctx, text, cls) {
     return ctx.breakParent().appendChild(el('div', 'line-note' + (cls ? ' ' + cls : ''), text));
   }
@@ -1769,13 +1837,22 @@
     }
   }
   function bangHistoryTurn(r) { if (r && r.rec) bangCard(r.rec); }
-  // 排隊中的泡泡：放在對話最下面（Claude 目前的回答下方），等它真的讀進去才移進對話
+  // 排隊中的泡泡：agy 不支援中途插話；本機模型會在工具批次間消化插話佇列。
   function queueNote(t, uuid, now) {
     let n = t.querySelector('.queued-note');
     if (!n) n = t.appendChild(el('div', 'queued-note'));
     n.innerHTML = '';
-    if (now) { n.textContent = L('插話中…（Claude 停下目前這一步就讀）'); return; }
-    n.appendChild(document.createTextNode(L('排隊中：Claude 做完這一步就會讀到 · ')));
+    if (S.agent === 'agy') { n.textContent = L('agy 不支援中途插話，會在這輪結束後送出'); return; }
+    if (now) {
+      n.textContent = S.agent === '本機模型'
+        ? L('插話中…（目前工具回合結束後、下次呼叫模型前送出）')
+        : L`插話中…（${S.agent} 停下目前這一步就讀）`;
+      return;
+    }
+    const label = S.agent === '本機模型'
+      ? L('排隊中：本機模型完成目前一批工具後會讀到 · ')
+      : L`排隊中：${S.agent} 做完這一步就會讀到 · `;
+    n.appendChild(document.createTextNode(label));
     const a = n.appendChild(el('button', 'queued-now', L('馬上插話（⌃ Enter）')));
     a.type = 'button';
     a.addEventListener('click', () => { queueNote(t, uuid, true); post({ type: 'sendNow', uuid }); });
@@ -1785,6 +1862,11 @@
     t.classList.remove('queued');
     const n = t.querySelector('.queued-note');
     if (n) n.remove();
+    const qid = t.dataset.qid;
+    if (qid) {
+      const notice = [...document.querySelectorAll('.notice.queued-notice')].find((item) => item.dataset.qid === qid);
+      if (notice) log.appendChild(notice);
+    }
     log.appendChild(t);
   }
   function turnFooter(o) {
@@ -1835,11 +1917,15 @@
   function addQuoteButton(turn, foot) {
     if (foot.querySelector('.quote-toggle')) return;
     if (!turn.dataset.qid) turn.dataset.qid = Q.fallbackID('assistant', turnTexts(turn).join('\n\n'));
-    const b = foot.appendChild(el('button', 'quote-toggle icon-btn', '❞'));
+    const b = el('button', 'quote-toggle icon-btn');
+    b.innerHTML = QUOTE_ICON;
     b.type = 'button';
     b.title = L('引用');
     b.setAttribute('aria-label', L('引用'));
     b.setAttribute('aria-pressed', String(selectedQuotes.has(turn.dataset.qid)));
+    // assistant footer 有複製鍵時，引用鍵緊接其後；狀態文字保留在兩鍵之後。
+    const copy = foot.querySelector('.turn-copy');
+    foot.insertBefore(b, copy ? copy.nextSibling : null);
     turn.classList.toggle('quoted', selectedQuotes.has(turn.dataset.qid));
     b.addEventListener('click', () => {
       const qid = turn.dataset.qid;
@@ -1901,6 +1987,9 @@
   // ───────────────────────── 事件處理 ─────────────────────────
   function blockForStart(ctx, msgId, index, cb, live) {
     const m = ctx.msg(msgId);
+    // 網頁剛重載時，紀錄檔可能已含完整答案，而同一則的串流事件仍在佇列裡。
+    // 已完成訊息的串流只是重播；保留歷史畫面，不再建立第二份文字或工具卡。
+    if (live && m.completedFromHistory) { m.ignoredIndices.add(index); return null; }
     let b;
     if (cb.type === 'text') b = new TextBlock(ctx.breakParent(), live);
     else if (cb.type === 'thinking' || cb.type === 'redacted_thinking') { b = new ThinkBlock(ctx.stepParent(), true); ctx.addStep(b); }
@@ -1928,6 +2017,7 @@
       if (ctx.turn) ctx.turn.dataset.qid = ctx.quoteID;
     }
     const m = ctx.msg(msg.id);
+    if (!live && msg.stop_reason) m.completedFromHistory = true;
     for (const blk of msg.content || []) {
       if (!blk) continue;
       if (blk.type === 'tool_use' || blk.type === 'server_tool_use' || blk.type === 'mcp_tool_use') {
@@ -1983,10 +2073,20 @@
         blockForStart(ctx, msgId, e.index, e.content_block || {}, true);
         break;
       case 'content_block_delta': {
-        const b = ctx.msg(msgId).byIndex.get(e.index);
+        const m = ctx.msg(msgId);
+        if (m.ignoredIndices.has(e.index)) break;
+        const b = m.byIndex.get(e.index);
         const d = e.delta || {};
         if (!b) {
-          if (d.type === 'text_delta') { const nb = blockForStart(ctx, msgId, e.index, { type: 'text' }, true); nb.append(d.text || ''); }
+          // 某些重播或不完整串流可能沒有對應的 start。可推斷的文字／思考區塊
+          // 嘗試建立；已完成歷史訊息會由 blockForStart 回傳 null，並略過整個 index。
+          const cb = d.type === 'text_delta' ? { type: 'text' } : d.type === 'thinking_delta' ? { type: 'thinking' } : null;
+          if (!cb) { m.ignoredIndices.add(e.index); break; }
+          const nb = blockForStart(ctx, msgId, e.index, cb, true);
+          if (!nb) { m.ignoredIndices.add(e.index); break; }
+          if (d.type === 'text_delta' && nb.type === 'text') nb.append(d.text || '');
+          else if (d.type === 'thinking_delta' && nb.type === 'thinking') nb.append(d.thinking || '');
+          else m.ignoredIndices.add(e.index);
           break;
         }
         if (d.type === 'text_delta' && b.type === 'text') b.append(d.text || '');
@@ -2062,6 +2162,17 @@
       taskNote(m[0].trim(), m[1]);
       t = t.slice(m[0].length);
     }
+    // 引擎紀錄保存的是實際輸入全文；把 codenv 佇列通知從使用者泡泡拆回獨立淡色提示。
+    t = t.replace(/⟦codenv-notice:([0-9a-f-]{36}):begin⟧\n([\s\S]*?)\n⟦codenv-notice:\1:end⟧\n\n?/g, (_all, _id, body) => {
+      queuedNotice(body);
+      return '';
+    });
+    t = t.replace(/⟦codenv-auto-notice:([0-9a-f-]{36}):([A-Za-z0-9+/=]*):begin⟧\n([\s\S]*?)\n⟦codenv-auto-notice:\1:end⟧/g, (_all, _id, encoded, body) => {
+      let source = '自動送出';
+      try { source = decodeURIComponent(escape(atob(encoded))); } catch (_) {}
+      automatedNotice(body, source);
+      return '';
+    });
     if (!t.trim() && !(images && images.length)) return;
     const cmd = t.match(/<command-name>([^<]*)<\/command-name>/);
     // codenv 改聊天室名字時幫 Claude 送的 /rename（ChatSession.syncName）：不當成使用者打的字顯示，它的回應也不顯示
@@ -2088,12 +2199,19 @@
     userBubble(t, images, { qid });
   }
 
+  function renderBgLine() {
+    if (!bgLine) return;
+    const n = S.bgCount || 0;
+    bgLine.hidden = !(n > 0 && !S.busy);
+    if (n > 0) bgLine.textContent = L`背景工作 ${n} 件進行中`;
+  }
+
   function onSystem(o) {
     switch (o.subtype) {
       case 'init':
         if (o.cwd) { S.cwd = o.cwd; guessHome(o.cwd); }
         // 權限卡、選擇題寫「Claude」的地方換成實際在跑的模型（Gemini 經 agy、ChatGPT 經 codex）
-        if (o.model) { const m = String(o.model).toLowerCase(); S.agent = m.startsWith('gemini') ? 'Gemini' : /^(gpt|o\d)/.test(m) ? 'ChatGPT' : m.startsWith('copilot') ? 'Copilot' : m.startsWith('local-') ? '本機模型' : m.startsWith('apple') ? 'Apple 模型' : 'Claude'; }
+        if (o.model && !S.agentOverride) { const m = String(o.model).toLowerCase(); S.agent = m.startsWith('gemini') ? 'agy' : /^(gpt|o\d)/.test(m) ? 'Codex' : m.startsWith('copilot') ? 'Copilot' : m.startsWith('local-') ? '本機模型' : m.startsWith('apple') ? 'Apple 模型' : 'Claude'; }
         break;
       case 'permission_denied': {
         const card = S.tools.get(o.tool_use_id);
@@ -2116,8 +2234,12 @@
         if (S.compactingEl) { S.compactingEl.remove(); S.compactingEl = null; }
         if (o.status === 'compacting') S.compactingEl = notice(L('整理前面的對話…（上下文太長，先壓縮成摘要）'));
         else if (o.status === 'compact_failed') notice(o.message || L('自動壓縮沒成功，照原樣繼續'), 'warn');
+        else if (o.status === 'tool_calls_truncated') notice(o.message || L('模型輸出被長度上限截斷，工具沒有執行。'), 'warn');
         break;
-      case 'api_retry': notice(L`連線不穩，重試中（第 ${o.attempt || '?'} 次）…`, 'warn'); break;
+      case 'background_tasks_changed':
+        wb.setBackgroundCount((Array.isArray(o.tasks) ? o.tasks : []).filter((t) => t && t.ambient !== true).length);
+        break;
+      case 'api_retry': notice(o.message || L`伺服器忙，稍後重試（${o.attempt || '?'} 次）…`, 'warn'); break;
       case 'task_notification': {
         const card = S.tools.get(o.tool_use_id);
         if (card && card.kind === 'task' && !card.result && o.summary) {
@@ -2211,14 +2333,20 @@
       }
       if (t.monoFont) st.setProperty('--mono', `"${String(t.monoFont).replace(/"/g, '')}", ui-monospace, "SF Mono", Menlo, monospace`);
       if (t.monoSize) st.setProperty('--mono-size', Math.max(10, Math.min(20, +t.monoSize)) + 'px');
-      // 對話文字跟終端機一樣（設定頁可以改回系統字型）
+      // 聊天字型可跟終端機或介面設定走；沒設定時回到 CSS 的系統字型。
       if (t.bodyFont) {
-        st.setProperty('--sans', `"${String(t.bodyFont).replace(/"/g, '')}", "PingFang TC", -apple-system, sans-serif`);
+        st.setProperty('--sans', `"${String(t.bodyFont).replace(/["\\]/g, '')}", -apple-system, "PingFang TC", sans-serif`);
         st.setProperty('--body-size', (+t.bodySize || 15).toFixed(2) + 'px');
         st.setProperty('--body-weight', String(t.bodyWeight || 400));
         st.setProperty('--mono-size', ((+t.bodySize || 15) * 0.9).toFixed(2) + 'px');
       } else {
-        for (const k of ['--sans', '--body-size', '--body-weight']) st.removeProperty(k);
+        st.removeProperty('--body-size');
+        st.removeProperty('--body-weight');
+        if (t.interfaceFont) {
+          st.setProperty('--sans', `"${String(t.interfaceFont).replace(/["\\]/g, '')}", -apple-system, "PingFang TC", sans-serif`);
+        } else {
+          st.removeProperty('--sans');
+        }
       }
       let dark = t.dark;
       if (dark == null && t.bg) { const rgb = hexToRgb(t.bg); dark = rgb ? lum(rgb) < 0.3 : true; }
@@ -2276,6 +2404,11 @@
     },
     localUser(m) {
       m = m || {};
+      const noticeParent = m.queued ? queueBox : log;
+      if (m.notice && m.uuid) {
+        const n = queuedNotice(String(m.notice), noticeParent);
+        n.dataset.qid = m.uuid;
+      }
       if (m.queued && m.uuid) {
         const t = userBubble(m.text || '', m.images || [], { queued: true, bang: m.bang, qid: m.uuid, quotes: m.quotes });
         queued.set(m.uuid, t);
@@ -2293,6 +2426,22 @@
       stick();
       updateJump();
     },
+    localAutomatedNotice(m) {
+      m = m || {};
+      const parent = m.queued ? queueBox : log;
+      if (m.notice && m.uuid) {
+        const notice = queuedNotice(String(m.notice), parent);
+        notice.dataset.qid = m.uuid;
+      }
+      const n = automatedNotice(m.text || '', m.automatedSource, parent);
+      if (m.uuid) {
+        n.dataset.qid = m.uuid;
+        if (m.queued) { queued.set(m.uuid, n); queueNote(n, m.uuid, !!m.now); }
+      }
+      S.lastLocal = { uuid: m.uuid, el: n };
+      S.magnet = true;
+      stick();
+    },
     // 這則其實沒送出去（程序開不起來、寫不進去）：把剛畫的泡泡收回來；字會放回輸入框，不然重送會出現兩個泡泡
     unsend(uuid) {
       const l = S.lastLocal;
@@ -2301,6 +2450,7 @@
       queued.delete(uuid);
       unconfirmed.delete(uuid);
       if (target) target.remove();
+      for (const n of document.querySelectorAll('.notice.queued-notice')) if (n.dataset.qid === uuid) n.remove();
     },
     // Claude 讀進了這則（回送）：從排隊區移進對話
     // ! 指令：開始（卡片出現）、輸出一段、結束（最後完整的資料）
@@ -2352,9 +2502,17 @@
     resolveAllPermissions(note) {
       for (const p of S.perms.values()) if (p.resolved) p.resolved(note);
     },
+    // 背景工作 N 件進行中（0＝不顯示）；處理中（正在處理）時不顯示，兩行不混用
+    setBackgroundCount(n) {
+      S.bgCount = Math.max(0, n | 0);
+      renderBgLine();
+    },
     setBusy(b) {
       S.busy = !!b;
       typing.hidden = !S.busy;
+      renderBgLine();
+      const typingTitle = typing.querySelector('.typing-t');
+      if (typingTitle) typingTitle.textContent = `${S.agent} 正在處理`;
       clearInterval(busyTimer);
       clearInterval(followGuard);
       if (S.busy) {
@@ -2378,6 +2536,12 @@
         S.ctxMain.closeGroup(true);
       }
       stick();
+    },
+    setAgent(name) {
+      S.agent = String(name || 'Claude');
+      S.agentOverride = true;
+      const typingTitle = typing.querySelector('.typing-t');
+      if (typingTitle) typingTitle.textContent = `${S.agent} 正在處理`;
     },
     notice(text) { notice(String(text || '')); stick(); },
     // 右下角桌寵空位：最底下留高度、「↓ 最新」讓開寬度（0 0＝沒有空位）
@@ -2603,7 +2767,7 @@
     buildSkeleton();
     initScroll();
     window.wb = wb;
-    post({ type: 'ready' });
+    post({ type: 'ready', docId });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();

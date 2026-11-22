@@ -47,6 +47,27 @@ The sidebar starts as the classic tree. Go to Settings (⌘ ,) → Appearance (�
 2. The app uses a temporary (ad-hoc) signature and is not signed by an Apple Developer. On macOS 15 and later, right-click → “Open” no longer bypasses Gatekeeper. Try to open it once (it will be blocked), then go to “System Settings → Privacy & Security,” scroll down to codenv and click “Open Anyway”; or run `xattr -cr /Applications/codenv.app` in Terminal.
 3. Because it uses a temporary signature, **macOS treats it as a different app each time you install a new version**. Permissions you’ve granted (such as Full Disk Access) may need to be granted again after updating.
 
+## First launch with a temporary signature
+
+codenv is signed with an ad-hoc (temporary) signature instead of an Apple Developer ID, so macOS blocks it the first time.
+
+1. Drag codenv into “Applications” and open it once. macOS says it cannot verify the app — close that message.
+2. On macOS 15 and later: open “System Settings → Privacy & Security,” scroll down to the codenv message and click “Open Anyway,” then confirm with your password. On macOS 14: right-click (or Control-click) codenv → “Open” → “Open.”
+3. Or, in Terminal: `xattr -cr /Applications/codenv.app`, then open it normally.
+4. Every new version looks like a different app to macOS, so repeat steps 1–3 after each update.
+
+## Features that need tools or accounts you may not have
+
+codenv started as one person’s daily tool, so a few features use extras that are not part of the download. Nothing here is required to chat with Claude Code.
+
+| Feature | What it needs | Without it |
+|---|---|---|
+| Multi-account agy usage (reading other signed-in agy accounts, including ones kept in containers) | An `agy-swap` helper and container setup on your own machine | The usage card falls back to the single `agy` account you are signed in with. If `agy` is not installed, agy chats, suggestions and its usage are not available (see the agy section) |
+| Extra usage cards (DeepSeek, Qwen, NVIDIA, AI Studio, Kaggle, Groq…) | Your own API keys saved in the macOS Keychain (Settings) | A card only appears once its key exists; no key, no card. A few cards also read a small helper script in `~/.local/bin` and may show no data if it is missing |
+| Colab status | The official Colab CLI at `~/.local/bin/colab` | No Colab status is shown |
+| Command-line tools (`codenv-todo`, `codenv-browser`…) | Nothing: they are bundled inside the app and work in chats | Settings → “Install command-line tools” only adds optional shortcuts under `~/.local/bin` |
+| Author-only scripts (shared queue locks, review helpers…) | Not part of codenv | codenv never needs them |
+
 ## Update reminder
 
 codenv checks GitHub Releases for a new version 30 seconds after launch, then every 24 hours. You can also click “Check for updates (檢查更新)” in settings. It sends a regular request to `api.github.com` without any user data or identifier. You can turn this feature off with “Automatic update checks (自動檢查更新)” in settings. The app won’t replace itself: when a new version is available, it only displays the release notes; clicking the button opens the download page.

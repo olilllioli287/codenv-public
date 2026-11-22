@@ -19,7 +19,7 @@ struct SidebarFooter: View {
 
                 if colab.balance != nil || !colab.machines.isEmpty {
                     Button(action: { (NSApp.windows.compactMap { $0.windowController as? MainWindowController }.first)?.showRightPanel(tab: .windows) }) {
-                        Text(colabSummary).font(.system(size: 11 * s)).minimumScaleFactor(0.75)
+                        Text(colabSummary).font(InterfaceFont.swiftUIFont(size: 11 * s)).minimumScaleFactor(0.75)
                             .foregroundStyle(colab.machines.isEmpty ? Color.secondary : Color.orange)
                             .lineLimit(1).truncationMode(.tail)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -35,7 +35,7 @@ struct SidebarFooter: View {
                         memLine(memoryCodenv)
                         if let c = memoryClaude { memLine(c) }
                     }
-                    .font(.system(size: 11 * s)).foregroundStyle(.secondary)
+                    .font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                 }
@@ -75,19 +75,19 @@ struct SidebarFooter: View {
 
     private func numbers(_ g: UsageGlanceGroup, tight: Bool) -> Text {
         g.parts(compact: true, tight: tight).reduce(Text("")) { t, p in t + Text(p.text).foregroundColor(p.low ? UsageRowView.color(0) : .secondary) }
-            .font(.system(size: 10.5 * s)).monospacedDigit()
+            .font(InterfaceFont.swiftUIFont(size: 10.5 * s)).monospacedDigit()
     }
 
     /// 不縮小字級：左欄再窄，依序換比較短的寫法——
     /// 名稱＋「66%·39%」→ 名稱＋「66·39%」（只留最後一個 %）→ 小圖示＋「66·39%」；每一段都完整顯示。
     private func usageLine(_ g: UsageGlanceGroup) -> some View {
         ViewThatFits(in: .horizontal) {
-            row(Text(g.name).font(.system(size: 11 * s)), numbers(g, tight: false))
-            row(Text(g.name).font(.system(size: 11 * s)), numbers(g, tight: true))
+            row(Text(g.name).font(InterfaceFont.swiftUIFont(size: 11 * s)), numbers(g, tight: false))
+            row(Text(g.name).font(InterfaceFont.swiftUIFont(size: 11 * s)), numbers(g, tight: true))
             row(Text(Image(systemName: g.symbol)).font(.system(size: 10 * s)), numbers(g, tight: true))
             // 最窄的左欄：名稱一行、數字一行（總共最多 6 行），不縮字、不截斷
             VStack(alignment: .leading, spacing: 0) {
-                Text(g.name).font(.system(size: 11 * s)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                Text(g.name).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
                 numbers(g, tight: true).lineLimit(1).fixedSize()
             }
             .frame(maxWidth: .infinity, alignment: .leading)

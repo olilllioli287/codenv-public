@@ -27,4 +27,4 @@ jobs:
         run: brew install gitleaks
 
       - name: Scan for secrets
-        run: gitleaks dir . --config .gitleaks.toml --no-banner --redact
+        run: gitleaks git . --config .gitleaks.toml --no-banner --redact

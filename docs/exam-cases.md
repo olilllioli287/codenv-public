@@ -261,6 +261,27 @@ scripts/exam.sh all       # 開發組＋保留組＋4 組既有測試
 node scripts/exam/verify-old.mjs all  # 相同斷言對修正前檔案做反證
 ```
 
+### 測試偏好 plist 清掃
+
+`release.sh` 的離線驗證與正式出版必跑考卷都呼叫 `scripts/exam.sh`；它會透過 `scripts/exam/prefs-sweep` 清除本輪新增的測試偏好 plist。測試 suite 名稱及闔蓋探針 plist 只按兩種完整檔名規則處理。預設掃描 `~/Library/Preferences`；自我測試或隔離情境可設定 `EXAM_PREFS_DIR` 指向假目錄。
+
+同步執行且會等到測試完成的指令，使用 `scripts/exam/prefs-sweep -- <指令…>`。`open -n` 會很快返回，不能只用 command 模式包住 `open`；手動開啟 App、紅燈／綠燈探針應以同一組 `begin`／`end` 包住整段 session，並在測試版完全退出後執行 `end`：
+
+```sh
+PREF_SWEEP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codenv-prefs-sweep.XXXXXX")"
+STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codenv-state.XXXXXX")"
+scripts/exam/prefs-sweep begin "$PREF_SWEEP_DIR"
+open -g -n "$EXAM_APP" --args --state-dir "$STATE_DIR" --background --test-screen ipad --test-hidden --usage-fake --agy-bin "${CODENV_TEST_AGY_BIN:?請指定假 agy}"
+# 執行紅燈／綠燈 probe；確認測試實例已完全退出後按 Enter。
+printf '測試實例已退出、probe 已完成後按 Enter 繼續： '
+read -r _
+scripts/exam/prefs-sweep end "$PREF_SWEEP_DIR"
+```
+
+可直接貼進施工-sonnet 任務單：
+
+> 手動開啟 codenv 測試版的所有測試都必須用 `scripts/exam/prefs-sweep` 包起來，包含紅燈、綠燈與 probe。同步測試命令請用 `scripts/exam/prefs-sweep -- <指令…>`；若使用 `open -n`（它會立即返回），請在開 App 前執行 `prefs-sweep begin <暫存 session 目錄>`，以隔離 `--state-dir`、`--test-screen ipad`、`--usage-fake` 及假 `--agy-bin` 啟動並完成 probe，完全退出測試實例後再執行 `prefs-sweep end <同一 session 目錄>`。無論測試成功或失敗都要結束 sweep，並回報開始／結束數量及任何清掃錯誤；不得裸開測試 App，也不得更換 HOME。
+
 需求：Node（內建 `WebSocket`、`fetch`）、Python 3、git、本機 Microsoft Edge 與 macOS `sandbox-exec`，無額外套件。每題獨立程序，有逾時限制。任何已實作題目失敗皆 exit 1；C 類另印「待做」，不冒充通過。非法模式 exit 2。dev 只載入 `scripts/exam/dev/cases.json`，不讀取或執行 holdout 的考題；holdout fixture 與斷言放在 `scripts/exam/holdout/`。
 
 B 類入口為 `Resources/chat/test.html?bare=1&fast=1&exam=B01`（另有 `B10`、`B04`）。以 `--remote-debugging-port=0` 讓 OS 直接配發空埠啟動獨立 headless Edge（從該次 profile 的 `DevToolsActivePort` 讀回，避免埠釋放後被搶占），再透過 CDP 等待 `window.__done` 與檢查 `window.__exam`；不使用 dump-dom、screenshot CLI 或 virtual-time-budget。B04 的對照使用 CDP `Input.dispatchMouseEvent` 真實滾輪。每題使用暫存 HOME、設定檔與 user-data-dir；OS sandbox 禁止外網及使用者的 `~/Library`、`~/.claude` 讀寫，CDP 再禁止非本機資源。清理邏輯涵蓋正常、失敗、逾時與 SIGINT／SIGTERM，針對自己開的 Edge 程序群組及暫存資料（本環境尚無法驗證 Edge 實際啟動後的清理），不關閉既有 Edge。

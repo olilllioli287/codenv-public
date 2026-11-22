@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""建立交接摘要；送摘要模型前先移除 <private> 區段。"""
+import argparse
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+MARKER = "〔已略過私人段落〕"
+
+
+def private_filter(text):
+    out, pos = [], 0
+    while True:
+        start = text.find("<private>", pos)
+        if start < 0:
+            out.append(text[pos:])
+            return "".join(out)
+        out.append(text[pos:start])
+        scan, depth = start + len("<private>"), 1
+        while depth:
+            opened = text.find("<private>", scan)
+            closed = text.find("</private>", scan)
+            if closed < 0:
+                out.append(MARKER)
+                return "".join(out)
+            if 0 <= opened < closed:
+                depth += 1
+                scan = opened + len("<private>")
+            else:
+                depth -= 1
+                scan = closed + len("</private>")
+        out.append(MARKER)
+        pos = scan
+
+
+# 送摘要模型前遮罩金鑰／信箱／電話（最小規則，等同 KeyScan 的強規則）；40 碼十六進位視為 git SHA 保留
+_SECRET_PATTERNS = [
+    (re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{16,}"), "[金鑰已遮罩]"),
+    (re.compile(r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{30,}"), "[金鑰已遮罩]"),
+    (re.compile(r"(?<![A-Za-z0-9_-])gsk_[A-Za-z0-9]{20,}"), "[金鑰已遮罩]"),
+    (re.compile(r"(?<![A-Za-z0-9_-])nvapi-[A-Za-z0-9_-]{20,}"), "[金鑰已遮罩]"),
+    (re.compile(r"(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])"), "[金鑰已遮罩]"),
+    (re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), "[金鑰已遮罩]"),
+    (re.compile(r"(?i)(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?![A-Z0-9.-])"), "[信箱已遮罩]"),
+    (re.compile(r"(?<!\d)09\d{2}[- ]?\d{3}[- ]?\d{3}(?!\d)"), "[電話已遮罩]"),
+    (re.compile(r"(?<![A-Za-z0-9])(?:\+?1[ .-]?)?(?:\([2-9]\d{2}\)|[2-9]\d{2})[ .-]?[2-9]\d{2}[ .-]?\d{4}(?![A-Za-z0-9])"), "[電話已遮罩]"),
+]
+_HEX_RUN = re.compile(r"(?<![0-9A-Za-z_-])[0-9a-fA-F]{32,}(?![0-9A-Za-z_-])")
+
+
+def redact_secrets(text):
+    text = _HEX_RUN.sub(lambda m: m.group(0) if len(m.group(0)) == 40 else "[金鑰已遮罩]", text)
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def transcript_text(path):
+    rows = []
+    with open(path, encoding="utf-8", errors="replace") as source:
+        for line in source:
+            try:
+                record = json.loads(line)
+            except Exception:
+                continue
+            role = record.get("type")
+            if role not in ("user", "assistant"):
+                continue
+            message = record.get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+            stamp = str(record.get("timestamp") or "")[:16]
+            for item in content or []:
+                if not isinstance(item, dict):
+                    continue
+                kind = item.get("type")
+                if kind == "text":
+                    text = str(item.get("text") or "").strip()
+                    if text:
+                        rows.append("## %s %s\n%s\n" % ("使用者" if role == "user" else "助理", stamp, private_filter(text)))
+                elif kind == "tool_use":
+                    args = item.get("input") or {}
+                    brief = next((args[key] for key in ("command", "file_path", "url", "prompt", "message") if args.get(key)), None)
+                    brief = private_filter(str(brief if brief is not None else json.dumps(args, ensure_ascii=False)))
+                    rows.append("- 工具 %s：%s" % (item.get("name", "tool"), brief[:300]))
+                elif kind == "tool_result":
+                    result = item.get("content")
+                    if isinstance(result, list):
+                        result = " ".join(str(part.get("text", "")) for part in result if isinstance(part, dict))
+                    result = private_filter(str(result or "").strip())
+                    if result:
+                        rows.append("  結果：%s" % result[:400])
+    text = redact_secrets("\n".join(rows).replace("\x00", ""))
+    if len(text) > 150_000:
+        text = "（前段省略，只留最近的紀錄）\n" + text[-150_000:]
+    return text
+
+
+def run_summary(engine, prompt):
+    if os.environ.get("CODENV_STATE_DIR"):
+        fake = os.environ.get("CODENV_TEST_CODEX_BIN" if engine == "codex" else "CODENV_TEST_AGY_BIN")
+        if not fake or not os.path.isfile(fake) or not os.access(fake, os.X_OK):
+            raise RuntimeError("隔離測試必須指定對應的假摘要模型")
+        executable = fake
+    else:
+        executable = os.environ.get("CODENV_CODEX_BIN") if engine == "codex" else os.path.expanduser("~/.local/bin/agyp")
+        if not executable or not os.path.isfile(executable):
+            executable = "codex" if engine == "codex" else "agyp"
+    if engine == "codex":
+        return subprocess.run([executable, "exec", "-m", "group/codex-free", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "-"],
+                              input=prompt, capture_output=True, text=True, timeout=900,
+                              cwd=tempfile.gettempdir())
+    return subprocess.run([executable, "--model", "gemini-4-hydrogen-high", "--print-timeout", "15m", "-p=" + prompt],
+                          capture_output=True, text=True, timeout=900)
+
+
+def main():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("conversation_id")
+    parser.add_argument("--transcript", required=True)
+    parser.add_argument("--engine", choices=("claude", "codex", "agy"), default="claude")
+    parser.add_argument("--summary-engine", choices=("engine", "legacy"), default="legacy")
+    args = parser.parse_args()
+    if not os.path.isfile(args.transcript):
+        sys.exit("找不到對話紀錄")
+
+    transcript = transcript_text(args.transcript)
+    title = os.environ.get("CODENV_HANDOFF_TITLE", "交接聊天室")
+    prompt = """不要執行指令、讀檔或上網，只根據以下資料撰寫繁體中文交接 Markdown。
+列出：聊天室負責事項、已完成與進行中（產出未確認需明說）、使用者決定與原話、待辦、真正產出與檔案位置、應避免的坑。
+只寫資料裡有的事實，不確定標「未確認」。
+
+=== 對話紀錄 ===
+%s
+""" % transcript
+
+    engine = args.engine if args.summary_engine == "engine" and args.engine in ("codex", "agy") else "agy"
+    try:
+        response = run_summary(engine, prompt)
+    except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+        sys.exit("摘要模型執行失敗：%s" % exc)
+    if response.returncode != 0 or len(response.stdout.strip()) < 200:
+        sys.exit("摘要模型未產生可用交接檔（exit %s）" % response.returncode)
+
+    state_dir = os.environ.get("CODENV_STATE_DIR")
+    if state_dir:
+        output_dir = os.path.join(state_dir, "handoff")
+    else:
+        projects_directory = "claude-" + "projects"
+        output_dir = os.path.join(os.path.expanduser("~"), projects_directory, "audit", "handoff")
+    os.makedirs(output_dir, mode=0o700, exist_ok=True)
+    name = re.sub(r"[/\\:\x00-\x1f]", "_", title).strip(" .") or "聊天室"
+    now = datetime.datetime.now().strftime("%Y-%m-%d")
+    safe_id = re.sub(r"[^A-Za-z0-9-]", "", args.conversation_id)[:8]
+    # 同日同名：base → base-<id> → base-<id>-2 → -3…，用 "x" 開檔保證不覆蓋、一定會終止
+    stem = "%s-%s" % (now, name)
+    candidates = ["%s-交接.md" % stem]
+    tag = safe_id or "n"
+    candidates.append("%s-%s-交接.md" % (stem, tag))
+    candidates.extend("%s-%s-%d-交接.md" % (stem, tag, n) for n in range(2, 1000))
+    destination = None
+    for candidate in candidates:
+        path = os.path.join(output_dir, candidate)
+        try:
+            with open(path, "x", encoding="utf-8") as out:
+                out.write(response.stdout)
+        except FileExistsError:
+            continue
+        destination = path
+        break
+    if destination is None:
+        sys.exit("同日交接檔已超過 1000 份，未寫入")
+    os.chmod(destination, 0o600)
+    print(destination)
+
+
+if __name__ == "__main__":
+    main()

@@ -27,13 +27,86 @@
 
   require.config({ paths: { vs: 'monaco/vs' } });
   require(['vs/editor/editor.main'], function () {
+    // C++ 語言設定是延遲載入的。只在它首次註冊時替三種括號加上字串限制，
+    // 以原設定為底複製，保留 comments、brackets、surroundingPairs、folding 等全部欄位。
+    const setLanguageConfiguration = monaco.languages.setLanguageConfiguration;
+    let cppStringConfigReady = false;
+    let cppOriginalConfiguration = null;
+    let cppEffectiveConfiguration = null;
+    function balancedParenthesisContents(depth, requireContent = false) {
+      const plainCharacter = '[^(){}]';
+      const anyItem = depth === 0
+        ? plainCharacter
+        : `(?:${plainCharacter}|\\(${balancedParenthesisContents(depth - 1)}\\))`;
+      if (!requireContent) return `${anyItem}*`;
+      const nonWhitespaceCharacter = '[^(){}\\s]';
+      const contentItem = depth === 0
+        ? nonWhitespaceCharacter
+        : `(?:${nonWhitespaceCharacter}|\\(${balancedParenthesisContents(depth - 1, true)}\\))`;
+      return `${anyItem}*${contentItem}${anyItem}*`;
+    }
+    // indentationRules 以 tokenizer 處理過的行比對；括號字元在字串／註解 token 內會先移除。
+    // 限制巢狀括號深度可避免把未完成的多行條件判成完整標頭。
+    const condition = `\\(${balancedParenthesisContents(8, true)}\\)`;
+    const controlHeaderSource = `^\\s*(?:(?:for|if|while)\\s*${condition}|else)(?:\\s*//.*)?\\s*$`;
+    const controlHeaderPattern = new RegExp(controlHeaderSource);
+    const oneLineBodyPattern = /^\s*(?!\s*(?:for|if|while|else)\b)(?!.*[{}])[^\r\n]*;\s*(?:\/\/.*)?\s*$/;
+    monaco.languages.setLanguageConfiguration = function (languageId, configuration) {
+      if (languageId === 'cpp' && configuration && Array.isArray(configuration.autoClosingPairs)) {
+        monaco.languages.setLanguageConfiguration = setLanguageConfiguration;
+        cppOriginalConfiguration = configuration;
+        const bracketOpeners = new Set(['(', '[', '{']);
+        const autoClosingPairs = configuration.autoClosingPairs.map(pair => {
+          if (!bracketOpeners.has(pair.open)) return pair;
+          return { ...pair, notIn: Array.from(new Set([...(pair.notIn || []), 'string'])) };
+        });
+        const previousIndentationRules = configuration.indentationRules || {};
+        const previousIndentNextLine = previousIndentationRules.indentNextLinePattern;
+        const indentNextLinePattern = previousIndentNextLine
+          ? new RegExp(`(?:${previousIndentNextLine.source})|(?:${controlHeaderSource})`, previousIndentNextLine.flags)
+          : controlHeaderPattern;
+        const outdentAfterSingleLineBody = {
+          beforeText: oneLineBodyPattern,
+          afterText: /^\s*$/,
+          previousLineText: controlHeaderPattern,
+          action: { indentAction: monaco.languages.IndentAction.Outdent },
+        };
+        const cppOnEnterRules = [...(configuration.onEnterRules || []), outdentAfterSingleLineBody];
+        cppEffectiveConfiguration = {
+          ...configuration,
+          autoClosingPairs,
+          indentationRules: { ...previousIndentationRules, indentNextLinePattern },
+          onEnterRules: cppOnEnterRules,
+        };
+        const result = setLanguageConfiguration.call(this, languageId, cppEffectiveConfiguration);
+        cppStringConfigReady = true;
+        return result;
+      }
+      return setLanguageConfiguration.call(this, languageId, configuration);
+    };
+
     const ed = monaco.editor.create(document.getElementById('editor'), {
       value: '', language: 'cpp', automaticLayout: true, fontSize: 14, readOnly: true,
       minimap: { enabled: false }, scrollBeyondLastLine: false, tabSize: 4, insertSpaces: true,
-      autoClosingBrackets: 'always', autoClosingQuotes: 'always', formatOnPaste: false,
+      autoIndent: 'full', autoClosingBrackets: 'always', autoClosingQuotes: 'always', formatOnPaste: false,
       renderWhitespace: 'none', wordWrap: 'off', theme: 'vs-dark', fixedOverflowWidgets: true,
     });
     let model = ed.getModel();
+    if (new URLSearchParams(location.search).get('codelabParenProbe') === '1') {
+      ed.updateOptions({ readOnly: false });
+      window.__codenvCodelabParenProbe = {
+        ready: () => cppStringConfigReady,
+        outdentAction: monaco.languages.IndentAction.Outdent,
+        reset(text = '') {
+          model.setValue(text);
+          const lineNumber = model.getLineCount();
+          ed.setPosition({ lineNumber, column: model.getLineMaxColumn(lineNumber) });
+        },
+        type(text) { ed.trigger('keyboard', 'type', { text }); return model.getValue(); },
+        value() { return model.getValue(); },
+        configurations() { return { original: cppOriginalConfiguration, effective: cppEffectiveConfiguration }; },
+      };
+    }
     let suppress = false;          // 程式自己換內容時不要回報「改過了」
     let path = '';
     let token = '';                // Swift 每次載入給新識別碼，拒收舊檔／舊網頁排著的訊息

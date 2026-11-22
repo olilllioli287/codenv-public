@@ -11,7 +11,7 @@ UserDefaults.standard.register(defaults: [
 
 // AI 工作台：自己的 AI 工作環境。左邊照 Codex 的側欄（專案→對話），右邊每個對話一格跑 Claude Code 的終端機。
 // 不用 tmux：關掉 App 再開，用 Claude 的 --resume 接回同一段對話。
-// 測試用參數：--dump-theme（印出從 iTerm 讀到的字型配色）、--state-dir <資料夾>（資料存到別的地方，不碰平常用的）、
+// 測試用參數：--dump-theme、--dump-interface-font、--dump-font-list、--dump-input-metrics [--input-lines N] [--input-attach-image]、--state-dir <資料夾>（資料存到別的地方，不碰平常用的）、
 //   --background（開起來不搶焦點）、--send "秒數:文字"（幾秒後把文字送進目前那格，可以給好幾個；\r 代表 Enter）
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { false }
@@ -28,7 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var importer: ImportWindowController?
     var organizer: OrganizerWindowController?
     private var autoImportTimer: Timer?
+    private var screenChangeCount = 0
+    private var screenChangeFlushWork: DispatchWorkItem?
     var recoveryProbeLabs: [CodeLabView] = [] // TestHarness 用
+    /// --lid-interrupt-output 的共用時間原點；在 AppDelegate 建立時記錄，所有 lid 探針事件都用相對秒。
+    let appLaunchDate = Date()
+    let appLaunchUptime = ProcessInfo.processInfo.systemUptime
     let appearance = AppearanceSettings()
 
     /// 資料夾鎖的檔案描述子：整個程序活著就一直開著（關了鎖就放掉）
@@ -51,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         signal(SIGPIPE, SIG_IGN)
         let args = CommandLine.arguments
         installTestHooksEarly(args)
+        TestScreen.installGuard()      // 測試用：--test-screen 找得到那台螢幕時，所有視窗顯示前先搬進去（TestScreen.swift）
         EventLog.start()
         // 同一個資料夾只准一個 codenv：兩個各自載入再輪流寫整份 state.json 會互蓋，第二個還會刪掉第一個的 browser socket（Astra 11/5）
         // 鎖在獨立的 codenv.lock（不鎖會被原子替換的 state.json）；程序結束或當掉時系統自動放開。不同 --state-dir 照樣能並行
@@ -79,8 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store = Store()
         }
         EventLog.log(L("啟動"), L("codenv \(Edition.version.isEmpty ? "dev" : Edition.version)，\(Feedback.systemLine)，螢幕：\(EventLog.screensSummary())"))
-        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
-            EventLog.log(L("螢幕"), L("螢幕設定變更：\(EventLog.screensSummary())"))
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.recordScreenParameterChange()
         }
         // 按鍵統計（KeyStats.swift）：讀進舊的統計，之後按鍵才開始記（存在 state 資料夾）
         KeyStats.shared.start(in: store.directory)
@@ -113,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.openSettings = { [weak self] in self?.showSettings() }
         buildMenu()
         Prefs.shared.applyAppearance()
+        InterfaceFont.checkAtLaunch()
         GeminiSkin.startObservingAppearance()
         UpdateCheck.shared.start(directory: store.directory)
         // 公版 agy 預設開但提醒還沒看過：開 App、回到前景時跳一次（看板執行器沒領步驟、桌寵提醒的時候就是靠這個叫人回來看）
@@ -145,7 +152,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             main.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
+        // 測試用：找不到指定螢幕（只有內建螢幕）時主視窗透明、滑鼠穿透、推到角落（要在 orderBack／showWindow 之後做）
+        if let w = main.window { TestScreen.concealIfNoScreen(w) }
+        if let w = main.window { WindowDiag.startStuckMonitor(mainWindow: w) }
         installTestHooks(args)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        WindowDiag.recordDockReopen(window: main?.window, isAppActive: sender.isActive, hasVisibleWindows: flag)
+        WindowDiag.handleDockReopenRescue(window: main?.window)
+        return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
@@ -252,8 +268,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for p in workspace.panes.values { p.terminate() }
         main.lidKeeper?.shutdown()
         main.floatingTerminal.terminate()
+        flushScreenChangeLog()
         EventLog.log(L("結束"), L("codenv 結束"))
         EventLog.flush()
+    }
+
+    private func recordScreenParameterChange() {
+        screenChangeCount += 1
+        guard screenChangeFlushWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.flushScreenChangeLog()
+        }
+        screenChangeFlushWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
+    private func flushScreenChangeLog() {
+        screenChangeFlushWork?.cancel()
+        screenChangeFlushWork = nil
+        let count = screenChangeCount
+        screenChangeCount = 0
+        guard count > 0 else { return }
+        if count == 1 {
+            EventLog.log(L("螢幕"), L("螢幕設定變更：\(EventLog.screensSummary())"))
+        } else {
+            EventLog.log(L("螢幕"), "螢幕設定變更 ×\(count)：\(EventLog.screensSummary())")
+        }
     }
 
     /// ⌘ W：關設定、整理對話這類小視窗；在主視窗是關掉目前那格（只剩一格才關 Window，對話留在側欄），主視窗本身不關
@@ -417,6 +457,14 @@ if let i = CommandLine.arguments.firstIndex(of: "--state-dir") {
         exit(2)
     }
 }
+if CommandLine.arguments.contains("--drop-focus-probe") {
+    guard let s = CommandLine.arguments.firstIndex(of: "--state-dir"), s + 1 < CommandLine.arguments.count,
+          let p = CommandLine.arguments.firstIndex(of: "--drop-focus-probe"), p + 1 < CommandLine.arguments.count else {
+        FileHandle.standardError.write(Data("codenv：--drop-focus-probe 需要 --state-dir 與 JSON 輸出路徑\n".utf8)); exit(2)
+    }
+    let state = URL(fileURLWithPath: CommandLine.arguments[s + 1], isDirectory: true)
+    exit(ChatInputBar.runDropFocusProbe(in: state, output: CommandLine.arguments[p + 1]) ? 0 : 1)
+}
 if CommandLine.arguments.contains("--quote-selftest") { exit(QuoteTextTests.run() ? 0 : 1) }
 
 // 在任何 App／EventLog／偏好設定初始化之前退出，不讀取日常資料，也不開視窗。
@@ -428,7 +476,34 @@ if let i = CommandLine.arguments.firstIndex(of: "--archive-selftest"), i + 1 < C
    let s = CommandLine.arguments.firstIndex(of: "--state-dir"), s + 1 < CommandLine.arguments.count {
     exit(Store.runArchiveSelfTest(in: URL(fileURLWithPath: CommandLine.arguments[s + 1], isDirectory: true),
                                   out: CommandLine.arguments[i + 1],
-                                  waitStop: CommandLine.arguments.contains("--wait-stop")) ? 0 : 1)
+                                  waitStop: CommandLine.arguments.contains("--wait-stop"),
+                                  includeHandoff: CommandLine.arguments.contains("--handoff-selftest")) ? 0 : 1)
+}
+if let i = CommandLine.arguments.firstIndex(of: "--area-lead-selftest"), i + 1 < CommandLine.arguments.count,
+   let s = CommandLine.arguments.firstIndex(of: "--state-dir"), s + 1 < CommandLine.arguments.count {
+    exit(Store.runAreaLeadSelfTest(in: URL(fileURLWithPath: CommandLine.arguments[s + 1], isDirectory: true),
+                                   out: CommandLine.arguments[i + 1]) ? 0 : 1)
+}
+if let i = CommandLine.arguments.firstIndex(of: "--engine-area-selftest"), i + 1 < CommandLine.arguments.count,
+   let s = CommandLine.arguments.firstIndex(of: "--state-dir"), s + 1 < CommandLine.arguments.count {
+    exit(Store.runEngineAreaSelfTest(in: URL(fileURLWithPath: CommandLine.arguments[s + 1], isDirectory: true),
+                                     out: CommandLine.arguments[i + 1]) ? 0 : 1)
+}
+if let i = CommandLine.arguments.firstIndex(of: "--local-tool-truncation-selftest"), i + 1 < CommandLine.arguments.count,
+   let s = CommandLine.arguments.firstIndex(of: "--state-dir"), s + 1 < CommandLine.arguments.count {
+    exit(LocalBridge.runToolTruncationSelfTest(in: URL(fileURLWithPath: CommandLine.arguments[s + 1], isDirectory: true),
+                                               out: CommandLine.arguments[i + 1]) ? 0 : 1)
+}
+if let i = CommandLine.arguments.firstIndex(of: "--retry-policy-selftest"), i + 1 < CommandLine.arguments.count {
+    exit(RetryPolicy.runSelfTest(out: CommandLine.arguments[i + 1]) ? 0 : 1)
+}
+if let i = CommandLine.arguments.firstIndex(of: "--agy-retry-selftest"), i + 1 < CommandLine.arguments.count {
+    exit(AgyBridge.runRetrySelfTest(out: CommandLine.arguments[i + 1]) ? 0 : 1)
+}
+if let i = CommandLine.arguments.firstIndex(of: "--local-steer-selftest"), i + 1 < CommandLine.arguments.count,
+   let s = CommandLine.arguments.firstIndex(of: "--state-dir"), s + 1 < CommandLine.arguments.count {
+    exit(LocalBridge.runSteerSelfTest(in: URL(fileURLWithPath: CommandLine.arguments[s + 1], isDirectory: true),
+                                      out: CommandLine.arguments[i + 1]) ? 0 : 1)
 }
 
 let app = KeyStatsApp.shared   // 按鍵統計：按鍵先經過它（KeyStats.swift）

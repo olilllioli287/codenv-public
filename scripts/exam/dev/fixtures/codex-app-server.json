@@ -1,0 +1,19 @@
+{
+  "rateLimitsByLimitId": {
+    "codex": {
+      "limitId": "codex",
+      "primary": {
+        "usedPercent": 0,
+        "windowDurationMins": 43200,
+        "resetsAt": 1796860800
+      }
+    }
+  },
+  "rateLimitResetCredits": {
+    "availableCount": 2,
+    "credits": [
+      { "status": "available", "expiresAt": 1794009600 },
+      { "status": "available", "expiresAt": 1794355200 }
+    ]
+  }
+}

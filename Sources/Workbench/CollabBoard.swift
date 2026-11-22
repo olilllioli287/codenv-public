@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 // 協作看板（側欄最左邊的「協作」圖示，右邊打開）：兩個分頁——
-//   目標：使用者訂的事，拆成步驟、每步誰負責（codenv_1／codenv_2／你）、做到哪；最後一步「使用者驗收」只有本人能勾，勾了目標才算完成。
+//   目標：使用者訂的事，拆成步驟、每步誰負責（codenv_1／codenv_2／你）、做到哪；所有步驟完成目標即完成（不自動加「使用者驗收」，舊目標既有的保留可勾）。
 //     Claude 用 codenv-todo goal add 開的是「提議」，使用者按同意才生效（照建議）。下面另列「登記中的檔」。
 //   往來：兩個 Claude 互相傳了什麼。
 // 不另外接線：讀 codenv 裡各聊天室的 Claude 紀錄檔——
@@ -36,7 +36,7 @@ struct CollabStep: Identifiable, Equatable, Codable {
     var id: String
     var text: String
     var owner: String?
-    var state: String        // todo 待做／doing 進行中／done 完成／blocked 卡住
+    var state: String        // todo 待做／doing 進行中／reviewing 審查中／done 完成／blocked 卡住
     var at: String?
     // 看板 @agy（docs/agy-board-spec.md）用的；全都可以省略，沒有的步驟照舊
     var note: String?        // 退回的原因／卡住的原因
@@ -48,8 +48,9 @@ struct CollabStep: Identifiable, Equatable, Codable {
     var proxyBy: String?     // 總指揮代使用者勾的（codenv-todo step … 完成 --note 原話 --by 名字）：誰代勾
     var proxyNote: String?   // 代勾時附的
     var proxyConversation: String? = nil // 代勾指令來源聊天室的 UUID
+    var rejectCount: Int = 0 // 自動審查退回次數；舊看板缺欄位時從 0 開始
 
-    enum CodingKeys: String, CodingKey { case id, text, owner, state, at, note, attempt, result, mode, by, cancel, proxyBy, proxyNote, proxyConversation }
+    enum CodingKeys: String, CodingKey { case id, text, owner, state, at, note, attempt, result, mode, by, cancel, proxyBy, proxyNote, proxyConversation, rejectCount }
     /// 必要欄位照舊（缺了就解碼失敗）；@agy 的新欄位型別不對（例如手改成字串）只當成沒有，不要讓整份看板的目標都讀不出來
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -67,6 +68,7 @@ struct CollabStep: Identifiable, Equatable, Codable {
         proxyBy = try? c.decodeIfPresent(String.self, forKey: .proxyBy)
         proxyNote = try? c.decodeIfPresent(String.self, forKey: .proxyNote)
         proxyConversation = try? c.decodeIfPresent(String.self, forKey: .proxyConversation)
+        rejectCount = max(0, (try? c.decodeIfPresent(Int.self, forKey: .rejectCount)) ?? 0)
     }
     init(id: String, text: String, owner: String? = nil, state: String, at: String? = nil) {
         self.id = id; self.text = text; self.owner = owner; self.state = state; self.at = at
@@ -125,11 +127,15 @@ final class CollabBoardModel: ObservableObject {
     @Published private(set) var messages: [CollabMessage] = []
     @Published private(set) var pairs: [CollabPair] = []
     @Published private(set) var todos: [CollabTodo] = []
-    @Published private(set) var goals: [CollabGoal] = []
+    @Published private(set) var goals: [CollabGoal] = [] {
+        didSet { waitingOnYou = Self.countWaitingOnYou(goals) }
+    }
     @Published private(set) var findings: [CollabFinding] = []     // 舊的在前、新的在後
     @Published private(set) var agy = AgyStatus()
     /// 「Claude 開的目標自動生效」：存在 collab.json 最上層 autoApprove（codenv-todo 也讀同一份，但只有這裡能改）
     @Published private(set) var autoApprove = Edition.autoApproveDefault
+    /// 使用者開啟後，一般施工步驟標完成時先交給阿公檢查 Git diff
+    @Published private(set) var autoReview = false
     /// 收起來的目標（照目標編號記在 appDefaults，重開還在；預設全部展開，collab.json 不動）
     @Published private(set) var collapsed: Set<String> = Set(appDefaults.stringArray(forKey: "collabCollapsed") ?? [])
     func toggleCollapsed(_ id: String) {
@@ -146,19 +152,36 @@ final class CollabBoardModel: ObservableObject {
     static let user = "你"
     static let verify = "使用者驗收"
     /// 看板上 @ 的名字 → 顯示的小標籤（跟 scripts/codenv-todo 的 AGENTS／NICK 一樣；Fable 不准加）
-    static let agyNick = ["gemini3.8flash": "Flash", "gemini4.0argon": "阿公"]
+    static let agyNick = ["gemini4hydrogen": "Hydrogen", "gemini3.8flash": "Hydrogen", "gemini4.0argon": "阿公"]
     /// 手動模式（使用者自己在終端機開 agy、貼 prompt、把回答貼回來）的 owner 名字 → 對應的模型。執行器一律不碰這兩個名字
-    static let manualTarget = ["手動flash": "gemini3.8flash", "手動argon": "gemini4.0argon"]
+    static let manualTarget = ["手動hydrogen": "gemini4hydrogen", "手動flash": "gemini3.8flash", "手動argon": "gemini4.0argon"]
     static func isManual(_ owner: String?) -> Bool { manualTarget[owner ?? ""] != nil }
     static func manualLabel(_ owner: String?) -> String { L("手動 \(manualTarget[owner ?? ""].flatMap { agyNick[$0] } ?? "")") }
-    /// 在等使用者的：Claude 提議的目標、輪到「你」的步驟
-    var waitingOnYou: Int { inbox.count }
+    /// 在等使用者的：Claude 提議的目標、審查升級、輪到「你」的決定步驟（隨 goals 變更同步更新快取）
+    private(set) var waitingOnYou: Int = 0
 
-    // MARK: 「待你處理」收件匣（只列要使用者決定、驗收的事；agent 之間的步驟和發現照存，不顯示在這）
+    private static func countWaitingOnYou(_ goals: [CollabGoal]) -> Int {
+        var count = 0
+        for g in goals {
+            if g.status == "proposed" {
+                count += 1
+            } else if g.status == "active", let st = g.current {
+                if st.state == "blocked", (st.note ?? "").hasPrefix("要使用者：") {
+                    count += 1
+                } else if st.owner == Self.user, st.state != "blocked",
+                          Self.isDecision(st.text) {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
 
-    /// 收件匣一項：提議中的目標（同意／不要），或 owner 是「你」的「決定：…」／驗收步驟（輪到的那一步）
+    // MARK: 「待你處理」收件匣（只列要使用者同意、決定、處理審查升級的事；agent 之間的步驟、使用者驗收和發現照存，不顯示在這）
+
+    /// 收件匣一項：提議中的目標（同意／不要）、審查升級，或 owner 是「你」的「決定：…」步驟（輪到的那一步）
     struct InboxItem: Identifiable, Equatable {
-        enum Kind: Equatable { case proposal, decision, verify }
+        enum Kind: Equatable { case proposal, decision, verify, reviewEscalation }
         let kind: Kind
         let goal: String
         let goalTitle: String
@@ -167,6 +190,7 @@ final class CollabBoardModel: ObservableObject {
         let done: String?        // 完成條件
         let by: String?          // 開這個目標的聊天室
         let at: Date?
+        let note: String?
         var id: String { kind == .proposal ? "p-" + goal : "s-" + goal + "-" + (step ?? "") }
     }
 
@@ -185,13 +209,17 @@ final class CollabBoardModel: ObservableObject {
         for g in goals {
             let gAt = g.at.flatMap { Self.parse($0) }
             if g.status == "proposed" {
-                out.append(InboxItem(kind: .proposal, goal: g.id, goalTitle: g.title, step: nil, title: g.title, done: g.done, by: g.by, at: gAt))
+                out.append(InboxItem(kind: .proposal, goal: g.id, goalTitle: g.title, step: nil, title: g.title, done: g.done, by: g.by, at: gAt, note: nil))
+            } else if g.status == "active", let st = g.current,
+                      st.state == "blocked", (st.note ?? "").hasPrefix("要使用者：") {
+                out.append(InboxItem(kind: .reviewEscalation, goal: g.id, goalTitle: g.title, step: st.id,
+                                     title: st.text, done: g.done, by: st.owner ?? g.by,
+                                     at: st.at.flatMap { Self.parse($0) } ?? gAt, note: st.note))
             } else if g.status == "active", let st = g.current, st.owner == Self.user, st.state != "blocked" {
-                // 別種「你」的步驟（例如手動貼東西）不進收件匣，完整看板還看得到
-                guard Self.isDecision(st.text) || Self.isVerifyStep(st.text) else { continue }
-                let kind: InboxItem.Kind = Self.isDecision(st.text) ? .decision : .verify
-                out.append(InboxItem(kind: kind, goal: g.id, goalTitle: g.title, step: st.id, title: st.text, done: g.done, by: g.by,
-                                     at: st.at.flatMap { Self.parse($0) } ?? gAt))
+                // 別種「你」的步驟（包含舊目標的「使用者驗收」、手動貼東西等）不進收件匣，完整看板還看得到
+                guard Self.isDecision(st.text) else { continue }
+                out.append(InboxItem(kind: .decision, goal: g.id, goalTitle: g.title, step: st.id, title: st.text, done: g.done, by: g.by,
+                                     at: st.at.flatMap { Self.parse($0) } ?? gAt, note: st.note))
             }
         }
         return out.sorted { ($0.at ?? .distantPast) > ($1.at ?? .distantPast) }
@@ -213,16 +241,55 @@ final class CollabBoardModel: ObservableObject {
     static let sessionsDir = stateDir?.appendingPathComponent("claude-sessions")
         ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/sessions")
     static let todoFile: URL = {
+        if let path = ProcessInfo.processInfo.environment["CODENV_COLLAB_FILE"], !path.isEmpty {
+            return URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        }
         if let d = stateDir { return d.appendingPathComponent("collab.json") }
         return Edition.support("collab.json")
     }()
 
     // MARK: 讀紀錄
 
+    /// 檔案快取指紋（mtime＋size＋inode/resourceID），用來判斷檔案有沒有被改寫或替換。
+    private struct FileStamp: Equatable {
+        let mtime: Date
+        let size: Int
+        let resourceID: NSObject?
+
+        static func == (lhs: FileStamp, rhs: FileStamp) -> Bool {
+            guard lhs.mtime == rhs.mtime, lhs.size == rhs.size else { return false }
+            if let a = lhs.resourceID, let b = rhs.resourceID { return a.isEqual(b) }
+            return lhs.resourceID == nil && rhs.resourceID == nil
+        }
+    }
+
+    private static func fileStamp(for url: URL) -> FileStamp? {
+        // 每次建新 URL 避開 NSURL 內建的 resourceValues 快取（todoFile／sessionsDir 是 static let）
+        let fresh = URL(fileURLWithPath: url.path)
+        guard let vals = try? fresh.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey, .fileResourceIdentifierKey]),
+              let mtime = vals.contentModificationDate else { return nil }
+        return FileStamp(mtime: mtime, size: vals.fileSize ?? 0, resourceID: vals.fileResourceIdentifier as? NSObject)
+    }
+
+    private struct ScanInputKey: Equatable {
+        let id: UUID
+        let url: URL
+        let title: String
+    }
+
     /// 每份紀錄檔讀到哪（只讀新加的部分）、讀出來的東西
-    private struct FileScan { var sessionKey = ""; var offset: UInt64 = 0; var size: UInt64 = 0; var out: [Raw] = []; var socketNames: [String: String] = [:]; var lastUser: Date = .distantPast }
+    private struct FileScan { var sessionKey = ""; var offset: UInt64 = 0; var size: UInt64 = 0; var stamp: FileStamp? = nil; var out: [Raw] = []; var socketNames: [String: String] = [:]; var lastUser: Date = .distantPast }
     private struct Raw { let time: Date; let incoming: Bool; let peer: String; let body: String }
     private var scans: [URL: FileScan] = [:]
+    private var hasCachedLiveNames = false
+    private var cachedLiveFileStamps: [String: FileStamp] = [:]
+    private var cachedLiveNamesResult: (sessions: [String: String], sockets: [String: String]) = ([:], [:])
+    private var hasCachedScan = false
+    private var cachedScanInputs: [ScanInputKey] = []
+    private var cachedScanLiveSessions: [String: String] = [:]
+    private var cachedScanLiveSockets: [String: String] = [:]
+    private var cachedScanNames: [UUID: String] = [:]
+    private var cachedScanResult: ([CollabMessage], [CollabPair]) = ([], [])
     private var lastNames: [UUID: String] = [:]      // scan 認出來的「聊天室 → Claude 的名字」（背景執行緒寫、refresh 讀）
     private(set) var convByName: [String: UUID] = [:]
     private let queue = DispatchQueue(label: "collab-board")
@@ -234,11 +301,12 @@ final class CollabBoardModel: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
-        // collab.json 還沒有 autoApprove 就寫入預設（codenv-todo 只讀這個鍵，沒有等於關）
+        // collab.json 還沒有設定時寫入預設；CLI 僅讀取這些開關。
         edit { o in
-            guard o["autoApprove"] == nil else { return false }
-            o["autoApprove"] = Edition.autoApproveDefault
-            return true
+            var changed = false
+            if o["autoApprove"] == nil { o["autoApprove"] = Edition.autoApproveDefault; changed = true }
+            if o["autoReview"] == nil { o["autoReview"] = false; changed = true }
+            return changed
         }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.refresh() }
@@ -251,16 +319,20 @@ final class CollabBoardModel: ObservableObject {
         queue.async { [weak self] in
             guard let self else { return }
             let result = self.scan(src)
-            let (todos, goals) = Self.loadTodos()
-            let findings = Self.loadFindings()
+            let snap = Self.loadCollabSnapshot()
+            let todos = snap.todos
+            let goals = snap.goals
+            let findings = snap.findings
             let agy = Self.loadAgy()
-            let auto = Self.loadAutoApprove()
+            let auto = snap.autoApprove
+            let review = snap.autoReview
             var byName: [String: UUID] = [:]
             for (id, _, title) in src where byName[title] == nil { byName[title] = id }        // 還沒有紀錄檔的聊天室：用側欄上的標題
             for (id, name) in self.lastNames { byName[name] = id }                                 // 在跑的 Claude 的名字（codenv_1、codenv_2…）優先
             DispatchQueue.main.async {
                 self.convByName = byName
                 if let a = auto, self.autoApprove != a { self.autoApprove = a }
+                if let r = review, self.autoReview != r { self.autoReview = r }
                 if self.agy != agy { self.agy = agy }
                 self.busy = false
                 if self.messages != result.0 { self.messages = result.0 }
@@ -275,31 +347,43 @@ final class CollabBoardModel: ObservableObject {
 
     /// 背景執行緒：讀新加的行、整理成往來紀錄和每一對的來回次數
     private func scan(_ src: [(UUID, URL, String)]) -> ([CollabMessage], [CollabPair]) {
-        let live = Self.liveNames()
+        let live = liveNamesCached()
         let recent = Date().addingTimeInterval(-14 * 86400)
         var names: [UUID: String] = [:]
         defer { lastNames = names }
         var socketNames: [String: String] = live.sockets
         var perConv: [(UUID, FileScan)] = []
+        var activeInputs: [ScanInputKey] = []
+        var anyFileChanged = false
         for (id, url, title) in src {
-            guard let m = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate, m > recent else { continue }
+            guard let stamp = Self.fileStamp(for: url), stamp.mtime > recent else { continue }
             var s = scans[url] ?? FileScan()
-            Self.readNew(url, into: &s)
-            s.sessionKey = url.deletingPathExtension().lastPathComponent.lowercased()
-            scans[url] = s
+            if s.stamp != stamp {
+                Self.readNew(url, into: &s)
+                s.stamp = stamp
+                s.sessionKey = url.deletingPathExtension().lastPathComponent.lowercased()
+                scans[url] = s
+                anyFileChanged = true
+            }
+            activeInputs.append(ScanInputKey(id: id, url: url, title: title))
             names[id] = live.sessions[s.sessionKey] ?? title
             socketNames.merge(s.socketNames) { a, _ in a }
             perConv.append((id, s))
         }
+        if hasCachedScan && !anyFileChanged
+            && activeInputs == cachedScanInputs
+            && live.sessions == cachedScanLiveSessions
+            && live.sockets == cachedScanLiveSockets {
+            names = cachedScanNames
+            return cachedScanResult
+        }
         // Claude 已經結束（讀不到即時名字）時，從對方的紀錄推：A 送出的內容在 B 那邊以「from-name=甲」收到 → A 叫甲、B 叫 A 送的 to
         // 投遞時會把內文裡的 <cross-session-message 改寫成 <\\cross-session-message（防偽造標籤），比對前統一回原樣
-        let norm = { (b: String) in b.replacingOccurrences(of: #"<(/?)\\(cross-session-message)"#, with: "<$1$2", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines) }
         var incomingBy: [String: (UUID, String)] = [:]   // 內容 → (收方, 送方名字)
-        for (id, s) in perConv { for r in s.out where r.incoming { incomingBy[norm(r.body)] = (id, r.peer) } }
+        for (id, s) in perConv { for r in s.out where r.incoming { incomingBy[Self.norm(r.body)] = (id, r.peer) } }
         for (id, s) in perConv where live.sessions[s.sessionKey] == nil {
             for r in s.out where !r.incoming {
-                guard let (rcv, fromName) = incomingBy[norm(r.body)], rcv != id else { continue }
+                guard let (rcv, fromName) = incomingBy[Self.norm(r.body)], rcv != id else { continue }
                 names[id] = fromName
                 if live.sessions[perConv.first { $0.0 == rcv }?.1.sessionKey ?? ""] == nil, !r.peer.hasPrefix("uds:") { names[rcv] = r.peer }
                 break
@@ -316,7 +400,7 @@ final class CollabBoardModel: ObservableObject {
             for r in s.out {
                 let peer = r.peer.hasPrefix("uds:") ? (socketNames[r.peer] ?? r.peer) : r.peer
                 let (from, to) = r.incoming ? (peer, me) : (me, peer)
-                let body = norm(r.body)
+                let body = Self.norm(r.body)
                 let key = from + "\u{1}" + to + "\u{1}" + body
                 parts[key] = (from, to, body)
                 if r.incoming { gets[key, default: []].append(Side(time: r.time, conv: id)) }
@@ -350,23 +434,99 @@ final class CollabBoardModel: ObservableObject {
             let since = sides.map { $0.1.lastUser }.max() ?? .distantPast
             pairList.append(CollabPair(a: ab[0], b: ab[1], count: list.filter { $0.time > since }.count, conversations: sides.map { $0.0 }))
         }
-        return (Array(msgs.suffix(300)), pairList.sorted { $0.id < $1.id })
+        let outResult = (Array(msgs.suffix(300)), pairList.sorted { $0.id < $1.id })
+        hasCachedScan = true
+        cachedScanInputs = activeInputs
+        cachedScanLiveSessions = live.sessions
+        cachedScanLiveSockets = live.sockets
+        cachedScanNames = names
+        cachedScanResult = outResult
+        return outResult
     }
 
-    /// ~/.claude/sessions/*.json（正在跑的 Claude）：紀錄編號 → 名字、socket → 名字
-    private static func liveNames() -> (sessions: [String: String], sockets: [String: String]) {
+    /// ~/.claude/sessions/*.json（正在跑的 Claude）：紀錄編號 → 名字、socket → 名字（背景佇列專用快取）
+    private func liveNamesCached() -> (sessions: [String: String], sockets: [String: String]) {
+        let dir = URL(fileURLWithPath: Self.sessionsDir.path, isDirectory: true)
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey, .fileResourceIdentifierKey]
+        let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys)) ?? [])
+            .filter { $0.pathExtension == "json" }
+        var stamps: [String: FileStamp] = [:]
+        stamps.reserveCapacity(files.count)
+        let keySet = Set(keys)
+        for f in files {
+            if let vals = try? f.resourceValues(forKeys: keySet),
+               let mtime = vals.contentModificationDate {
+                stamps[f.lastPathComponent] = FileStamp(
+                    mtime: mtime,
+                    size: vals.fileSize ?? 0,
+                    resourceID: vals.fileResourceIdentifier as? NSObject
+                )
+            }
+        }
+        if hasCachedLiveNames && stamps == cachedLiveFileStamps {
+            return cachedLiveNamesResult
+        }
         var s: [String: String] = [:], k: [String: String] = [:]
-        for f in (try? FileManager.default.contentsOfDirectory(at: sessionsDir, includingPropertiesForKeys: nil)) ?? [] where f.pathExtension == "json" {
+        for f in files {
             guard let d = try? Data(contentsOf: f), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let name = o["name"] as? String, !name.isEmpty else { continue }
             if let id = o["sessionId"] as? String { s[id.lowercased()] = name }
             if let sock = o["messagingSocketPath"] as? String { k["uds:" + sock] = name }
         }
+        hasCachedLiveNames = true
+        cachedLiveFileStamps = stamps
+        cachedLiveNamesResult = (s, k)
         return (s, k)
     }
 
     private static let crossRE = try! NSRegularExpression(pattern: #"<cross-session-message from="([^"]*)"(?: from-name="([^"]*)")?[^>]*>\n?([\s\S]*?)\n?</cross-session-message>"#)
-    private static let iso: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+    private static let normRE = try! NSRegularExpression(pattern: #"<(/?)\\(cross-session-message)"#)
+    private static func norm(_ b: String) -> String {
+        normRE.stringByReplacingMatches(in: b, range: NSRange(b.startIndex..., in: b), withTemplate: "<$1$2")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // ISO8601DateFormatter／DateFormatter 非執行緒安全：主執行緒獨立持有一組，背景執行緒另持一組並加鎖保護。
+    private static let mainISOFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let mainISOPlain = ISO8601DateFormatter()
+    private static let bgDateLock = NSLock()
+    private static let bgISOFrac: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let bgISOPlain = ISO8601DateFormatter()
+    private static let bgDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .autoupdatingCurrent
+        f.dateFormat = "yyyy-MM-dd"   // Python 寫的是公曆
+        return f
+    }()
+
+    private static func formatISO(_ date: Date = Date()) -> String {
+        if Thread.isMainThread { return mainISOFrac.string(from: date) }
+        bgDateLock.lock()
+        defer { bgDateLock.unlock() }
+        return bgISOFrac.string(from: date)
+    }
+
+    private static func parseISOFracOnBG(_ s: String) -> Date? {
+        bgDateLock.lock()
+        defer { bgDateLock.unlock() }
+        return bgISOFrac.date(from: s)
+    }
+
+    private static func todayGregorianString() -> String {
+        bgDateLock.lock()
+        defer { bgDateLock.unlock() }
+        return bgDayFormatter.string(from: Date())
+    }
 
     /// 從上次讀到的地方往下讀到最後一個換行
     private static func readNew(_ url: URL, into s: inout FileScan) {
@@ -403,7 +563,7 @@ final class CollabBoardModel: ObservableObject {
         let maybeUser = line.range(of: Data("\"user\"".utf8)) != nil
         guard hasCross || hasSend || maybeUser,
               let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any], let type = o["type"] as? String else { return }
-        let time = (o["timestamp"] as? String).flatMap { iso.date(from: $0) } ?? Date.distantPast
+        let time = (o["timestamp"] as? String).flatMap { parseISOFracOnBG($0) } ?? Date.distantPast
         if type == "assistant", hasSend, let blocks = (o["message"] as? [String: Any])?["content"] as? [[String: Any]] {
             for b in blocks where b["type"] as? String == "tool_use" && b["name"] as? String == "SendMessage" {
                 guard let inp = b["input"] as? [String: Any], let to = inp["to"] as? String,
@@ -460,38 +620,99 @@ final class CollabBoardModel: ObservableObject {
 
     static let columns: [(key: String, title: String)] = [("locked", "登記中的檔"), ("deliver", "待交件（舊）"), ("verify", "待使用者驗收（舊）"), ("blocked", "卡住（舊）")]
 
-    static func parse(_ s: String) -> Date? { iso.date(from: s) ?? ISO8601DateFormatter().date(from: s) }
+    static func parse(_ s: String) -> Date? {
+        if Thread.isMainThread {
+            return mainISOFrac.date(from: s) ?? mainISOPlain.date(from: s)
+        }
+        bgDateLock.lock()
+        defer { bgDateLock.unlock() }
+        return bgISOFrac.date(from: s) ?? bgISOPlain.date(from: s)
+    }
+
+    private struct CollabFileSnapshot {
+        var todos: [CollabTodo] = []
+        var goals: [CollabGoal] = []
+        var findings: [CollabFinding] = []
+        var autoApprove: Bool? = nil
+        var autoReview: Bool? = nil
+    }
+
+    private static let collabCacheLock = NSLock()
+    private static var cachedCollabPath: String?
+    private static var cachedCollabStamp: FileStamp?
+    private static var cachedCollabSnapshot = CollabFileSnapshot()
+    private static var badCounts: [String: Int] = [:]
+
+    /// 檢查 collab.json 的 (mtime, size, resourceID)，未變直接回傳快取；有變動時單次讀取並共用解碼。
+    private static func loadCollabSnapshot() -> CollabFileSnapshot {
+        let url = todoFile
+        let path = url.path
+        let stamp = fileStamp(for: url)
+        collabCacheLock.lock()
+        if cachedCollabPath == path && cachedCollabStamp == stamp {
+            let hit = cachedCollabSnapshot
+            collabCacheLock.unlock()
+            return hit
+        }
+        collabCacheLock.unlock()
+
+        var snap = CollabFileSnapshot()
+        if stamp != nil {
+            // 讀取或頂層 JSON 解析失敗時不寫入快取，回傳空快照給這次呼叫，讓下次 refresh 重試。
+            guard let d = try? Data(contentsOf: url),
+                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
+                return snap
+            }
+            let decoder = JSONDecoder()
+            // 一筆壞掉的跳過、記一行 log，不要害整串（整個目標區）變空的
+            func decode<T: Decodable>(_ key: String) -> [T] {
+                guard let arr = o[key] as? [Any] else { return [] }
+                var bad = 0
+                let out: [T] = arr.compactMap { item in
+                    // 單獨的字串／數字不是合法的頂層 JSON：data(withJSONObject:) 會丟 ObjC 例外（try? 接不住、整個 App 崩潰），先擋掉
+                    guard JSONSerialization.isValidJSONObject(item),
+                          let j = try? JSONSerialization.data(withJSONObject: item),
+                          let v = try? decoder.decode(T.self, from: j) else { bad += 1; return nil }
+                    return v
+                }
+                collabCacheLock.lock()
+                let prevBad = badCounts[key, default: 0]
+                if bad != prevBad { badCounts[key] = bad }
+                collabCacheLock.unlock()
+                if bad != prevBad && bad > 0 {
+                    EventLog.log("看板", "collab.json 的 \(key) 有 \(bad) 筆格式壞掉，已跳過（原檔沒動）")
+                }
+                return out
+            }
+            snap.todos = decode("items")
+            snap.goals = decode("goals")
+            if let arr = o["findings"] as? [[String: Any]] {
+                snap.findings = arr.compactMap { f in
+                    guard let id = f["id"] as? String, let text = f["text"] as? String else { return nil }
+                    return CollabFinding(id: id, by: f["by"] as? String ?? "?", at: (f["at"] as? String).flatMap(parse),
+                                         goal: f["goal"] as? String, text: text, files: f["files"] as? [String] ?? [])
+                }
+            }
+            snap.autoApprove = o["autoApprove"] as? Bool
+            snap.autoReview = o["autoReview"] as? Bool
+        }
+
+        collabCacheLock.lock()
+        cachedCollabPath = path
+        cachedCollabStamp = stamp
+        cachedCollabSnapshot = snap
+        collabCacheLock.unlock()
+        return snap
+    }
 
     static func loadTodos() -> ([CollabTodo], [CollabGoal]) {
-        guard let d = try? Data(contentsOf: todoFile), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return ([], []) }
-        // 一筆壞掉的跳過、記一行 log，不要害整串（整個目標區）變空的
-        func decode<T: Decodable>(_ key: String) -> [T] {
-            guard let arr = o[key] as? [Any] else { return [] }
-            var bad = 0
-            let out: [T] = arr.compactMap { item in
-                // 單獨的字串／數字不是合法的頂層 JSON：data(withJSONObject:) 會丟 ObjC 例外（try? 接不住、整個 App 崩潰），先擋掉
-                guard JSONSerialization.isValidJSONObject(item), let j = try? JSONSerialization.data(withJSONObject: item), let v = try? JSONDecoder().decode(T.self, from: j) else { bad += 1; return nil }
-                return v
-            }
-            if bad != badCounts[key, default: 0] {
-                badCounts[key] = bad
-                if bad > 0 { EventLog.log("看板", "collab.json 的 \(key) 有 \(bad) 筆格式壞掉，已跳過（原檔沒動）") }
-            }
-            return out
-        }
-        return (decode("items"), decode("goals"))
+        let snap = loadCollabSnapshot()
+        return (snap.todos, snap.goals)
     }
-    private static var badCounts: [String: Int] = [:]
 
     /// 一筆壞掉的不要害整串讀不出來：逐筆讀、缺 id 或內容的跳過
     static func loadFindings() -> [CollabFinding] {
-        guard let d = try? Data(contentsOf: todoFile), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-              let arr = o["findings"] as? [[String: Any]] else { return [] }
-        return arr.compactMap { f in
-            guard let id = f["id"] as? String, let text = f["text"] as? String else { return nil }
-            return CollabFinding(id: id, by: f["by"] as? String ?? "?", at: (f["at"] as? String).flatMap(parse), goal: f["goal"] as? String,
-                                 text: text, files: f["files"] as? [String] ?? [])
-        }
+        loadCollabSnapshot().findings
     }
 
     /// 使用者在看板上刪（可以刪任何一筆；codenv-todo find rm 只能刪自己寫的）
@@ -506,13 +727,22 @@ final class CollabBoardModel: ObservableObject {
     }
 
     static func loadAutoApprove() -> Bool? {
-        (try? Data(contentsOf: todoFile)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["autoApprove"] as? Bool
+        loadCollabSnapshot().autoApprove
     }
 
-    /// 設定裡的開關：只有這裡寫得進 autoApprove（codenv-todo 沒有任何指令會改它）
+    static func loadAutoReview() -> Bool? {
+        loadCollabSnapshot().autoReview
+    }
+
+    /// 設定裡的開關：只有這裡能改 autoApprove／autoReview，codenv-todo 沒有任何寫入指令。
     func setAutoApprove(_ on: Bool) {
         autoApprove = on
         edit { o in o["autoApprove"] = on; return true }
+    }
+
+    func setAutoReview(_ on: Bool) {
+        autoReview = on
+        edit { o in o["autoReview"] = on; return true }
     }
 
     static var agyRuns: URL { todoFile.deletingLastPathComponent().appendingPathComponent("agy-runs") }
@@ -522,11 +752,10 @@ final class CollabBoardModel: ObservableObject {
         func json(_ name: String) -> [String: Any] {
             (try? JSONSerialization.jsonObject(with: Data(contentsOf: agyRuns.appendingPathComponent(name))) as? [String: Any]) ?? [:]
         }
-        func date(_ v: Any?) -> Date? { (v as? String).flatMap { ISO8601DateFormatter().date(from: $0) } }
+        func date(_ v: Any?) -> Date? { (v as? String).flatMap(parse) }
         let c = json("count.json")
         // 日期不是今天就是新的一天，件數歸零（執行器下次開始時才會改檔）
-        let f = DateFormatter(); f.calendar = Calendar(identifier: .gregorian); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"   // Python 寫的是公曆
-        if c["date"] as? String == f.string(from: Date()) { st.counts = c["counts"] as? [String: Int] ?? [:] }
+        if c["date"] as? String == todayGregorianString() { st.counts = c["counts"] as? [String: Int] ?? [:] }
         st.limits = c["dailyLimits"] as? [String: Int] ?? [:]   // 預設沒有每日上限（11/8 解除）；舊欄位 "limits" 不讀，免得顯示過期的 30／5
         let p = json("pause.json")
         if let u = date(p["until"]), u > Date() { st.pausedUntil = u; st.pauseReason = p["reason"] as? String ?? "" }
@@ -549,24 +778,29 @@ final class CollabBoardModel: ObservableObject {
             }
             defer { flock(fd, LOCK_UN); close(fd) }
             var o: [String: Any] = [:]
+            var previousElementCount: Int?
             if FileManager.default.fileExists(atPath: url.path) {
                 guard let d = try? Data(contentsOf: url), let parsed = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
                     return fail(L("看板檔（collab.json）讀不了或格式壞了，這次的修改沒有寫入（原檔沒動）"))
                 }
                 o = parsed
+                // 輪替依即將被覆蓋的磁碟舊檔判斷；fn(&o) 可能已增刪目標或步驟。
+                previousElementCount = Self.elementCount(parsed)
             }
             guard fn(&o), let out = try? JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted, .sortedKeys]) else { return }
             // 覆蓋前留一份上一版（collab.json.bak）：萬一哪裡又把資料改丟，還救得回來。
             // 元素（登記、目標、步驟…）變少的那次不換掉 .bak：不然緊接著的下一次寫入就把還好的那版洗掉（跟 codenv-todo 同一個規則）。先複製成暫存檔再改名，中途崩潰也不會沒有 .bak
-            // 規則：新內容的元素數不少於現有 .bak 才換（刪掉東西之後，再來一次元素數相等的寫入也洗不掉較完整的備份）
+            // 規則：目前磁碟舊檔的元素數不少於現有 .bak 才換；不能用修改後的內容洗掉較完整的備份。
             let bakCount = (try? Data(contentsOf: URL(fileURLWithPath: url.path + ".bak"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.map(Self.elementCount)
-            if FileManager.default.fileExists(atPath: url.path), bakCount == nil || Self.elementCount(o) >= bakCount! {
+            let shouldRotateBackup = previousElementCount.map { oldCount in bakCount.map { oldCount >= $0 } ?? true } ?? false
+            if FileManager.default.fileExists(atPath: url.path), shouldRotateBackup {
                 let bak = url.path + ".bak", btmp = url.path + ".bak.tmp"
                 try? FileManager.default.removeItem(atPath: btmp)
                 if (try? FileManager.default.copyItem(atPath: url.path, toPath: btmp)) != nil { _ = rename(btmp, bak) }
             }
             let tmp = url.deletingLastPathComponent().appendingPathComponent(".collab.\(getpid()).tmp")
-            guard FileManager.default.createFile(atPath: tmp.path, contents: out, attributes: [.posixPermissions: 0o600]), rename(tmp.path, url.path) == 0 else {
+            guard FileManager.default.createFile(atPath: tmp.path, contents: out, attributes: [.posixPermissions: 0o600]),
+                  { Store.fsyncFile(tmp.path); return true }(), rename(tmp.path, url.path) == 0 else {
                 try? FileManager.default.removeItem(at: tmp)
                 return fail(L("看板檔寫不進去，這次的修改沒有存"))
             }
@@ -581,7 +815,7 @@ final class CollabBoardModel: ObservableObject {
             guard let i = items.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == id }), var it = items[i] as? [String: Any] else { return false }
             if let col {
                 it["col"] = col
-                if col == "done" { it["doneAt"] = Self.iso.string(from: Date()) }
+                if col == "done" { it["doneAt"] = Self.formatISO() }
                 items[i] = it
             } else {
                 items.remove(at: i)
@@ -624,17 +858,16 @@ final class CollabBoardModel: ObservableObject {
             text = String(text[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
         }
         guard !text.isEmpty else { return nil }
-        var st: [String: Any] = ["id": newID(), "text": text, "state": "todo", "at": iso.string(from: Date())]
+        var st: [String: Any] = ["id": newID(), "text": text, "state": "todo", "at": formatISO()]
         if let owner, !owner.isEmpty { st["owner"] = owner }
         return st
     }
 
-    /// 使用者在看板上開的目標：直接生效，最後自動加「使用者驗收」
+    /// 使用者在看板上開的目標：直接生效（不自動加「使用者驗收」）
     func addGoal(title: String, done: String, steps: String) {
-        let now = Self.iso.string(from: Date())
+        let now = Self.formatISO()
         var g: [String: Any] = ["id": Self.newID(), "title": title, "status": "active", "at": now, "by": Self.user,
-                                "steps": steps.split(separator: "\n").compactMap { Self.parseStep(String($0)) }
-                                    + [["id": Self.newID(), "text": Self.verify, "owner": Self.user, "state": "todo", "at": now]]]
+                                "steps": steps.split(separator: "\n").compactMap { Self.parseStep(String($0)) }]
         if !done.isEmpty { g["done"] = done }
         edit { o in
             // goals 裡混了不是字典的元素也照原樣留著（轉型失敗就當空會把整串蓋掉）；goals 根本不是陣列就不寫
@@ -648,10 +881,9 @@ final class CollabBoardModel: ObservableObject {
     /// 記憶相關的提議（記憶容量提示、交接時的記憶提議）：一律「提議中」（不看 autoApprove），只有使用者自己的步驟，沒有任何 agent 步驟，
     /// 所以背景不會有人自己動手；使用者在看板同意後，才會有 Claude 去寫記憶。同標題還沒完成的不重複開；同來源的提議中最多留 limit 筆，免得洗版。
     func addMemoryProposal(title: String, done: String, step: String, by: String, limit: Int = 10) {
-        let now = Self.iso.string(from: Date())
+        let now = Self.formatISO()
         let g: [String: Any] = ["id": Self.newID(), "title": title, "status": "proposed", "at": now, "by": by, "done": done,
-                                "steps": [["id": Self.newID(), "text": step, "owner": Self.user, "state": "todo", "at": now],
-                                          ["id": Self.newID(), "text": Self.verify, "owner": Self.user, "state": "todo", "at": now]]]
+                                "steps": [["id": Self.newID(), "text": step, "owner": Self.user, "state": "todo", "at": now]]]
         edit { o in
             guard var raw = Self.rawArray(o["goals"]) else { return false }
             let goals = raw.compactMap { $0 as? [String: Any] }
@@ -673,7 +905,7 @@ final class CollabBoardModel: ObservableObject {
             // steps 讀不懂（混了非字典元素）就不動狀態：當成空會把已完成的目標誤改回進行中
             if let steps = g["steps"] as? [[String: Any]] {
                 let allDone = !steps.isEmpty && steps.allSatisfy { $0["state"] as? String == "done" }
-                if allDone, g["status"] as? String == "active" { g["status"] = "done"; g["doneAt"] = Self.iso.string(from: Date()) }
+                if allDone, g["status"] as? String == "active" { g["status"] = "done"; g["doneAt"] = Self.formatISO() }
                 if !allDone, g["status"] as? String == "done" { g["status"] = "active"; g["doneAt"] = nil }
             }
             goals[i] = g
@@ -759,14 +991,21 @@ final class CollabBoardModel: ObservableObject {
             guard var steps = Self.rawArray(g["steps"]),
                   let i = steps.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == step }),
                   let cur = steps[i] as? [String: Any] else { return g }
-            if var st = fn(cur) { st["at"] = Self.iso.string(from: Date()); steps[i] = st } else { steps.remove(at: i) }
+            if var st = fn(cur) { st["at"] = Self.formatISO(); steps[i] = st } else { steps.remove(at: i) }
             g["steps"] = steps
             return g
         }
     }
 
     func setStep(goal: String, step: String, state: String) {
-        editStep(goal: goal, step: step) { var st = $0; st["state"] = state; return st }
+        if state == "done", goals.first(where: { $0.id == goal })?.steps.first(where: { $0.id == step })?.state == "reviewing" { return }
+        editStep(goal: goal, step: step) { var st = $0
+            // 使用者放行被審查擋住的步驟（要使用者：…）：退回與出錯計數重新開始，不然再被退一次又馬上卡住
+            if st["state"] as? String == "blocked", (st["note"] as? String ?? "").hasPrefix("要使用者："), state == "todo" || state == "doing" {
+                st["rejectCount"] = 0
+                st.removeValue(forKey: "errorCount")
+            }
+            st["state"] = state; return st }
         if state == "todo", isAgy(goal: goal, step: step) { Self.kickAgy() }
     }
     func setOwner(goal: String, step: String, owner: String?) {
@@ -775,7 +1014,7 @@ final class CollabBoardModel: ObservableObject {
     }
     func deleteStep(goal: String, step: String) { editStep(goal: goal, step: step) { _ in nil } }
 
-    /// 加一步：放在「使用者驗收」前面
+    /// 加一步：若舊目標已有「使用者驗收@你」則放在它前面，否則加在最後
     func addStep(goal: String, line: String) {
         guard let st = Self.parseStep(line) else { return }
         editGoal(goal) { g in
@@ -826,6 +1065,20 @@ final class CollabBoardModel: ObservableObject {
 
     // 給聊天室的看板提示：存在 agy-runs/chat-notices.json，等那個聊天室送下一則訊息時附在前面（ChatPane.send）
     private static var noticeFile: URL { agyRuns.appendingPathComponent("chat-notices.json") }
+    private static let noticeLock = NSLock()
+    /// 讀－改－寫整段包在鎖裡（同程序用 NSLock、跨程序用 flock）：不然兩個地方同時 queueNotice／takeNotices 會互相蓋掉
+    private static func withNotices<T>(_ body: (inout [[String: String]]) -> T) -> T {
+        noticeLock.lock(); defer { noticeLock.unlock() }
+        try? FileManager.default.createDirectory(at: agyRuns, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let fd = Darwin.open(noticeFile.path + ".lock", O_CREAT | O_RDWR, 0o600)
+        if fd >= 0 { _ = flock(fd, LOCK_EX) }
+        defer { if fd >= 0 { _ = flock(fd, LOCK_UN); Darwin.close(fd) } }
+        var all = readNotices()
+        let before = all
+        let r = body(&all)
+        if all != before { writeNotices(all) }
+        return r
+    }
     private static func readNotices() -> [[String: String]] {
         (try? JSONDecoder().decode([[String: String]].self, from: Data(contentsOf: noticeFile))) ?? []
     }
@@ -834,22 +1087,26 @@ final class CollabBoardModel: ObservableObject {
         if let d = try? JSONEncoder().encode(n) { try? d.write(to: noticeFile, options: .atomic) }
     }
     static func queueNotice(conv: UUID, text: String) {
-        writeNotices(readNotices() + [["conv": conv.uuidString, "text": text]])
+        withNotices { $0.append(["conv": conv.uuidString, "text": text]) }
     }
     /// 這個聊天室等著的提示（拿走就清掉）；沒有就 nil
     static func takeNotices(for conv: UUID) -> String? {
-        let all = readNotices()
-        guard !all.isEmpty else { return nil }
-        let mine = all.filter { $0["conv"] == conv.uuidString }
-        guard !mine.isEmpty else { return nil }
-        writeNotices(all.filter { $0["conv"] != conv.uuidString })
-        return mine.compactMap { $0["text"] }.joined(separator: "\n")
+        withNotices { all in
+            let mine = all.filter { $0["conv"] == conv.uuidString }
+            guard !mine.isEmpty else { return nil }
+            all.removeAll { $0["conv"] == conv.uuidString }
+            return mine.compactMap { $0["text"] }.joined(separator: "\n")
+        }
+    }
+    /// 拿走的提示沒送出去（ChatPane.send 失敗）：放回最前面，下次送訊息還會附
+    static func restoreNotices(for conv: UUID, text: String) {
+        withNotices { $0.insert(["conv": conv.uuidString, "text": text], at: 0) }
     }
 
     // MARK: 看板 @agy（docs/agy-board-spec.md）：真正做事的是背景的 codenv-todo agy-run，App 只負責叫它起來
 
     /// 看板上的 @ 名字（跟 scripts/codenv-todo 的 AGENTS 一樣；Fable 不准加）
-    static let agyOwners: Set<String> = ["gemini3.8flash", "gemini4.0argon"]
+    static let agyOwners: Set<String> = ["gemini4hydrogen", "gemini3.8flash", "gemini4.0argon"]
 
     private func isAgy(goal: String, step: String) -> Bool {
         goals.first { $0.id == goal }?.steps.first { $0.id == step }.map { Self.agyOwners.contains($0.owner ?? "") } ?? false
@@ -944,6 +1201,8 @@ final class CollabBoardModel: ObservableObject {
         if stateDir != nil {
             // 測試版沒指定 --codenv-todo 就不叫：用正式的 codenv-todo 會在使用者的正式看板上開執行器
             guard let i = a.firstIndex(of: "--codenv-todo"), i + 1 < a.count else { return }
+            // 測試版的背景執行器也必須使用明確的假 agy，避免 helper 退回真實登入。
+            guard AgyBridge.canLaunchInCurrentInstance else { return }
             tool = a[i + 1]
         }
         guard AgyBridge.enabled, FileManager.default.isExecutableFile(atPath: tool) else { return }   // agy 功能關著就不叫背景執行器
@@ -952,6 +1211,11 @@ final class CollabBoardModel: ObservableObject {
         p.arguments = ["agy-start"]
         var env = ProcessInfo.processInfo.environment
         env["CODENV_COLLAB_FILE"] = todoFile.path
+        if stateDir != nil {
+            env["CODENV_AGY"] = AgyBridge.executable
+            // 看板測試執行器只可使用假 agy；將連線預檢留在本機。
+            env["CODENV_AGY_CHECK_HOST"] = "127.0.0.1"
+        }
         p.environment = env
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         try? p.run()
@@ -961,7 +1225,7 @@ final class CollabBoardModel: ObservableObject {
     var owners: [String] {
         var seen: [String] = []
         for n in messages.flatMap({ [$0.from, $0.to] }) + goals.flatMap({ $0.steps.compactMap(\.owner) }) where !n.hasPrefix("uds:") && n != Self.user && !seen.contains(n) { seen.append(n) }
-        for n in ["gemini3.8flash", "gemini4.0argon", "手動flash", "手動argon"] where !seen.contains(n) { seen.append(n) }   // 自動和手動隨時可以在選單切換
+        for n in ["gemini4hydrogen", "gemini4.0argon", "手動hydrogen", "手動argon"] where !seen.contains(n) { seen.append(n) }   // 舊 owner 仍會從現有步驟列出
         return seen.sorted() + [Self.user]
     }
 
@@ -978,7 +1242,7 @@ final class CollabBoardModel: ObservableObject {
         for t in todos { out += "todo [\(t.col)] \(t.id) \(t.text) by=\(t.by ?? "-")\n" }
         for g in goals {
             out += "goal \(g.id) [\(g.status)] \(g.title) \(g.progress) current=\(g.current.map { "\($0.text)@\($0.owner ?? "-")" } ?? "-")\n"
-            for st in g.steps { out += "  step \(st.id) [\(st.state)] \(st.text) @\(st.owner ?? "-")\n" }
+            for st in g.steps { out += "  step \(st.id) [\(st.state)] rejectCount=\(st.rejectCount) \(st.text) @\(st.owner ?? "-") note=\(st.note ?? "-")\n" }
         }
         out += "waitingOnYou=\(waitingOnYou)\n"
         out += "inbox=\(inbox.count)\n"
@@ -1173,10 +1437,21 @@ struct CollabBoardView: View {
         }
     }
 
-    private static func time(_ d: Date) -> String {
+    private static let timeTodayFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm" : "M/d HH:mm"
-        return f.string(from: d)
+        f.timeZone = .autoupdatingCurrent
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+    private static let timeDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeZone = .autoupdatingCurrent
+        f.dateFormat = "M/d HH:mm"
+        return f
+    }()
+
+    private static func time(_ d: Date) -> String {
+        (Calendar.current.isDateInToday(d) ? timeTodayFormatter : timeDateFormatter).string(from: d)
     }
 
     // MARK: 目標分頁
@@ -1288,17 +1563,26 @@ struct CollabBoardView: View {
     }
 
     private func stepRow(_ g: CollabGoal, _ st: CollabStep, current: Bool) -> some View {
-        let icon = ["done": "checkmark.circle.fill", "doing": "circle.inset.filled", "blocked": "xmark.circle"][st.state] ?? "circle"
+        let icon = ["done": "checkmark.circle.fill", "doing": "circle.inset.filled", "reviewing": "hourglass", "blocked": "xmark.circle"][st.state] ?? "circle"
         let mine = st.owner == CollabBoardModel.user
         return HStack(alignment: .top, spacing: 6) {
             Button { m.setStep(goal: g.id, step: st.id, state: st.state == "done" ? "todo" : "done") } label: {
                 Image(systemName: icon).font(.system(size: 12 * s))
                     .foregroundStyle(st.state == "done" ? Color.green : st.state == "blocked" ? Color.red : st.state == "doing" ? Color.accentColor : Color.secondary)
             }
-            .buttonStyle(.plain).help(L(st.state == "done" ? "改回待做" : "完成"))
+            .buttonStyle(.plain).disabled(st.state == "reviewing").help(L(st.state == "reviewing" ? "阿公審查中" : st.state == "done" ? "改回待做" : "完成"))
             VStack(alignment: .leading, spacing: 2) {
                 Text(st.text).font(.system(size: 12 * s)).strikethrough(st.state == "done", color: .secondary)
                     .foregroundStyle(st.state == "done" ? .secondary : .primary).textSelection(.enabled)
+                if st.state == "reviewing" {
+                    Text(L("審查中 · 阿公正在檢查 Git 變更")).font(.system(size: 10.5 * s)).foregroundStyle(Color.accentColor)
+                }
+                if st.rejectCount > 0 && st.state == "doing", let reason = st.note, !reason.isEmpty {
+                    Text(reason).font(.system(size: 10.5 * s)).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                if st.state == "blocked", (st.note ?? "").hasPrefix("要使用者：") {
+                    Text(st.note ?? "").font(.system(size: 10.5 * s)).foregroundStyle(.orange).textSelection(.enabled)
+                }
                 if CollabBoardModel.agyNick[st.owner ?? ""] != nil || CollabBoardModel.isManual(st.owner) { agyLine(st, g) }
                 if let by = st.proxyBy, st.state == "done" {
                     let source = st.proxyConversation.map { "（來源聊天室 ID：\(String($0.prefix(8)))）" } ?? ""
@@ -1323,15 +1607,17 @@ struct CollabBoardView: View {
         // 輪到你的那一步：底色標出來
         .background(RoundedRectangle(cornerRadius: 5).fill(current && mine ? Color.accentColor.opacity(0.15) : .clear))
         .contextMenu {
-            ForEach([("todo", L("待做")), ("doing", L("進行中")), ("done", L("完成")), ("blocked", L("卡住"))].filter { $0.0 != st.state }, id: \.0) { k, t in
-                Button(t) { m.setStep(goal: g.id, step: st.id, state: k) }
+            if st.state != "reviewing" {
+                ForEach([("todo", L("待做")), ("doing", L("進行中")), ("done", L("完成")), ("blocked", L("卡住"))].filter { $0.0 != st.state }, id: \.0) { k, t in
+                    Button(t) { m.setStep(goal: g.id, step: st.id, state: k) }
+                }
+                Menu(L("負責人")) {
+                    ForEach(m.owners, id: \.self) { o in Button(o) { m.setOwner(goal: g.id, step: st.id, owner: o) } }
+                    Button(L("（不指定）")) { m.setOwner(goal: g.id, step: st.id, owner: nil) }
+                }
+                Divider()
+                Button(L("刪掉這一步")) { m.deleteStep(goal: g.id, step: st.id) }
             }
-            Menu(L("負責人")) {
-                ForEach(m.owners, id: \.self) { o in Button(o) { m.setOwner(goal: g.id, step: st.id, owner: o) } }
-                Button(L("（不指定）")) { m.setOwner(goal: g.id, step: st.id, owner: nil) }
-            }
-            Divider()
-            Button(L("刪掉這一步")) { m.deleteStep(goal: g.id, step: st.id) }
         }
     }
 
@@ -1416,18 +1702,18 @@ struct CollabBoardView: View {
         let a = m.agy
         let hasAgyStep = m.goals.contains { g in g.steps.contains { CollabBoardModel.agyNick[$0.owner ?? ""] != nil } }
         if a.any || hasAgyStep {
-            let order = ["gemini4.0argon", "gemini3.8flash"]
+            let order = ["gemini4.0argon", "gemini4hydrogen"]
             let line = order.compactMap { k -> String? in
                 guard let nick = CollabBoardModel.agyNick[k] else { return nil }
-                if let lim = a.limits[k] { return L("\(nick) \(a.counts[k] ?? 0)／\(lim)") }
-                return L("\(nick) \(a.counts[k] ?? 0) 件")
+                let count = k == "gemini4hydrogen" ? (a.counts[k, default: 0] + a.counts["gemini3.8flash", default: 0]) : a.counts[k, default: 0]
+                let limit = a.limits[k] ?? (k == "gemini4hydrogen" ? a.limits["gemini3.8flash"] : nil)
+                if let limit { return L("\(nick) \(count)／\(limit)") }
+                return L("\(nick) \(count) 件")
             }.joined(separator: L("、"))
             VStack(alignment: .leading, spacing: 2) {
                 Text(L("今天 \(line)")).font(.system(size: 11 * s)).foregroundStyle(.secondary)
                 if let u = a.pausedUntil {
-                    let f = DateFormatter()
-                    let _ = f.dateFormat = "HH:mm"
-                    Text(L("暫停到 \(f.string(from: u))：\(a.pauseReason)")).font(.system(size: 11 * s)).foregroundStyle(.orange)
+                    Text(L("暫停到 \(Self.timeTodayFormatter.string(from: u))：\(a.pauseReason)")).font(.system(size: 11 * s)).foregroundStyle(.orange)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity, alignment: .leading)
@@ -1507,7 +1793,7 @@ struct InboxView: View {
     }
 
     private func kindLabel(_ k: CollabBoardModel.InboxItem.Kind) -> String {
-        switch k { case .proposal: return L("提議"); case .decision: return L("決定"); case .verify: return L("驗收") }
+        switch k { case .proposal: return L("提議"); case .decision: return L("決定"); case .verify: return L("驗收"); case .reviewEscalation: return L("需要使用者") }
     }
 
     private func ago(_ d: Date?) -> String {
@@ -1530,6 +1816,9 @@ struct InboxView: View {
             if isOpen {
                 if let d = it.done, !d.isEmpty {
                     Text(L("怎樣算完成：\(d)")).font(.system(size: 11 * s)).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                if let n = it.note, !n.isEmpty {
+                    Text(n).font(.system(size: 11 * s)).foregroundStyle(it.kind == .reviewEscalation ? Color.orange : Color.secondary).textSelection(.enabled)
                 }
                 actions(it)
             }
@@ -1563,6 +1852,9 @@ struct InboxView: View {
                     Button(L("已驗")) { m.inboxVerified(it); open = nil }.keyboardShortcut(.defaultAction)
                 }.controlSize(.small)
             }
+        case .reviewEscalation:
+            Text(L("審查退回已超過 3 次，步驟已停止。請到完整看板查看原因，再決定是否重新交辦或調整負責人。"))
+                .font(.system(size: 11 * s)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1600,7 +1892,7 @@ struct GoalEditor: View {
             TextField(L("目標（例如：排程喚醒上線）"), text: $title)
             TextField(L("怎樣算完成（例如：重開後排程還在；到點有送）"), text: $done)
             if draft.goalID == nil {
-                Text(L("步驟：一行一步，「內容@負責人」，負責人可以寫 codenv_1、codenv_2、你；不寫負責人就是「沒人領」，Claude 有空時會自己領。最後會自動加「使用者驗收」。"))
+                Text(L("步驟：一行一步，「內容@負責人」，負責人可以寫 codenv_1、codenv_2、你；不寫負責人就是「沒人領」，Claude 有空時會自己領。"))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 TextEditor(text: $steps).font(.system(size: 12)).frame(height: 110)
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))

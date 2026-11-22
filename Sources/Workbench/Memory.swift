@@ -130,12 +130,12 @@ struct MemoryBlock: View {
             Button(action: { open.toggle(); if open { m.refresh() } }) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(L("記憶體")).font(.system(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary)
+                        Text(L("記憶體")).font(InterfaceFont.swiftUIFont(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary)
                         Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9 * s, weight: .semibold)).foregroundStyle(.tertiary)
                         Spacer()
-                        Text(MemoryMonitor.format(m.total)).font(.system(size: 15 * s, weight: .semibold)).monospacedDigit()
+                        Text(MemoryMonitor.format(m.total)).font(InterfaceFont.swiftUIFont(size: 15 * s, weight: .semibold)).monospacedDigit()
                     }
-                    Text(summary).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+                    Text(summary).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
             }
@@ -144,10 +144,10 @@ struct MemoryBlock: View {
             if open {
                 ForEach(m.rows) { r in
                     HStack(alignment: .firstTextBaseline) {
-                        Text(r.label).font(.system(size: 12 * s)).lineLimit(1).truncationMode(.tail)
-                        if r.count > 1 { Text("×\(r.count)").font(.system(size: 10 * s)).foregroundStyle(.tertiary) }
+                        Text(r.label).font(InterfaceFont.swiftUIFont(size: 12 * s)).lineLimit(1).truncationMode(.tail)
+                        if r.count > 1 { Text("×\(r.count)").font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(.tertiary) }
                         Spacer()
-                        Text(MemoryMonitor.format(r.bytes)).font(.system(size: 12 * s)).monospacedDigit().foregroundStyle(.secondary)
+                        Text(MemoryMonitor.format(r.bytes)).font(InterfaceFont.swiftUIFont(size: 12 * s)).monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
             }
@@ -172,17 +172,17 @@ struct MemoryDetailList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(L("記憶體")).font(.system(size: 12 * s, weight: .semibold))
+                Text(L("記憶體")).font(InterfaceFont.swiftUIFont(size: 12 * s, weight: .semibold))
                 Spacer()
-                Text(MemoryMonitor.format(m.total)).font(.system(size: 12 * s, weight: .semibold)).monospacedDigit()
+                Text(MemoryMonitor.format(m.total)).font(InterfaceFont.swiftUIFont(size: 12 * s, weight: .semibold)).monospacedDigit()
             }
             Divider()
             ForEach(m.rows) { r in
                 HStack(alignment: .firstTextBaseline) {
-                    Text(r.label).font(.system(size: 11.5 * s)).lineLimit(1).truncationMode(.tail)
-                    if r.count > 1 { Text("×\(r.count)").font(.system(size: 10 * s)).foregroundStyle(.tertiary) }
+                    Text(r.label).font(InterfaceFont.swiftUIFont(size: 11.5 * s)).lineLimit(1).truncationMode(.tail)
+                    if r.count > 1 { Text("×\(r.count)").font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(.tertiary) }
                     Spacer(minLength: 12)
-                    Text(MemoryMonitor.format(r.bytes)).font(.system(size: 11.5 * s)).monospacedDigit().foregroundStyle(.secondary)
+                    Text(MemoryMonitor.format(r.bytes)).font(InterfaceFont.swiftUIFont(size: 11.5 * s)).monospacedDigit().foregroundStyle(.secondary)
                 }
             }
         }

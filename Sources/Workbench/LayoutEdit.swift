@@ -216,6 +216,27 @@ extension Store {
         Self.move(&sessions, from: si, to: max(0, min(index, sessions.count)))
     }
 
+    /// 只調整首頁總指揮在 sessions 陣列中的槽位；state.json 沿用既有 sessions 順序保存。
+    func moveCommander(_ id: UUID, to index: Int) {
+        let commanders = sessions.filter { $0.area == nil && $0.groups != nil }
+        guard let from = commanders.firstIndex(where: { $0.id == id }), !commanders.isEmpty else { return }
+        let ids = Self.movedCommanderIDs(commanders.map(\.id), from: from, to: index)
+        var ordered = ids.compactMap { wanted in commanders.first { $0.id == wanted } }.makeIterator()
+        sessions = sessions.map { session in
+            guard session.area == nil, session.groups != nil else { return session }
+            return ordered.next() ?? session
+        }
+    }
+
+    /// Array.move(fromOffsets:toOffset:) 的純邏輯，to 是移除來源前的插入位置。
+    static func movedCommanderIDs(_ ids: [UUID], from: Int, to: Int) -> [UUID] {
+        guard ids.indices.contains(from) else { return ids }
+        var moved = ids
+        let item = moved.remove(at: from)
+        moved.insert(item, at: max(0, min(to > from ? to - 1 : to, moved.count)))
+        return moved
+    }
+
     /// 跟 SwiftUI 的 Array.move(fromOffsets:toOffset:) 一樣：to 是搬之前的位置
     private static func move<T>(_ a: inout [T], from: Int, to: Int) {
         guard a.indices.contains(from) else { return }

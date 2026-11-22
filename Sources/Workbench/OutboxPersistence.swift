@@ -11,13 +11,40 @@ final class OutboxPersistence {
     }
     struct Record: Codable {
         let id: String
-        let text: String
-        let wireText: String
-        let quotes: [MessageQuote]
+        var text: String
+        var wireText: String
+        var quotes: [MessageQuote]
         let filePaths: [String]
         let images: [Image]
         // 只比對送出後新增的紀錄，舊的同文訊息不能拿來確認這次送出。
         var transcriptOffsets: [String: UInt64]
+        // 寫入時間：超過 plaintextTTL 就只留遮罩版（07-30）。舊檔沒有這欄 → 當成已過期。
+        var createdAt: Date? = nil
+    }
+
+    /// outbox 明文（「仍要送出」才會有）最多留這麼久，之後只留遮罩版（跟非 Claude 引擎寫進 jsonl 的規則相同）
+    static let plaintextTTL: TimeInterval = 24 * 3600
+    /// 測試用：--outbox-ttl 秒數 可縮短
+    static var ttl: TimeInterval = {
+        let a = CommandLine.arguments
+        if let i = a.firstIndex(of: "--outbox-ttl"), i + 1 < a.count, let v = TimeInterval(a[i + 1]) { return v }
+        return plaintextTTL
+    }()
+    static func masked(_ s: String) -> String { KeyScan.redact(s, strongOnly: true) }
+
+    /// 超過存活上限的紀錄改成遮罩版（有改才寫檔）。遮罩版仍能跟紀錄比對：非 Claude 引擎寫進 jsonl 的就是這個樣子。
+    func scrubExpired(now: Date = Date()) throws {
+        var records = try read()
+        var changed = false
+        for i in records.indices {
+            if let t = records[i].createdAt, now.timeIntervalSince(t) < Self.ttl { continue }
+            let text = Self.masked(records[i].text), wire = Self.masked(records[i].wireText)
+            let quotes = records[i].quotes.map { MessageQuote(qid: $0.qid, role: $0.role, text: Self.masked($0.text)) }
+            if text != records[i].text || wire != records[i].wireText || quotes != records[i].quotes {
+                records[i].text = text; records[i].wireText = wire; records[i].quotes = quotes; changed = true
+            }
+        }
+        if changed { try save(records) }
     }
 
     let fileURL: URL
@@ -89,7 +116,7 @@ final class OutboxPersistence {
         }
         // 不套 KeyScan.redact：wireText 要跟實際送出的字完全一致，才能拿去比對「已送達」，遮了會重送或誤判沒送到；只有使用者在金鑰卡片選「仍要送出」才會留明文，送達後即刪（金鑰管理，總指揮 11/8 裁決）
         records.append(Record(id: id.lowercased(), text: text, wireText: wireText, quotes: quotes,
-                              filePaths: filePaths, images: saved, transcriptOffsets: offsets))
+                              filePaths: filePaths, images: saved, transcriptOffsets: offsets, createdAt: Date()))
         try save(records)
     }
 
@@ -136,6 +163,7 @@ final class OutboxPersistence {
 
     /// 每個紀錄行最多確認一則。只比對 user 的實際文字區塊，不把 assistant／tool_result 裡的引文當送達。
     func reconcile(transcriptURLs: [URL]) throws -> [Record] {
+        try scrubExpired()
         let original = try read()
         guard !original.isEmpty else { return [] }
         var pending = original
@@ -176,7 +204,9 @@ final class OutboxPersistence {
                             let record = pending[i]
                             // 有 UUID 必須對 UUID；無 UUID 的橋接紀錄才用送出後的文字＋圖片比對。
                             guard uuid == nil, textEligibleIDs.contains(record.id),
-                                  !record.wireText.isEmpty || !record.images.isEmpty, text == record.wireText else { return false }
+                                  !record.wireText.isEmpty || !record.images.isEmpty,
+                                  // 非 Claude 引擎寫 jsonl 前已把金鑰遮成末四碼，所以原文與遮罩版都算相等（07-30）
+                                  text == record.wireText || text == Self.masked(record.wireText) else { return false }
                             let sources = blocks.filter { $0["type"] as? String == "image" }.compactMap { $0["source"] as? [String: Any] }
                             return sources.count == record.images.count && zip(sources, record.images).allSatisfy { source, image in
                                 guard let data = try? Data(contentsOf: URL(fileURLWithPath: image.path)) else { return false }

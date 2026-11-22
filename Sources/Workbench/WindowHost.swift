@@ -41,11 +41,11 @@ final class PaneFrame: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         header.font = .systemFont(ofSize: 12, weight: .medium)
-        header.textColor = .secondaryLabelColor
+        header.textColor = Theme.secondaryTextColor
         header.lineBreakMode = .byTruncatingTail
         closeButton.isBordered = false
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L("關掉這格"))?.withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
-        closeButton.contentTintColor = .tertiaryLabelColor
+        closeButton.contentTintColor = Theme.secondaryTextColor
         closeButton.target = self
         closeButton.action = #selector(close)
         closeButton.toolTip = L("關掉這格（Ctrl+A x）；對話會留在側欄")
@@ -72,7 +72,7 @@ final class PaneFrame: NSView {
         ring.isHidden = !showsHeader
         ring.color = isFocused ? accent : NSColor.separatorColor
         ring.width = isFocused ? 2 : 1
-        header.textColor = isFocused ? .labelColor : .secondaryLabelColor
+        header.textColor = isFocused ? .labelColor : Theme.secondaryTextColor
     }
 
     @objc private func close() { onClose?() }
@@ -493,7 +493,7 @@ final class TabBar: NSView {
         // 收起／打開左邊的側欄（⌃ ⌘ S）：聊天區太擠的時候整條收到最左邊
         sideButton.isBordered = false
         sideButton.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: L("側欄"))?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-        sideButton.contentTintColor = .secondaryLabelColor
+        sideButton.contentTintColor = Theme.secondaryTextColor
         sideButton.target = self
         sideButton.action = #selector(toggleSidebar)
         sideButton.toolTip = L("收起／打開側欄（⌃ ⌘ S）")
@@ -508,7 +508,7 @@ final class TabBar: NSView {
         addSubview(sessionButton)
         plus.isBordered = false
         plus.image = NSImage(systemSymbolName: "plus", accessibilityDescription: L("新 Window"))?.withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
-        plus.contentTintColor = .secondaryLabelColor
+        plus.contentTintColor = Theme.secondaryTextColor
         plus.target = self
         plus.action = #selector(newTab)
         plus.toolTip = L("新 Window（Ctrl+A c）")
@@ -614,7 +614,7 @@ final class TabBar: NSView {
         let num = chiefMode == 2 ? 2 : 1       // 總指揮方塊獨立在外面時，第一個分頁是 ⌘ 2
         buttons = tabs.enumerated().map { i, t in
             let isChief = chiefMode == 1 && i == 0
-            let b = TabButton(index: i, title: t.isEmpty ? "[\(i + num)]" : "[\(i + num)] \(t)", selected: i == current, accent: accent, chief: isChief)
+            let b = TabButton(index: i, title: t.isEmpty ? "[\(i + num)]" : t, selected: i == current, accent: accent, chief: isChief)
             b.toolTip = isChief ? L("總指揮（⌘ 1）") : L("點兩下改名（Ctrl+A ,）")
             b.onClick = { [weak self] in self?.onSelect?(i) }
             b.onDoubleClick = { [weak self] in self?.onRename?(i) }
@@ -637,8 +637,10 @@ final class TabBar: NSView {
     override func layout() {
         super.layout()
         // 側欄收起來時這條貼到視窗最左邊：讓開左上角的紅黃綠按鈕
-        let atLeftEdge = convert(NSPoint.zero, to: nil).x < 40
-        var x: CGFloat = atLeftEdge ? 80 : 8
+        // 側欄收合／展開動畫中，這條的左緣（視窗座標 barX）從側欄寬度一路縮到 0：預留空白用連續公式
+        // pad ＝ max(8, 80 − barX)，第一個分頁的視窗 x ＝ max(barX + 8, 80)，不再在 barX＝40 那格從 8 跳到 80（會往右彈）
+        let barX = convert(NSPoint.zero, to: nil).x
+        var x: CGFloat = max(8, 80 - barX)
         // 收起側欄的按鈕拿掉了：這裡留一小塊空白，按住可以拖動整個視窗
         dragHandle.frame = NSRect(x: x, y: 0, width: 44, height: bounds.height)
         x += 44
@@ -671,6 +673,20 @@ final class TabBar: NSView {
             x += gw + 4
         }
         plus.frame = NSRect(x: min(x + 2, bounds.width - 28), y: (bounds.height - 22) / 2, width: 22, height: 22)
+        if TabBarCollapseProbe.active { probeRecord(barX: barX) }
+    }
+
+    /// --tabbar-collapse-probe 專用（只在帶 --state-dir 的測試實例啟用）：目前分頁列左緣與第一個分頁左緣的視窗 x
+    func probeSnapshot() -> (barX: CGFloat, firstTabX: CGFloat, dragHandleX: CGFloat) {
+        let barX = convert(NSPoint.zero, to: nil).x
+        var firstX = dragHandle.convert(NSPoint(x: dragHandle.bounds.width, y: 0), to: nil).x
+        let firsts: [NSView] = (chiefVirtual.map { [$0] } ?? []) + buttons
+        if let f = firsts.min(by: { $0.frame.minX < $1.frame.minX }) { firstX = f.convert(NSPoint.zero, to: nil).x }
+        return (barX, firstX, dragHandle.convert(NSPoint.zero, to: nil).x)
+    }
+    private func probeRecord(barX: CGFloat) {
+        let s = probeSnapshot()
+        TabBarCollapseProbe.add(barX: barX, firstTabX: s.firstTabX, dragHandleX: s.dragHandleX)
     }
 
     /// 拖 Pane 標題到分頁列上：顯示／收起最後面的「＋ 名字」預覽分頁
@@ -911,12 +927,12 @@ private final class TabButton: NSView {
         super.init(frame: .zero)
         label.stringValue = title
         label.font = .systemFont(ofSize: 12 * UIScale.shared.f, weight: selected ? .semibold : .regular)
-        label.textColor = selected ? .labelColor : .secondaryLabelColor
+        label.textColor = selected ? .labelColor : Theme.secondaryTextColor
         label.lineBreakMode = .byTruncatingTail
         addSubview(label)
         x.isBordered = false
         x.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L("關掉這個 Window"))?.withSymbolConfiguration(.init(pointSize: 9, weight: .medium))
-        x.contentTintColor = .tertiaryLabelColor
+        x.contentTintColor = Theme.secondaryTextColor
         x.target = self
         x.action = #selector(closeTab)
         x.toolTip = L("關掉這個 Window（Ctrl+A &）")
@@ -1099,7 +1115,8 @@ final class WindowHost: NSViewController {
     override func loadView() {
         let v = NSView()
         v.wantsLayer = true
-        placeholder.textColor = .secondaryLabelColor
+        v.layer?.backgroundColor = Theme.mainSurface(for: v.effectiveAppearance).cgColor
+        placeholder.textColor = Theme.secondaryTextColor
         placeholder.font = .systemFont(ofSize: 15)
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         body.addSubview(placeholder)
@@ -1185,6 +1202,7 @@ final class WindowHost: NSViewController {
             }
             for (id, f) in self.frames where f.superview != nil {
                 let inside = f.bounds.contains(f.convert(e.locationInWindow, from: nil))
+                if inside { self.store.clearInterrupted(id) }
                 // 已經是目前這格：點輸入框以外就讓輸入框失效
                 if inside, self.store.currentWindow?.focused == id, let c = self.workspace.panes[id] as? ChatPane { c.clickedInside(e) }
                 if inside, self.store.currentWindow?.focused != id {
@@ -1289,9 +1307,11 @@ final class WindowHost: NSViewController {
             petView.isHidden = slotH == 0
             petView.frame = NSRect(x: 0, y: 0, width: colW, height: slotH)
             // 計時器：桌寵空位左半（桌寵在右邊，不去蓋它）
-            if timersHost.superview !== petView { petView.addSubview(timersHost) }
+            if timersHost.superview !== petColumn { petColumn.addSubview(timersHost) }
             PetTimers.shared.start()
-            timersHost.frame = NSRect(x: 0, y: 0, width: floor(colW / 2), height: max(0, slotH - 6 - (slotH >= PetSlotView.termSize * 2 + 6 + 14 ? PetSlotView.termSize * 2 + 16 : slotH >= PetSlotView.termSize + 14 ? PetSlotView.termSize + 10 : 0)))
+            let timerBase = max(0, slotH - 6 - (slotH >= PetSlotView.termSize * 2 + 6 + 14 ? PetSlotView.termSize * 2 + 16 : slotH >= PetSlotView.termSize + 14 ? PetSlotView.termSize + 10 : 0))
+            timersHost.frame = NSRect(x: 0, y: 0, width: floor(colW / 2), height: timerBase)
+            timersHost.setMinimumHeight(timerBase)
             topColumnView.frame = NSRect(x: 0, y: slotH, width: colW, height: max(0, h - slotH))
             petView.needsDisplay = true
             petColumn.needsDisplay = true
@@ -1387,6 +1407,10 @@ final class WindowHost: NSViewController {
         let slotH = petSlotHeight(size, h)
         petView.isHidden = slotH == 0
         petView.frame = NSRect(x: 0, y: 0, width: width, height: slotH)
+        if timersHost.superview !== petColumn { petColumn.addSubview(timersHost) }
+        let timerBase = max(0, slotH - 6 - (slotH >= PetSlotView.termSize * 2 + 6 + 14 ? PetSlotView.termSize * 2 + 16 : slotH >= PetSlotView.termSize + 14 ? PetSlotView.termSize + 10 : 0))
+        timersHost.frame = NSRect(x: 0, y: 0, width: floor(width / 2), height: timerBase)
+        timersHost.setMinimumHeight(timerBase)
         topColumnView.frame = NSRect(x: 0, y: slotH, width: width, height: max(0, h - slotH))
         petView.needsDisplay = true
         petColumn.needsDisplay = true
@@ -1417,19 +1441,33 @@ final class WindowHost: NSViewController {
             return
         }
         if !slideListening { slideListening = true; PaneSlide.shared.listen(self) { [weak self] in self?.slideTick() } }
-        let pal = workspace.theme.palette(for: view.effectiveAppearance)
-        view.layer?.backgroundColor = pal.bg.cgColor
+        view.layer?.backgroundColor = Theme.mainSurface(for: view.effectiveAppearance).cgColor
         let s = store.currentSessionLayout
         let windows = (s?.windows ?? []).filter { !$0.detached }      // 拉出去的獨立視窗不在分頁列上
         let wi = store.windowIndex ?? 0
         // 分頁上：取過名字的顯示「[1] 名字」，沒取過只顯示「[1]」
         let cm = store.sessionIndex.map { store.chiefTabMode($0) } ?? 0
-        tabBar.update(session: s?.name ?? "", tabs: windows.map { $0.renamed ? $0.name : "" }, current: wi, accent: accent, chiefMode: cm)
+        let titles = windows.map { window -> String in
+            guard !window.renamed, let root = window.root else { return window.renamed ? window.name : "" }
+            let ids = root.leaves
+            guard !ids.isEmpty else { return "" }
+            let selected = window.focused.flatMap { ids.contains($0) ? $0 : nil } ?? ids[0]
+            let name = store.conversation(selected)?.title ?? ""
+            guard !name.isEmpty else { return "" }
+            return ids.count == 1 ? name : "\(name) ＋\(ids.count - 1)"
+        }
+        tabBar.update(session: s?.name ?? "", tabs: titles, current: wi, accent: accent, chiefMode: cm)
 
         guard let w = store.currentWindow else { return }
         // 這次重繪是不是換了 Window 或換了目前那格（上一次畫的記在 lastRendered*）：只有這時、或焦點本來就在某個聊天格裡，才把鍵盤焦點交給目前那格；
         // 背景更新（Store 變了）觸發的重繪，不能把使用者正在用的側欄、搜尋欄的焦點搶走
         let switchedPane = lastRenderedWindow != w.id || lastRenderedFocus != w.focused
+        if switchedPane, let previousFocus = lastRenderedFocus,
+           lastRenderedWindow != nil,
+           (lastRenderedWindow != w.id || previousFocus != w.focused),
+           let previousPane = workspace.panes[previousFocus] as? ChatPane {
+            previousPane.cancelKeyGuardScanAfterPaneSwitch()
+        }
         lastRenderedWindow = w.id; lastRenderedFocus = w.focused
         let root: PaneNode? = w.zoomed ? w.focused.map { .leaf($0) } : w.root
         let key = "\(w.id)|\(String(describing: root))"
@@ -1893,7 +1931,7 @@ extension WindowHost {
             let u = (workspace.panes[id] as? BrowserPane)?.currentURL ?? c.browser ?? ""
             return [(L("網址"), u.isEmpty ? "about:blank" : u)]
         }
-        let folder = store.project(c.projectID)?.path ?? NSHomeDirectory()
+        let folder = store.workingDirectory(for: c)
         ContextMonitor.shared.load(c, path: folder)
         let ctx = ContextMonitor.shared.tokens[id].map { "\(ContextMonitor.text($0)) tokens" } ?? L("（還沒有紀錄）")
         return [(L("工作資料夾"), (folder as NSString).abbreviatingWithTildeInPath), (L("模型"), store.displayModel(id)), (L("上下文大小"), ctx)]

@@ -2,16 +2,16 @@ import Foundation
 import CryptoKit
 
 // 額度衝刺的「每輪結束檢查」：衝刺聊天室回到待命時，看它最後一則訊息是不是停在一半。
-// 想法參考 Nanako0129/stingray（MIT），只參考做法，沒有安裝；判斷只用正在執行的本機模型或指定的 agy Flash low：
+// 想法參考 Nanako0129/stingray（MIT），只參考做法，沒有安裝；判斷只用正在執行的本機模型或指定的 agy Hydrogen low：
 //   no_action      可以做事卻什麼都沒做就停
 //   broken_promise 說了「我現在去改／去跑」，這一輪卻沒有對應的工具呼叫
 //   unwatched      說「我會盯著／等回報」，但背景什麼都沒在跑
 // 判斷分兩層：本機計數（背景工作、等回覆的訊息、看板進行中的步驟，不靠模型）＋便宜模型判斷最後一則訊息的種類。
-// 模型：本機 Qwen3.6（不開思考）正在跑就用它，沒開就用 agy 的 Gemini Flash low；兩個都不行就放行（只記紀錄）。不用 Opus、Fable。
+// 模型：本機預設 Bolt-E4B（快取沒有時用第一個可用模型，不開思考）正在跑就用它，沒開就用 agy 的 Gemini Hydrogen low；兩個都不行就放行（只記紀錄）。不用 Opus、Fable。
 // 送給模型之前先遮掉看起來像金鑰／token 的字串。
 
 enum SprintCheck {
-    static let qwen = "mlx-community/Qwen3.6-35B-A3B-4bit"
+    static var localModel: String? { LocalBridge.defaultAvailableModel?.id }
     static let kinds = ["ok", "waiting_user", "done", "no_action", "broken_promise", "unwatched"]
     static let halfDone: Set<String> = ["no_action", "broken_promise", "unwatched"]
     static let pendingReplyLifetime: TimeInterval = 30 * 60
@@ -164,7 +164,7 @@ enum SprintCheck {
         return (k, min(1, max(0, sc)))
     }
 
-    // MARK: 判斷（本機優先，沒開用 agy Flash low；全都不行就 done(nil, 原因)）
+    // MARK: 判斷（本機優先，沒開用 agy Hydrogen low；全都不行就 done(nil, 原因)）
 
     /// done 在主執行緒
     static func judge(last: String, tools: [String], done: @escaping (Verdict?, String) -> Void) {
@@ -183,13 +183,50 @@ enum SprintCheck {
                 .map { match in String(last[match].dropFirst(7).dropLast(2)) } ?? "ok"
             return done(kinds.contains(k) ? Verdict(kind: k, score: 0.9, backend: "fake") : nil, kinds.contains(k) ? "" : "fake: 無效種類")
         }
-        if let m = LocalServer.shared.runningModel, m == qwen {
+        let swapConfig = AgySwapConfig.current()
+        let legacyAgyReady = AgyBridge.canLaunchInCurrentInstance
+            && FileManager.default.isExecutableFile(atPath: AgyBridge.executable)
+        if let m = LocalServer.shared.runningModel, m == localModel {
             localJudge(text, model: m, done: done)
-        } else if Prefs.shared.agyEnabled, FileManager.default.isExecutableFile(atPath: AgyBridge.executable) {
-            agyJudge(text, done: done)
+        } else if Prefs.shared.agyEnabled, (swapConfig.backgroundSwapEnabled || legacyAgyReady) {
+            agyJudge(text, onProbeFinish: nil, done: done)
         } else {
-            done(nil, "沒有可用的判斷模型（本機 Qwen3.6 沒開、agy 沒啟用）")
+            done(nil, "沒有可用的判斷模型（本機預設模型沒開、agy 沒啟用）")
         }
+    }
+
+    private static let swapModeTracker = AgySwapModeTracker()
+
+    /// 測試用：供 `--agy-background-probe sprint` 與單元測試直接觸發一次 SprintCheck 的 agy 判斷路徑。
+    static func probeAgyJudge(
+        last: String,
+        tools: [String] = [],
+        swapConfig: AgySwapConfig = AgySwapConfig.current(),
+        tracker: AgySwapModeTracker? = nil,
+        ignoreAgyEnabledPref: Bool = false,
+        onFinish: @escaping (AgyBackgroundProbeOutcome) -> Void,
+        done: @escaping (Verdict?, String) -> Void = { _, _ in }
+    ) {
+        let legacyAgyReady = AgyBridge.canLaunchInCurrentInstance
+            && FileManager.default.isExecutableFile(atPath: AgyBridge.executable)
+        let agyAllowed = ignoreAgyEnabledPref || Prefs.shared.agyEnabled
+        guard agyAllowed, (swapConfig.backgroundSwapEnabled || legacyAgyReady) else {
+            onFinish(AgyBackgroundProbeOutcome(
+                launched: false,
+                mode: swapConfig.backgroundSwapEnabled ? "swap" : "legacy",
+                argv: [],
+                exitStatus: nil,
+                stoppedByUs: false
+            ))
+            return
+        }
+        agyJudge(
+            prompt(last: last, tools: tools),
+            swapConfig: swapConfig,
+            tracker: tracker ?? Self.swapModeTracker,
+            onProbeFinish: onFinish,
+            done: done
+        )
     }
 
     /// 考卷限定的假判斷：把標註種類放進同一個 judge 入口的測試掛鉤，再核對返回值。
@@ -221,42 +258,153 @@ enum SprintCheck {
             let p = parse(text)
             DispatchQueue.main.async {
                 server.end()
-                if let p { done(Verdict(kind: p.kind, score: p.score, backend: "qwen3.6"), "") }
+                if let p {
+                    let backend = model == LocalBridge.boltModel ? "bolt-e4b" : "local-" + LocalBridge.name(model).lowercased().replacingOccurrences(of: " ", with: "-")
+                    done(Verdict(kind: p.kind, score: p.score, backend: backend), "")
+                }
                 else { done(nil, "本機模型沒有回出看得懂的結果（\(err?.localizedDescription ?? String(text.prefix(60)))）") }
             }
         }.resume()
     }
 
-    private static func agyJudge(_ prompt: String, done: @escaping (Verdict?, String) -> Void) {
+    private static func agyJudge(
+        _ prompt: String,
+        swapConfig: AgySwapConfig = AgySwapConfig.current(),
+        tracker: AgySwapModeTracker = SprintCheck.swapModeTracker,
+        onProbeFinish: ((AgyBackgroundProbeOutcome) -> Void)? = nil,
+        done: @escaping (Verdict?, String) -> Void
+    ) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("codenv-sprint-check")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let preface = "不要執行任何指令、不要讀檔案、不要用任何工具，直接回答。\n"
+
         DispatchQueue.global(qos: .utility).async {
-            guard AgyNet.canCall() else { return DispatchQueue.main.async { done(nil, "agy 連不到網路") } }
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: AgyBridge.executable)
-            let log = AgyNet.newLogFile()
-            p.arguments = ["--model", NextGuess.flashModel, "--print-timeout", "45s", "--log-file", log.path, "-p=" + preface + prompt]
-            p.currentDirectoryURL = dir
-            let out = Pipe()
-            let errURL = dir.appendingPathComponent("err-\(UUID().uuidString).txt")
-            FileManager.default.createFile(atPath: errURL.path, contents: nil)
-            let errFile = try? FileHandle(forWritingTo: errURL)
-            p.standardOutput = out
-            p.standardError = errFile ?? FileHandle.nullDevice
-            p.standardInput = FileHandle.nullDevice
-            do { try p.run() } catch { try? FileManager.default.removeItem(at: errURL); return DispatchQueue.main.async { done(nil, "agy 開不起來") } }
-            try? errFile?.close()
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit()
-            let e = (try? String(contentsOf: errURL, encoding: .utf8)) ?? ""
-            try? FileManager.default.removeItem(at: errURL)
-            AgyNet.check(log: log)
-            let text = String(data: data, encoding: .utf8) ?? ""
-            let parsed = e.contains("print timeout") ? nil : parse(text)
-            DispatchQueue.main.async {
-                if let parsed { done(Verdict(kind: parsed.kind, score: parsed.score, backend: "agy-flash-low"), "") }
-                else { done(nil, "agy 沒有回出看得懂的結果（\(e.contains("print timeout") ? "逾時" : String(text.prefix(60)))）") }
+            func runLegacy() {
+                guard AgyBridge.canLaunchInCurrentInstance,
+                      FileManager.default.isExecutableFile(atPath: AgyBridge.executable) else {
+                    onProbeFinish?(AgyBackgroundProbeOutcome(launched: false, mode: "legacy", argv: [], exitStatus: nil, stoppedByUs: false))
+                    return DispatchQueue.main.async { done(nil, "agy 開不起來") }
+                }
+                guard AgyNet.canCall() else {
+                    onProbeFinish?(AgyBackgroundProbeOutcome(launched: false, mode: "legacy", argv: [], exitStatus: nil, stoppedByUs: false))
+                    return DispatchQueue.main.async { done(nil, "agy 連不到網路") }
+                }
+                let executable = AgyBridge.executable
+                let log = AgyNet.newLogFile()
+                let args = ["--model", NextGuess.hydrogenModel, "--print-timeout", "45s", "--log-file", log.path, "-p=" + preface + prompt]
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: executable)
+                p.arguments = args
+                p.currentDirectoryURL = dir
+                let out = Pipe()
+                let errURL = dir.appendingPathComponent("err-\(UUID().uuidString).txt")
+                FileManager.default.createFile(atPath: errURL.path, contents: nil)
+                let errFile = try? FileHandle(forWritingTo: errURL)
+                p.standardOutput = out
+                p.standardError = errFile ?? FileHandle.nullDevice
+                p.standardInput = FileHandle.nullDevice
+                do { try p.run() } catch {
+                    try? FileManager.default.removeItem(at: errURL)
+                    onProbeFinish?(AgyBackgroundProbeOutcome(launched: false, mode: "legacy", argv: [executable] + args, exitStatus: nil, stoppedByUs: false))
+                    return DispatchQueue.main.async { done(nil, "agy 開不起來") }
+                }
+                try? errFile?.close()
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                let e = (try? String(contentsOf: errURL, encoding: .utf8)) ?? ""
+                try? FileManager.default.removeItem(at: errURL)
+                AgyNet.check(log: log)
+                onProbeFinish?(AgyBackgroundProbeOutcome(
+                    launched: true,
+                    mode: "legacy",
+                    argv: [executable] + args,
+                    exitStatus: p.terminationStatus,
+                    stoppedByUs: false
+                ))
+                let text = String(data: data, encoding: .utf8) ?? ""
+                let parsed = e.contains("print timeout") ? nil : parse(text)
+                DispatchQueue.main.async {
+                    if let parsed { done(Verdict(kind: parsed.kind, score: parsed.score, backend: "agy-hydrogen-low"), "") }
+                    else { done(nil, "agy 沒有回出看得懂的結果（\(e.contains("print timeout") ? "逾時" : String(text.prefix(60)))）") }
+                }
+            }
+
+            if swapConfig.backgroundSwapEnabled {
+                let statusResult = AgySwapClient.fetchStatus(config: swapConfig)
+                let decision = tracker.evaluate(hasBinary: true, statusResult: statusResult)
+                switch decision {
+                case .skipRound(let reason, let failures):
+                    NSLog("codenv SprintCheck：agy-swap status 失敗（第 %d 輪：%@），略過本輪", failures, reason)
+                    onProbeFinish?(AgyBackgroundProbeOutcome(launched: false, mode: "swap", argv: [], exitStatus: nil, stoppedByUs: false))
+                    DispatchQueue.main.async { done(nil, "agy-swap 狀態查詢失敗，略過本輪") }
+                    return
+
+                case .degradedLegacy(let reason, let failures):
+                    NSLog("codenv SprintCheck：agy-swap status 連續 %d 輪失敗（%@），降級為非換帳號模式", failures, reason)
+                    EventLog.log("agy-swap", "SprintCheck 連續 \(failures) 輪 status 失敗（\(reason)），降級為非換帳號模式")
+                    runLegacy()
+                    return
+
+                case .legacy:
+                    runLegacy()
+                    return
+
+                case .swap(let status):
+                    if status.switching || status.recoveryPending {
+                        NSLog("codenv SprintCheck：agy-swap %@，略過本輪", status.switching ? "switching=true" : "recovery_pending=true")
+                        onProbeFinish?(AgyBackgroundProbeOutcome(launched: false, mode: "swap", argv: [], exitStatus: nil, stoppedByUs: false))
+                        let msg = status.switching ? "agy-swap 正在切換帳號，略過本輪" : "agy-swap 正在復原中，略過本輪"
+                        DispatchQueue.main.async { done(nil, msg) }
+                        return
+                    }
+                    guard AgySwapClient.canCallAgy(config: swapConfig) else {
+                        onProbeFinish?(AgyBackgroundProbeOutcome(launched: false, mode: "swap", argv: [], exitStatus: nil, stoppedByUs: false))
+                        DispatchQueue.main.async { done(nil, "agy 連不到網路") }
+                        return
+                    }
+                    let log = AgyNet.newLogFile()
+                    let agyArgs = ["--model", NextGuess.hydrogenModel, "--print-timeout", "45s", "--log-file", log.path, "-p=" + preface + prompt]
+                    let call = AgySwapClient.run(
+                        config: swapConfig,
+                        agyArguments: agyArgs,
+                        workingDirectory: dir,
+                        timeout: swapConfig.sprintCheckTimeout
+                    )
+                    AgyNet.check(log: log)
+                    let outcome = AgySwapClient.classifyExit(call.exec)
+                    if case .failed(let code) = outcome, !call.exec.weTerminated, (code == 143 || code == 137) {
+                        NSLog("codenv SprintCheck：agy-swap run 遭外部終止（結束碼 %d）", code)
+                    }
+                    onProbeFinish?(AgyBackgroundProbeOutcome(
+                        launched: call.exec.launched,
+                        mode: "swap",
+                        argv: call.exec.argv,
+                        exitStatus: call.exec.launched ? call.exec.exitCode : nil,
+                        stoppedByUs: call.exec.weTerminated
+                    ))
+                    let text = call.exec.stdout
+                    let parsed = (outcome == .ok && !call.exec.stderr.contains("print timeout")) ? parse(text) : nil
+                    DispatchQueue.main.async {
+                        if let parsed {
+                            done(Verdict(kind: parsed.kind, score: parsed.score, backend: "agy-hydrogen-low"), "")
+                        } else {
+                            let reason: String
+                            if call.exec.timedOut || call.exec.stderr.contains("print timeout") {
+                                reason = "逾時"
+                            } else if !call.exec.launched {
+                                reason = "agy-swap 開不起來"
+                            } else if case .failed(let code) = outcome {
+                                reason = "結束碼 \(code)"
+                            } else {
+                                reason = String(text.prefix(60))
+                            }
+                            done(nil, "agy 沒有回出看得懂的結果（\(reason)）")
+                        }
+                    }
+                    return
+                }
+            } else {
+                runLegacy()
             }
         }
     }

@@ -154,6 +154,7 @@ struct SessionLayout: Codable, Identifiable, Equatable {
     var chief: UUID? = nil
     /// 總指揮類型："single"＝整個總指揮是一個專案；"multi"＝底下的子群組各是一個子專案；nil＝依群組結構推斷（有子群組＝multi）
     var commanderKind: String? = nil
+    var graphLayout: GraphLayoutSettings? = nil
 }
 
 /// 舊存檔沒有總指揮欄位，照 WindowLayout 的慣例用手寫解碼保留相容性
@@ -168,6 +169,21 @@ extension SessionLayout {
         groups = try c.decodeIfPresent([UUID].self, forKey: .groups)
         chief = try c.decodeIfPresent(UUID.self, forKey: .chief)
         commanderKind = try c.decodeIfPresent(String.self, forKey: .commanderKind)
+        graphLayout = try c.decodeIfPresent(GraphLayoutSettings.self, forKey: .graphLayout)
+    }
+}
+
+/// 各總指揮的關聯圖力導向參數，存在既有 sessions[] state 結構。
+struct GraphLayoutSettings: Codable, Equatable {
+    var commanderToArea: Double = 100
+    var areaToSubarea: Double = 80
+    var areaToChat: Double = 55
+    var repulsion: Double = 1700
+    static let defaults = GraphLayoutSettings()
+
+    static func interpolatedAverage(_ distances: [Double]) -> Double? {
+        guard !distances.isEmpty else { return nil }
+        return distances.reduce(0, +) / Double(distances.count)
     }
 }
 
@@ -196,6 +212,12 @@ extension Store {
     var areaKey: String? { area == Store.codeLabArea ? Store.codeLabArea : nil }
     func inArea(_ s: SessionLayout) -> Bool { s.area == areaKey }
     var areaSessions: [SessionLayout] { sessions.filter(inArea) }
+
+    func setGraphLayout(_ value: GraphLayoutSettings, sessionID: UUID) {
+        guard let i = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        sessions[i].graphLayout = value
+        scheduleSave()
+    }
 
     /// 目前的 Session 換到另一區的（點了那區的對話、⌘ ⇧ T 找回之類）：側欄跟著換區；也記下每區上次看的是哪個 Session
     func followSessionArea() {

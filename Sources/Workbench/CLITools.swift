@@ -1,10 +1,10 @@
 import Foundation
 
-/// codenv 附的命令列工具（codenv-todo、codenv-browser、memory-check）。
+/// codenv 附的命令列工具（codenv-todo、codenv-browser、memory-check、compact-guard.py）。
 /// App 包內 Resources/bin 帶一份；~/.local/bin 裡有的（私人版出版時會裝）優先用，沒有就用包內那份，
 /// 所以公版不用安裝到使用者家目錄也能用（聊天室裡的 Claude 靠 PATH 找到包內那份）。
 enum CLITools {
-    static let names = ["codenv-todo", "codenv-browser", "memory-check"]
+    static let names = ["codenv-todo", "codenv-browser", "memory-check", "compact-guard.py", "handoff-prep"]
 
     /// App 包內放工具的資料夾（跑在 swift run 之類沒有 Resources 的環境就是 nil）
     static var bundleDir: String? {

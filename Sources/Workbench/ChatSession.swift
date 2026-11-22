@@ -21,6 +21,8 @@ final class ChatSession {
     var topicProvider: (() -> String?)?
     /// 總指揮聊天室的角色說明（底下有哪些聊天室、怎麼派工）：每次啟動重算，附在系統提示
     var roleProvider: (() -> String?)?
+    /// 這段是否為總指揮本人；其餘 Claude 聊天室依偏好套用共用記憶寫入限制
+    var isCommanderChatProvider: (() -> Bool)?
     /// 這個聊天室載入哪些 MCP（McpMode）；啟動 claude 時才讀，所以右鍵改了下次啟動生效
     var mcpProvider: (() -> McpMode)?
     /// codenv 裡這段聊天室的 id：放進環境變數 CODENV_CONVERSATION，codenv-todo team 用它認出自己是誰
@@ -72,16 +74,57 @@ final class ChatSession {
         // 本機後端可能在 send 裡同步回送，延後通知避免呼叫端在送出途中切換版面。
         DispatchQueue.main.async { done(acknowledged) }
     }
+
+    private func failUnacknowledgedInputs() {
+        let lost = unacked
+        unacked.removeAll()
+        if !lost.isEmpty { onLost?(lost) }
+        for message in lost { resolveDelivery(message.uuid, acknowledged: false) }
+    }
     /// 這次程序裡已送出、還在等回送的訊息編號（寄件匣對照時要排除：它們還在路上，不是「上次沒送到」）
     var inFlightIDs: Set<String> { Set(unacked.map(\.uuid)) }
+    /// 收集闔蓋時仍未送達的訊息；以 UUID 合併 unacked、引擎佇列與磁碟寄件匣。
+    func pendingMessagesForLidInterrupt() -> LidInterruptPendingMessages {
+        var byID: [String: LidQueuedMessage] = [:]
+        var outboxReadFailed = false
+        func append(_ message: LidQueuedMessage) {
+            let id = message.id.lowercased()
+            guard !id.isEmpty else { return }
+            if var old = byID[id] {
+                if old.text.isEmpty { old.text = message.text; byID[id] = old }
+            } else {
+                byID[id] = LidQueuedMessage(id: id, text: message.text)
+            }
+        }
+        unacked.forEach { append(LidQueuedMessage(id: $0.uuid, text: LidQueuedMessage.formattedText($0.text, hasImages: !$0.images.isEmpty))) }
+        agy?.pendingForLidInterrupt().forEach(append)
+        agyDeferredUserWrites.forEach { message in
+            guard let id = message["uuid"] as? String else { return }
+            append(LidQueuedMessage(id: id, text: LidQueuedMessage.text(in: message)))
+        }
+        codex?.pendingForLidInterrupt().forEach(append)
+        copilot?.pendingForLidInterrupt().forEach(append)
+        if let outboxPersistence {
+            do {
+                let records = try outboxPersistence.read()
+                records.forEach { append(LidQueuedMessage(id: $0.id, text: LidQueuedMessage.formattedText($0.text, hasImages: !$0.images.isEmpty))) }
+            } catch {
+                outboxReadFailed = true
+                EventLog.log("闔蓋中斷", "讀取寄件匣失敗；通知將標示可能有未列出的未送訊息。")
+            }
+        }
+        return LidInterruptPendingMessages(messages: byID.values.sorted { $0.id < $1.id },
+                                           outboxReadFailed: outboxReadFailed)
+    }
     /// Claude 回報可以選的模型（啟動時），和目前用的模型
     var onModels: (([ModelChoice]) -> Void)?
     var onCommands: (([SlashCommand]) -> Void)?
     var onModel: ((String) -> Void)?
+    var onEffortNotice: ((String) -> Void)?
     /// 權限模式（default、acceptEdits、plan、auto）；nil＝照設定頁。Claude 回報換了（例如計畫通過後離開 plan）也會通知
     var permissionMode: String?
     /// Claude 包在 nono 沙盒裡跑（NonoSandbox.swift）；下次開程序才生效
-    var sandboxed = false
+    var sandboxed = false { didSet { if sandboxed, !oldValue { NonoSandbox.prewarm() } } }
     var onPermissionMode: ((String) -> Void)?
     /// 換模式被 Claude 拒絕（例如這版不支援某個模式）：原因
     var onPermissionModeError: ((String) -> Void)?
@@ -95,6 +138,10 @@ final class ChatSession {
     var agyModel: String?
     private var agy: AgyBridge?
     private var agyCancelled: [String] = []   // ⌃ C／停止 關掉 agy 時正在做的那則：下一個 agy 送第一則時請它忽略
+    private var agyRetryWorkItems: [String: DispatchWorkItem] = [:]
+    private var agyRetryGenerations: [String: UUID] = [:]
+    private var agyDeferredUserWrites: [[String: Any]] = []
+    private(set) var agyProcessStarts = 0
     /// 不是 nil：這段改跑 codex app-server（ChatGPT，CodexBridge.swift），值是模型名稱
     var codexModel: String?
     private var codex: CodexBridge?
@@ -109,6 +156,36 @@ final class ChatSession {
     private var apple: AppleBridge?
 
     private var process: Process?
+    private var processGroupID: pid_t?
+    /// terminate() 送出 SIGTERM、還沒確認結束的舊程序樹（只在主執行緒動）
+    private var draining: [ChatDrain] = []
+    private var lidInterruptForceKillOccurredStored = false
+    var lidInterruptForceKillOccurred: Bool {
+        lidInterruptForceKillOccurredStored || draining.contains(where: { $0.didForceKillForLidInterrupt })
+    }
+    var isDrainingForLidInterrupt: Bool { draining.contains(where: { $0.isAlive }) }
+    @discardableResult
+    func forceKillDrainingForLidInterrupt() -> Bool {
+        let alive = draining.filter { $0.isAlive }
+        alive.forEach { $0.sendKill() }
+        return !alive.isEmpty
+    }
+    /// 開新程序前確認舊的真的結束（同一個 session 的 --resume 不能兩個同時寫 jsonl）。
+    /// 正常情況 SIGTERM 後幾十毫秒就沒了；最壞（舊程序不理 SIGTERM）最多卡 1 秒，之後直接 SIGKILL 再等最多 1 秒
+    private func awaitOldProcesses() {
+        guard !draining.isEmpty else { return }
+        func wait(_ limit: TimeInterval) {
+            let end = Date().addingTimeInterval(limit)
+            while draining.contains(where: { $0.isAlive }) && Date() < end { Thread.sleep(forTimeInterval: 0.01) }
+        }
+        wait(1)
+        if draining.contains(where: { $0.isAlive }) {
+            EventLog.log("聊天程序", "\(convTag)：舊程序 1 秒還沒結束，開新程序前強制結束")
+            draining.forEach { $0.sendKill() }
+            wait(1)
+        }
+        draining.removeAll { !$0.isAlive }
+    }
     private var input: FileHandle?
     /// 寫進程序 stdin 的序列佇列：大訊息（貼圖、長文）超過 pipe 緩衝 64 KB 時，對方還沒讀（剛啟動、卡住）寫入會阻塞，
     /// 放主執行緒會讓整個 App 沒回應（實測不讀 stdin 的假 claude＋120 KB 訊息：卡到它結束）。序列佇列保證送出順序（agy Argon 11/6）
@@ -119,7 +196,21 @@ final class ChatSession {
     private var buffer = Data()
     private var stderrTail = ""
     private var pending: Set<String> = []          // 還沒回答的權限詢問
-    private(set) var status: ChatStatus = .idle { didSet { if status != oldValue { onStatus?(status) } } }
+    private var restartForEffortWhenIdle = false
+    private(set) var status: ChatStatus = .idle {
+        didSet {
+            guard status != oldValue else { return }
+            if status == .idle, restartForEffortWhenIdle {
+                restartForEffortWhenIdle = false
+                restartAgyIfIdle()
+            }
+            onStatus?(status)
+        }
+    }
+    private var terminalTurnTracker = TerminalTurnTracker()
+    var failureGeneration: Int { terminalTurnTracker.failureGeneration }
+    var stopGeneration: Int { terminalTurnTracker.stopGeneration }
+    var lastFailureMessage: String? { terminalTurnTracker.lastFailureMessage }
     /// 測試時可以換掉（例如加 --model）；平常就是使用者 shell 找得到的 claude
     static var testClaude: String? = {
         let a = CommandLine.arguments
@@ -149,6 +240,47 @@ final class ChatSession {
         let df = DateFormatter(); df.dateFormat = "MMdd-HHmmss"
         let safe = String(name.map { "/:\\".contains($0) ? "_" : $0 }.prefix(40))
         return debugLogDir.appendingPathComponent("\(df.string(from: Date()))-\(safe).log").path
+    }
+
+    /// Edit(path) 的 deny 同時涵蓋 Write、Edit、舊版 MultiEdit，以及 Claude Code 可辨識的 Bash 檔案操作。
+    /// Write(path) 與 MultiEdit(path) 本身不會按路徑比對，詳見 Claude Code permissions 文件。
+    static let sharedMemoryWriteDenyRules = ["Edit(~/.claude/projects/*/memory/**)"]
+
+    /// 子聊天室把待記內容寫到各自草稿，由總指揮或每晚做夢合併；prompt 也明確禁止用 Bash 繞過。
+    static func memoryDraftInstruction(for chatName: String) -> String {
+        let filename = String(chatName.map { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" ? $0 : "_" }.prefix(80))
+        let safeName = filename.isEmpty ? "未命名聊天室" : filename
+        return "請勿直接修改 ~/.claude/projects/*/memory/**（包括透過 Bash）；要記的事寫到 ~/Library/Application Support/codenv/memory-drafts/\(safeName).md，由總指揮或每晚做夢合併。"
+    }
+
+    /// Claude `--settings` JSON：每段聊天室使用自己的檔案，避免總指揮與子聊天室啟動時互相覆蓋設定。
+    /// compact-guard hooks 與 permissions.deny 都是附加設定；Claude Code 會跟其他設定來源合併陣列。
+    static func claudeSettingsPath(conversationID: String, compactGuard: Bool, protectSharedMemory: Bool) -> String? {
+        var settings: [String: Any] = [:]
+        if compactGuard, let script = CLITools.path("compact-guard.py") {
+            let q = "'" + script.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            settings["hooks"] = [
+                "PreCompact": [["hooks": [["type": "command", "command": "/usr/bin/python3 \(q) pre-compact"]]]],
+                "SessionStart": [["matcher": "compact", "hooks": [["type": "command", "command": "/usr/bin/python3 \(q) session-start"]]]]
+            ]
+        }
+        if protectSharedMemory {
+            settings["permissions"] = ["deny": sharedMemoryWriteDenyRules]
+        }
+        guard !settings.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys]) else { return nil }
+
+        let safeID = String(conversationID.map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "_" }.prefix(80))
+        let dir = Transcripts.dir.deletingLastPathComponent().appendingPathComponent("claude-settings", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let file = dir.appendingPathComponent("\(safeID.isEmpty ? UUID().uuidString : safeID).json")
+            try data.write(to: file, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            return file.path
+        } catch {
+            return nil
+        }
     }
     var pid: Int32? { process?.processIdentifier }
     /// 事件紀錄專用的模型分類（claude、agy、codex、copilot、local、apple）
@@ -202,7 +334,9 @@ final class ChatSession {
 
     @discardableResult
     func start() -> Bool {
+        if isRunning, agy?.requiresRestart == true { terminate() }
         guard !isRunning else { return input != nil || mlx != nil || apple != nil }
+        awaitOldProcesses()
         // 沙盒只包得住 Claude：換成 Gemini、ChatGPT、Copilot、本機、Apple 時不要假裝有包（agy Sonnet 11/6）
         if sandboxed, agyModel != nil || codexModel != nil || copilotModel != nil || mlxModel != nil || appleModel != nil {
             emit(["type": "result", "subtype": "error_during_execution", "is_error": true, "result": L("沙盒目前只支援 Claude 模型。換回 Claude，或右鍵關掉「在沙盒裡跑」")])
@@ -213,16 +347,23 @@ final class ChatSession {
         // Gemini（agy）：另一套參數，沒有 --name、--debug-file、Artifact 這些 claude 才認得的
         if let m = agyModel {
             let run = AgyBridge.resolve(m, effort: effort)
-            let route = AgyMagpie.route(run)
-            let args = AgyBridge.arguments(model: route.model, mode: permissionMode ?? Prefs.shared.permissionMode,
-                                           conversation: AgyBridge.conversation(for: claudeSession), settings: route.settings)
+            let args = AgyBridge.arguments(model: run, mode: permissionMode ?? Prefs.shared.permissionMode,
+                                           conversation: AgyBridge.conversation(for: claudeSession))
             // 系統說沒網路就先不開 agy（不然它會開瀏覽器登入頁）；只看已知狀態，不卡主執行緒。ChatPane 送出前已經擋過一次
             guard AgyBridge.enabled else { onExit?(-1, L("agy 功能是關著的（設定 ⌘ , → 對話 → agy）。打開前會先請你看一段 Google 的條款說明。")); return false }
+            guard AgyBridge.canLaunchInCurrentInstance else {
+                emit(["type": "result", "subtype": "error_during_execution", "is_error": true,
+                      "result": L("測試模式未提供假 agy（--agy-bin），為避免開啟真實登入流程，已停止啟動。")])
+                return false
+            }
             guard AgyNet.quickOK else { onExit?(-1, AgyNet.offlineMessage); return false }
             let b = AgyBridge(session: claudeSession, model: run)
             b.cancelled = agyCancelled
             agyCancelled = []
-            if spawn(AgyBridge.executable, args, env: route.env, bridge: b) {
+            let agyEnvironment = AgyBridge.testEnvironment()
+            if spawn(AgyBridge.executable, args, env: agyEnvironment, bridge: b) {
+                agyProcessStarts += 1
+                AgyBridge.recordTestProbe(["event": "process_started", "conversation": claudeSession.uuidString.lowercased(), "starts": agyProcessStarts])
                 let pIdentifier = process?.processIdentifier ?? 0
                 EventLog.log("聊天程序", "\(convTag)：已啟動（pid \(pIdentifier)）")
                 return true
@@ -233,12 +374,17 @@ final class ChatSession {
         }
         // ChatGPT（codex app-server）：一直開著，訊息、權限都走 JSON-RPC
         if let m = codexModel {
+            guard !CommandLine.arguments.contains("--state-dir") || CodexBridge.testExecutable != nil else {
+                emit(["type": "result", "subtype": "error_during_execution", "is_error": true,
+                      "result": L("測試模式未提供假 Codex（--codex-bin），已停止啟動。")])
+                return false
+            }
             let b = CodexBridge(session: claudeSession, directory: directory, model: m)
             b.mode = permissionMode ?? Prefs.shared.permissionMode
             b.effort = effort
             b.send = { [weak self] in self?.rawWrite($0) }
             b.emit = { [weak self] in self?.emit($0) }
-            if spawn("codex", ["app-server"], env: [:], bridge: nil) {
+            if spawn(CodexBridge.executable, ["app-server"], env: [:], bridge: nil) {
                 codex = b
                 b.start()
                 let pIdentifier = process?.processIdentifier ?? 0
@@ -251,7 +397,16 @@ final class ChatSession {
         }
         // 本機模型（MLX）：沒有程序，LocalBridge 自己發 HTTP、自己做工具
         if let m = mlxModel {
-            let b = LocalBridge(session: claudeSession, directory: directory, model: m)
+            guard let selected = LocalBridge.resolveAvailableModel(m) else {
+                emit(["type": "result", "subtype": "error_during_execution", "is_error": true,
+                      "result": L("本機沒有可啟動的快取模型")])
+                return false
+            }
+            if selected.id != m {
+                mlxModel = selected.id
+                EventLog.log("本機模型", "\(convTag)：\(LocalBridge.name(m)) 不在可用快取，改用 \(selected.name)")
+            }
+            let b = LocalBridge(session: claudeSession, directory: directory, model: selected.id)
             b.mode = permissionMode ?? Prefs.shared.permissionMode
             b.effort = effort
             b.chatName = { [weak self] in self?.nameProvider?() }
@@ -273,11 +428,16 @@ final class ChatSession {
         }
         // GitHub Copilot（copilot --acp）：跟 codex 一樣一直開著；模型、強度只能開的時候帶
         if let m = copilotModel {
+            guard !CommandLine.arguments.contains("--state-dir") || CopilotBridge.testExecutable != nil else {
+                emit(["type": "result", "subtype": "error_during_execution", "is_error": true,
+                      "result": L("測試模式未提供假 Copilot（--copilot-bin），已停止啟動。")])
+                return false
+            }
             let b = CopilotBridge(session: claudeSession, directory: directory, model: m)
             b.mode = permissionMode ?? Prefs.shared.permissionMode
             b.send = { [weak self] in self?.rawWrite($0) }
             b.emit = { [weak self] in self?.emit($0) }
-            if spawn("copilot", CopilotBridge.arguments(model: m, effort: effort), env: [:], bridge: nil) {
+            if spawn(CopilotBridge.executable, CopilotBridge.arguments(model: m, effort: effort), env: [:], bridge: nil) {
                 copilot = b
                 b.start()
                 let pIdentifier = process?.processIdentifier ?? 0
@@ -309,13 +469,16 @@ final class ChatSession {
         }
         if let local = localEndpoint { args += ["--model", local.model] }
         else if let model { args += ["--model", model] }
-        if let effort { args += ["--effort", effort] }
+        if let effort, Effort.order.contains(effort) { args += ["--effort", effort] }
         let shownName = nameProvider?()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !shownName.isEmpty, !Self.extraArgs.contains("--name") { args += ["--name", shownName] }
         // 名字也放進系統提示（不進紀錄檔、不會出現在泡泡）：--resume 也每次重帶；改名後改在下一則訊息附一行
         let role = roleProvider?()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if (!shownName.isEmpty || !role.isEmpty), !Self.extraArgs.contains("--append-system-prompt") {
-            let note = [shownName.isEmpty ? "" : Self.nameNote(shownName, topic: currentTopic), role].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let protectsSharedMemory = Prefs.shared.childMemoryWriteGuard && !(isCommanderChatProvider?() ?? false)
+        if (!shownName.isEmpty || !role.isEmpty || protectsSharedMemory), !Self.extraArgs.contains("--append-system-prompt") {
+            var notes = [shownName.isEmpty ? "" : Self.nameNote(shownName, topic: currentTopic), role].filter { !$0.isEmpty }
+            if protectsSharedMemory { notes.append(Self.memoryDraftInstruction(for: shownName)) }
+            let note = notes.joined(separator: "\n\n")
             args += ["--append-system-prompt", note]
             if !shownName.isEmpty { announcedName = Self.nameKey(shownName, currentTopic) }
         }
@@ -324,6 +487,13 @@ final class ChatSession {
             args += ["--debug-file", f]
         }
         if let mode = permissionMode ?? Prefs.shared.permissionMode, !Self.extraArgs.contains("--permission-mode") { args += ["--permission-mode", mode] }
+        // 每段對話獨立帶 --settings：compact-guard hooks、本聊天室的共用記憶限制，或兩者皆有。
+        if !Self.extraArgs.contains("--settings"),
+           let s = Self.claudeSettingsPath(conversationID: conversationTag ?? id,
+                                          compactGuard: Prefs.shared.compactGuard && localEndpoint == nil,
+                                          protectSharedMemory: protectsSharedMemory) {
+            args += ["--settings", s]
+        }
         args += Self.extraArgs
         var env: [String: String] = [:]
         if let local = localEndpoint {
@@ -463,10 +633,17 @@ final class ChatSession {
         p.terminationHandler = { [weak self] proc in
             DispatchQueue.main.async {
                 guard let self, self.process === proc else { return }
+                let unfinishedAgyTurn = proc.terminationStatus == 15 ? nil
+                    : self.agy?.processExitFailure(code: proc.terminationStatus, stderr: self.stderrTail)
+                let unfinishedCodexTurn = proc.terminationStatus == 15 ? nil
+                    : self.codex?.processExitFailure(code: proc.terminationStatus, stderr: self.stderrTail)
                 if let t = self.conversationTag { BrowserServer.shared.revokeScopedTokens(conv: t) }
                 outPipe.fileHandleForReading.readabilityHandler = nil
                 errPipe.fileHandleForReading.readabilityHandler = nil
                 EventLog.log("聊天程序", "\(self.convTag)：程序結束（pid \(proc.processIdentifier)，代碼 \(proc.terminationStatus)）")
+                AgyBridge.recordTestProbe(["event": "process_exit", "conversation": self.claudeSession.uuidString.lowercased(),
+                                           "status": proc.terminationStatus, "starts": self.agyProcessStarts])
+                self.cancelAgyRetry()
                 self.process = nil
                 self.input = nil
                 self.agy = nil
@@ -476,17 +653,30 @@ final class ChatSession {
                 let callbacks = self.defaultRequests.values
                 self.defaultRequests.removeAll()
                 callbacks.forEach { $0(false) }
+                let wasAlreadyIdle = self.status == .idle
                 self.status = .idle
+                if wasAlreadyIdle { self.onStatus?(.idle) }
                 let lost = self.unacked
                 self.unacked.removeAll()
                 if !lost.isEmpty { self.onLost?(lost) }
                 for m in lost { self.resolveDelivery(m.uuid, acknowledged: false) }
+                if let unfinishedAgyTurn { self.emit(unfinishedAgyTurn) }
+                if let unfinishedCodexTurn { self.emit(unfinishedCodexTurn) }
                 self.onExit?(proc.terminationStatus, self.stderrTail)
             }
         }
         do { try p.run() } catch {
             onExit?(-1, L("開不了 \(bridge == nil ? "claude" : "agy")：\(error.localizedDescription)"))
             return false
+        }
+        // Foundation 的 Process 自己就把子程序放進「以它 pid 為編號」的獨立群組（父程序事後 setpgid 會 EACCES，實測）。
+        // 只有確認群組真的是它自己的、而且不是 codenv 的群組時才記下來，之後 killpg 只殺這個 session 自己的程序樹
+        let pid = p.processIdentifier
+        if pid > 1, getpgid(pid) == pid, pid != getpgrp() {
+            processGroupID = pid
+        } else {
+            processGroupID = nil
+            EventLog.log("聊天程序", "\(convTag)：子程序不在獨立程序群組（pid \(pid)），只能結束主程序")
         }
         process = p
         input = inPipe.fileHandleForWriting
@@ -499,7 +689,7 @@ final class ChatSession {
     /// 送出使用者的訊息（文字＋圖片 PNG/JPEG）。uuid 用來對回 Claude 讀進去的那份回送；
     /// now：Claude 還在做的話叫它停下目前這一步、先讀這則（終端機的 ⌃ Enter）
     @discardableResult
-    func send(text: String, images: [(data: Data, mediaType: String)], uuid: String, now: Bool = false, displayText: String? = nil, quotes: [MessageQuote] = [], filePaths: [String] = [], imageDrafts: [DraftPersistence.Image] = [], onDelivery: ((Bool) -> Void)? = nil) -> Bool {
+    func send(text: String, images: [(data: Data, mediaType: String)], uuid: String, now: Bool = false, displayText: String? = nil, quotes: [MessageQuote] = [], filePaths: [String] = [], imageDrafts: [DraftPersistence.Image] = [], deliveryTimeout: TimeInterval? = 60, onDelivery: ((Bool) -> Void)? = nil) -> Bool {
         guard start() else { return false }
         let uuid = uuid.lowercased()   // 寄件匣、unacked、回送比對、插話一律小寫（呼叫端現在都給小寫，這裡保險）
         let wasBusy = status != .idle
@@ -537,9 +727,14 @@ final class ChatSession {
         unacked.append((uuid: uuid.lowercased(), text: displayText ?? original, images: images, quotes: quotes))
         if let onDelivery {
             deliveryCallbacks[uuid] = onDelivery
-            // 程序沒結束卻一直不回送時也要結束交接等待；寄件匣與 unacked 繼續保留。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in self?.resolveDelivery(uuid, acknowledged: false) }
+            // commander --wait 不為仍在佇列的訊息設定期限；它從收到 isReplay（真正開工）才開始計時。
+            if let deliveryTimeout {
+                let deadline = max(1, min(1800, deliveryTimeout))
+                DispatchQueue.main.asyncAfter(deadline: .now() + deadline) { [weak self] in self?.resolveDelivery(uuid, acknowledged: false) }
+            }
         }
+        AgyBridge.recordTestProbe(["event": "send_accepted", "conversation": claudeSession.uuidString.lowercased(), "uuid": uuid,
+                                   "text": displayText ?? original, "queuedAtSend": wasBusy])
         // 正在等權限回答（waiting）時排隊送一則：維持 waiting，不要蓋成 working（agy Argon 11/6）
         if pending.isEmpty { status = .working }
         guard write(["type": "user", "uuid": uuid, "message": ["role": "user", "content": content]]) else {
@@ -615,6 +810,37 @@ final class ChatSession {
         write(["type": "control_request", "request_id": id, "request": ["subtype": "interrupt", "send_now": true, "message_uuid": uuid]])
     }
 
+    private func cancelAgyRetry(_ key: String? = nil, clearDeferred: Bool = true) {
+        let keys = key.map { [$0] } ?? Array(Set(agyRetryWorkItems.keys).union(agyRetryGenerations.keys))
+        for k in keys {
+            agyRetryWorkItems.removeValue(forKey: k)?.cancel()
+            agyRetryGenerations.removeValue(forKey: k)
+        }
+        if key == nil {
+            agy?.cancelRetryWait()
+            if clearDeferred { agyDeferredUserWrites.removeAll() }
+        }
+    }
+
+    private func scheduleAgyRetry(_ bridge: AgyBridge, _ retry: (key: String, event: [String: Any], attempt: Int, delay: TimeInterval)) {
+        cancelAgyRetry(retry.key)
+        // UUID avoids reusing a generation after cleanup; an already-enqueued cancelled callback cannot match a newer retry.
+        let generation = UUID()
+        let item = RetryPolicy.schedule(after: retry.delay) { [weak self, weak bridge] in
+            guard let self, let bridge, self.agy === bridge, self.process?.isRunning == true,
+                  self.agyRetryGenerations[retry.key] == generation else { return }
+            self.agyRetryWorkItems[retry.key] = nil
+            if !self.write(retry.event) {
+                self.emit(["type": "result", "subtype": "error_during_execution", "is_error": true,
+                           "result": L("agy 重試訊息沒有送出，請再試一次")])
+                self.terminate()
+            }
+            self.agyRetryGenerations.removeValue(forKey: retry.key)
+        }
+        agyRetryGenerations[retry.key] = generation
+        agyRetryWorkItems[retry.key] = item
+    }
+
     /// 回答權限詢問／選擇題（畫面傳來的）
     func answerPermission(requestID: String, behavior: String, updatedInput: Any?, updatedPermissions: Any?, message: String?) {
         var r: [String: Any] = ["behavior": behavior]
@@ -645,13 +871,35 @@ final class ChatSession {
         write(["type": "control_request", "request_id": UUID().uuidString, "request": req])
     }
 
-    /// 換思考強度：程序在跑就送 /effort（這版 Claude 沒有對應的控制指令，斜線指令實測有效），沒在跑就等下次開的時候帶 --effort
+    /// 換思考強度：Claude 送 /effort；其他支援強度的引擎更新設定並在聊天區說明何時生效。
     func setEffort(_ value: String?) {
         effort = value
-        if let codex { codex.effort = value; return }   // codex 下一輪就用新的
-        if let mlx { mlx.effort = value; return }
-        if apple != nil { return }   // Apple 模型沒有強度可調
-        if agy != nil || copilot != nil { restartAgyIfIdle(); return }   // 開的時候才能帶：閒著就重開
+        let label = value.map(Effort.name) ?? L("預設")
+        if codexModel != nil {
+            codex?.effort = value
+            onEffortNotice?(L("下一則訊息起用\(label)"))
+            return
+        }
+        if mlxModel != nil {
+            mlx?.effort = value
+            onEffortNotice?(L("下一則訊息起用\(label)"))
+            return
+        }
+        if appleModel != nil { return }   // Apple 模型沒有強度可調
+        if agyModel != nil || copilotModel != nil {
+            if agy != nil || copilot != nil {
+                if status == .idle {
+                    restartAgyIfIdle()
+                    onEffortNotice?(L("已重開，用\(label)"))
+                } else {
+                    restartForEffortWhenIdle = true
+                    onEffortNotice?(L("這輪做完重開後用\(label)"))
+                }
+            } else {
+                onEffortNotice?(L("下一則訊息起用\(label)"))
+            }
+            return
+        }
         guard isRunning, let value else { return }
         write(["type": "user", "message": ["role": "user", "content": "/effort \(value)"]])
     }
@@ -689,8 +937,21 @@ final class ChatSession {
 
     /// 停止目前這一輪（像在終端機按 Esc）
     func interrupt() {
-        guard isRunning, status != .idle else { return }
-        if let codex { codex.interrupt(); return }
+        cancelAgyRetry()
+        guard isRunning else {
+            clearStuckWorkingStatus()
+            return
+        }
+        if let codex {
+            if !codex.interrupt() {
+                clearStuckWorkingStatus()
+            }
+            return
+        }
+        guard status != .idle else {
+            onStatus?(.idle)
+            return
+        }
         if let copilot { copilot.interrupt(); return }
         if let mlx { mlx.interrupt(); return }
         if let apple { apple.interrupt(); return }
@@ -698,11 +959,19 @@ final class ChatSession {
         if let agy {
             if let t = agy.interruptedText() { agyCancelled.append(t) }
             emit(["type": "user", "message": ["role": "user", "content": "[Request interrupted by user]"]])
-            emit(["type": "result", "subtype": "error_during_execution", "is_error": true])
+            emit(["type": "result", "subtype": "stopped", "stopped": true, "is_error": false, "result": L("已停止")])
             terminate()
             return
         }
         write(["type": "control_request", "request_id": UUID().uuidString, "request": ["subtype": "interrupt"]])
+    }
+
+    /// 沒有存活程序或沒有進行中 turn 時按停止：只清殘留的工作中狀態與失敗快取並強制同步給畫面與 Store，不動待答權限或未確認排隊訊息。
+    private func clearStuckWorkingStatus() {
+        terminalTurnTracker.clearFailure()
+        let wasAlreadyIdle = status == .idle
+        status = .idle
+        if wasAlreadyIdle { onStatus?(.idle) }
     }
 
     /// agy 開了就不能換模式、強度（copilot 不能換強度）：閒著就先關掉，下一則訊息用新的參數開（做到一半的就等下一次）
@@ -710,8 +979,26 @@ final class ChatSession {
         if status == .idle { terminate() }
     }
 
-    /// 關掉程序。馬上放手（不等它真的結束），之後送訊息會直接開新的接回去
+    /// 關掉程序樹並確認舊程序結束後，呼叫端才可重新啟動同一個 session。
     func terminate() {
+        terminate(suppressLostRestore: false)
+    }
+
+    /// 闔蓋專用：先由呼叫端保存待送內容，再終止、回報 delivery 失敗，最後清除各引擎佇列與寄件匣。
+    func terminateForLidInterrupt(pendingIDs: Set<String>) {
+        let oldAgy = agy, oldCodex = codex, oldCopilot = copilot
+        lidInterruptForceKillOccurredStored = false
+        terminate(suppressLostRestore: true)
+        oldAgy?.clearForLidInterrupt()
+        oldCodex?.clearForLidInterrupt()
+        oldCopilot?.clearForLidInterrupt()
+        agyDeferredUserWrites.removeAll()
+        do { try outboxPersistence?.remove(ids: pendingIDs) }
+        catch { EventLog.log("闔蓋中斷", "無法清除部分寄件匣項目；已保留原檔，請檢查 outbox 資料夾。") }
+    }
+
+    private func terminate(suppressLostRestore: Bool) {
+        cancelAgyRetry(clearDeferred: !suppressLostRestore)
         if let t = conversationTag { BrowserServer.shared.revokeScopedTokens(conv: t) }
         if let pid = process?.processIdentifier {
             EventLog.log("聊天程序", "\(convTag)：要求結束（pid \(pid)）")
@@ -721,16 +1008,27 @@ final class ChatSession {
         // 先結束程序再關 stdin：背景佇列可能正卡在寫入，程序一死讀端關掉，那次寫入就會失敗返回；
         // 關閉排在同一條佇列，等進行中的寫入結束才關，避免檔案描述子被關掉後重用、寫進別的檔
         let h = input, q = writeQueue
+        AgyBridge.recordTestProbe(["event": "process_terminated", "conversation": claudeSession.uuidString.lowercased(),
+                                   "starts": agyProcessStarts, "pid": process?.processIdentifier ?? 0])
         writeGate.close()
         input = nil
         if let p = process {
-            p.terminate()
-            // 不理 SIGTERM（或寫入一直卡著）的舊程序：5 秒後還活著就強制結束，卡住的寫入才會失敗返回、佇列和檔案描述子才放得掉（agy Opus 11/6）
-            let pid = p.processIdentifier
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak p] in
-                if let p, p.isRunning { EventLog.log("聊天程序", "pid \(pid) 5 秒沒結束，強制結束"); kill(pid, SIGKILL) }
+            // 不阻塞主執行緒：這裡只送 SIGTERM 給整個程序群組；等它結束、5 秒後 SIGKILL 都在背景做。
+            // 舊程序登記在 draining，start() 開新程序前會確認它們都結束了（新舊不重疊）
+            let drain = ChatDrain(process: p, group: processGroupID, lidInterrupt: suppressLostRestore)
+            drain.sendTerm()
+            draining.append(drain)
+            drain.watchInBackground { [weak self, weak drain] in
+                guard let self, let drain else { return }
+                if drain.didForceKillForLidInterrupt { self.lidInterruptForceKillOccurredStored = true }
+                if drain.isAlive {
+                    EventLog.log("聊天程序", "程序群組 \(p.processIdentifier) SIGKILL 後仍存活，保留 draining 追蹤")
+                } else {
+                    self.draining.removeAll { $0 === drain }
+                }
             }
         }
+        processGroupID = nil
         process = nil
         if let h { q.async { try? h.close() } }
         // 停掉了：還在等控制回覆的（設定頁的「設為預設」）不會再收到，直接回報失敗，免得一直等
@@ -747,11 +1045,11 @@ final class ChatSession {
         status = .idle
         // 主動關掉時 terminationHandler 會因為 process 已換掉而直接 return，這裡要自己處理還沒確認的訊息：
         // 不處理的話它們一直掛在 unacked，網頁永遠不卸載、寄件匣也一直當成「還在路上」不放回（agy Argon 11/6）。
-        // onLost 會拿紀錄檔對照：已送到的標已讀，不確定的放回輸入框，寄件匣不刪
+        // 一般 terminate 會透過 onLost 還原不確定訊息；闔蓋路徑已先保存摘要並抑制還原。
         let lost = unacked
         unacked.removeAll()
         // 排到下一輪再交出去：呼叫端（換模型、重開）常是 terminate(); 改設定; start()，同步呼叫 onLost 可能在中間重入（agy Opus 11/6）
-        if !lost.isEmpty { DispatchQueue.main.async { [weak self] in self?.onLost?(lost) } }
+        if !suppressLostRestore, !lost.isEmpty { DispatchQueue.main.async { [weak self] in self?.onLost?(lost) } }
         for m in lost { resolveDelivery(m.uuid, acknowledged: false) }
         onTerminated?()
     }
@@ -768,8 +1066,30 @@ final class ChatSession {
             if let mlx { mlx.outgoing(obj) } else { apple?.outgoing(obj) }
             return true
         }
-        var obj = obj
-        if let agy { guard let o = agy.outgoing(obj) else { return true }; obj = o }   // agy 的格式；它沒有的功能（控制指令）不送
+        let obj = obj
+        if let agy {
+            // 重試等待時先留住新訊息；退避計時器送出重試訊息後才依序寫入這些訊息。
+            if agy.retryAwaitingSend, obj["type"] as? String == "user", obj["uuid"] != nil, obj["agyRetry"] as? Bool != true {
+                agyDeferredUserWrites.append(obj)
+                AgyBridge.recordTestProbe(["event": "queued_during_retry", "conversation": claudeSession.uuidString.lowercased(),
+                                           "uuid": obj["uuid"] as? String ?? "",
+                                           "text": (obj["message"] as? [String: Any]).flatMap { $0["content"] as? String } ?? ""])
+                return true
+            }
+            // outgoing 會把內部事件轉成 agy wire 格式並移除標記；先保存，
+            // 才能在重試訊息寫入後 flush 等待期間收到的插話。
+            let retry = obj["agyRetry"] as? Bool == true
+            guard let wire = agy.outgoing(obj) else { return true }
+            guard rawWrite(wire) else { return false }
+            if retry {
+                let deferred = agyDeferredUserWrites
+                agyDeferredUserWrites.removeAll()
+                for queued in deferred {
+                    guard let wire = agy.outgoing(queued), rawWrite(wire) else { return false }
+                }
+            }
+            return true
+        }
         return rawWrite(obj)
     }
 
@@ -802,12 +1122,39 @@ final class ChatSession {
         while let nl = buffer.firstIndex(of: 0x0a) {
             let lineData = buffer[buffer.startIndex..<nl]
             buffer.removeSubrange(buffer.startIndex...nl)
-            guard !lineData.isEmpty, let line = String(data: lineData, encoding: .utf8),
-                  let obj = (try? JSONSerialization.jsonObject(with: lineData)) as? [String: Any] else { continue }
+            if lineData.isEmpty { continue }
+            guard let line = String(data: lineData, encoding: .utf8),
+                  let obj = (try? JSONSerialization.jsonObject(with: lineData)) as? [String: Any] else {
+                if let agy {
+                    emit(agy.protocolFailure(L("收到無法解析的 JSON 行")))
+                    terminate()
+                    break
+                }
+                continue
+            }
             Self.log?.write(Data("← ".utf8) + lineData + Data([0x0a]))
-            if let agy { agy.incoming(obj).forEach(emit) } else if let codex { codex.incoming(obj) } else if let copilot { copilot.incoming(obj) } else {
-                if swallowRename(obj) { track(obj); if let n = pendingName, status == .idle, silentRenames == 0 { sendRename(n) }; continue }
-                track(obj); onLine?(line, obj)
+            if let agy {
+                agy.incoming(obj).forEach(emit)
+                    agy.testProbeEvent("stdout_\((obj["event"] as? String) ?? (obj["type"] as? String) ?? "event")")
+                if agy.requiresRestart {
+                    // 錯誤已顯示；未確認的訊息退回寄件匣，並給程序短暫時間自行退出以保留結束碼與 stderr。
+                    failUnacknowledgedInputs()
+                    let failedBridge = agy
+                    if let failedProcess = process {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak failedProcess] in
+                            guard let self, let failedProcess, self.process === failedProcess,
+                                  self.agy === failedBridge, failedBridge.requiresRestart else { return }
+                            self.terminate()
+                        }
+                    }
+                    break
+                }
+                if let retry = agy.takeRetryRequest() { scheduleAgyRetry(agy, retry) }
+            } else if let codex { codex.incoming(obj) } else if let copilot { copilot.incoming(obj) } else {
+                let (event, _) = terminalTurnTracker.observe(obj)
+                let eventLine = (try? JSONSerialization.data(withJSONObject: event)).flatMap { String(data: $0, encoding: .utf8) } ?? line
+                if swallowRename(event) { track(event); if let n = pendingName, status == .idle, silentRenames == 0 { sendRename(n) }; continue }
+                track(event); onLine?(eventLine, event)
                 // Claude 做事時改的名字：這一輪結束（變閒置）後補送
                 if let n = pendingName, status == .idle { sendRename(n) }
             }
@@ -815,7 +1162,8 @@ final class ChatSession {
     }
 
     /// 自己做出來的事件（agy 翻好的）交給畫面，跟 claude 吐的一樣處理
-    private func emit(_ obj: [String: Any]) {
+    private func emit(_ raw: [String: Any]) {
+        let (obj, _) = terminalTurnTracker.observe(raw)
         guard let d = try? JSONSerialization.data(withJSONObject: obj), let line = String(data: d, encoding: .utf8) else { return }
         if mlx != nil || apple != nil, obj["type"] as? String != "stream_event" { Self.log?.write(Data("← ".utf8) + d + Data([0x0a])) }
         track(obj)
@@ -823,6 +1171,16 @@ final class ChatSession {
     }
 
     /// 從事件推出目前狀態（給側欄的燈號）
+    func modelSelectionProbeBeginWork() {
+        guard CommandLine.arguments.contains("--state-dir") else { return }
+        track(["type": "assistant"])
+    }
+
+    func interruptedIndicatorProbeWork() {
+        guard CommandLine.arguments.contains("--state-dir") else { return }
+        track(["type": "assistant"])
+    }
+
     private func track(_ o: [String: Any]) {
         // Claude 的背景工作回報不是模型新一輪輸出。通知可能是 system/task_notification，
         // 也可能以 user 事件包在 <task-notification> 標籤內；不能讓它把 result 後的 idle 拉回 working。
@@ -880,6 +1238,11 @@ final class ChatSession {
             if o["subtype"] as? String == "init", let t = o["terminal_slash_commands"] as? [String] { SlashCommand.terminalOnly = Set(t) }
             if let pm = o["permissionMode"] as? String, pm != permissionMode { permissionMode = pm; onPermissionMode?(pm) }
         case "stream_event", "assistant":
+            // 背景子代理（parent_tool_use_id 有值）在主回合 result 之後還會繼續吐事件：那不是新的一輪，
+            // 不能把已經 idle 的狀態拉回 working（不然「完成」底下又出現「正在處理」，一直到背景子代理結束，07-28）。
+            // 主回合還在 working 時子代理的事件照舊（狀態本來就是 working）。
+            if status == .idle, let parent = o["parent_tool_use_id"], !(parent is NSNull) { break }
+            if status == .idle, o["isSidechain"] as? Bool == true { break }
             // A 的 token 不能確認仍在排隊的 B；所有後端都等各則 UUID 回送。
             if pending.isEmpty { status = .working }
         case "user":
@@ -907,19 +1270,73 @@ final class ChatSession {
 
 /// 權限模式循環：bypassPermissions 放在一般模式之後，選取時另行確認。
 enum PermissionMode {
+    enum Engine: String { case claude, codex, agy, copilot }
+
+    /// 聊天室的模型分類 → 權限引擎（只有這四種有權限模式）
+    static func engine(category: String) -> Engine? { Engine(rawValue: category) }
+
+    /// Copilot 與 agy 的 auto 實際行為是「全部放行」（含任意指令、寫專案外），不是 Codex／Claude 那種「自動」，顯示成「全都不問」
+    static func isSilentAuto(engine: Engine, mode: String) -> Bool {
+        mode == "auto" && (engine == .agy || engine == .copilot)
+    }
+
+    /// 不帶符號的模式名稱（資訊卡、codenv-todo 輸出用）
+    static func displayName(engine: Engine, mode: String) -> String {
+        if isSilentAuto(engine: engine, mode: mode) { return L("全都不問") }
+        switch mode {
+        case "acceptEdits": return L("改檔不問")
+        case "plan": return L("只規劃")
+        case "auto": return L("自動")
+        case "bypassPermissions": return L("全部不問")
+        default: return L("每次都問")
+        }
+    }
+
+    /// 切到「全都不問」前的確認視窗文字（auto 對 Copilot／agy、bypassPermissions 對所有引擎）
+    static var confirmText: String { L("選了會放行所有指令，也會放行寫入專案外的檔案，不會逐次詢問。只有在你願意自行承擔風險時才繼續。") }
+
     static let cycle = ["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
     static func next(after m: String) -> String {
         guard let i = cycle.firstIndex(of: m) else { return cycle[0] }
         return cycle[(i + 1) % cycle.count]
     }
     /// 輸入框上那顆按鈕的字
-    static func label(_ m: String) -> String {
+    static func label(_ m: String, engine: Engine = .claude) -> String {
+        if isSilentAuto(engine: engine, mode: m) { return L("⏵⏵ 全都不問") }
         switch m {
         case "acceptEdits": return L("⏵⏵ 改檔不問")
         case "plan": return L("⏸ 只規劃")
         case "auto": return L("⏵⏵ 自動")
         case "bypassPermissions": return L("⏵⏵ 全部不問")
         default: return L("每次都問")
+        }
+    }
+
+    /// 「全部不問」確認視窗的內文
+    static func bypassConfirmText(engineName: String) -> String {
+        L("\(engineName) 可能執行指令或改動工作區，不會逐次詢問核准。只有在你願意自行承擔風險時才繼續。")
+    }
+    /// 按各引擎實際收到的權限參數說明模式；僅供按鈕提示，不參與權限決策。
+    static func tooltip(engine: Engine, mode: String) -> String {
+        switch (engine, mode) {
+        case (.claude, "default"): return L("每次都問（Claude）：執行需要權限的操作前會詢問")
+        case (.claude, "acceptEdits"): return L("改檔不問（Claude）：自動接受檔案編輯；其他需要權限的操作仍會詢問")
+        case (.claude, "plan"): return L("只規劃（Claude）：只讀探索與規劃，不修改檔案")
+        case (.claude, "auto"): return L("自動（Claude）：使用 Claude Code 自動權限模式，由 Claude Code 判斷何時需要詢問")
+        case (.claude, "bypassPermissions"): return L("全部不問（Claude）：略過權限提示，工具操作不逐次詢問")
+        case (.codex, "default"): return L("每次都問（Codex）：未信任的指令先詢問；沙盒可讀寫專案資料夾")
+        case (.codex, "acceptEdits"): return L("改檔不問（Codex）：專案資料夾內改檔、跑指令不問；要出去才問")
+        case (.codex, "plan"): return L("只規劃（Codex）：唯讀沙盒；需要寫入時由 Codex 申請升權")
+        case (.codex, "auto"): return L("自動（Codex）：專案資料夾內改檔、跑指令不問；要動資料夾外或連網才問")
+        case (.codex, "bypassPermissions"): return L("全部不問（Codex）：不詢問核准，使用完整磁碟存取")
+        case (.agy, "default"): return L("每次都問（Hydrogen／agy）：不加略過權限參數，依 agy 預設詢問")
+        case (.agy, "acceptEdits"): return L("改檔不問（Hydrogen／agy）：使用 agy 的 accept-edits 模式")
+        case (.agy, "plan"): return L("只規劃（Hydrogen／agy）：使用 agy 的 plan 模式")
+        case (.agy, "auto"): return L("全都不問（Hydrogen／agy）：所有指令與寫檔（含專案外）都直接放行，不詢問")
+        case (.copilot, "auto"): return L("全都不問（Copilot）：所有權限請求（含任意指令、寫入專案外）都直接放行，不詢問")
+        case (.copilot, "bypassPermissions"): return L("全部不問（Copilot）：所有權限請求都直接放行，不詢問")
+        case (.agy, "bypassPermissions"): return L("全部不問（Hydrogen／agy）：完全不問")
+        default: return L("權限模式：依目前引擎設定")
         }
     }
 }
@@ -1007,9 +1424,9 @@ extension LocalModel: Codable {
 }
 
 enum Effort {
-    static let names = ["low": L("低"), "medium": L("中"), "high": L("高"), "xhigh": L("很高"), "max": L("最高")]
+    /// 思考強度一律顯示英文代號（不經 L()）：low／medium／high／xhigh／max／ultra，xhigh 與 high 才分得出來
     static let order = ["low", "medium", "high", "xhigh", "max"]
-    static func name(_ v: String) -> String { names[v] ?? v }
+    static func name(_ v: String) -> String { v }
 }
 
 /// 背景寫入佇列用的開關：主執行緒關、背景執行緒讀
@@ -1018,4 +1435,59 @@ final class WriteGate: @unchecked Sendable {
     private var open = true
     var isOpen: Bool { lock.lock(); defer { lock.unlock() }; return open }
     func close() { lock.lock(); open = false; lock.unlock() }
+}
+
+/// 一個被要求結束的聊天程序樹。只對「這個 session 自己建的」群組（group＝子程序 pid）送訊號，不碰 codenv 自己或別人的程序
+final class ChatDrain {
+    let process: Process
+    let group: pid_t?
+    private let lidInterrupt: Bool
+    init(process: Process, group: pid_t?, lidInterrupt: Bool = false) {
+        self.process = process; self.group = group; self.lidInterrupt = lidInterrupt
+    }
+
+    /// 群組確認空了就鎖死成「已結束」：之後就算 pid 被系統回收、剛好變成別的群組的編號，也不會誤判成還活著或誤殺。
+    /// （群組還有成員時 pgid 不會被回收；只有「群組空了之後 pid 空間繞一圈又剛好成為群組組長」才可能，鎖死後這個窗口只剩第一次判斷之前）
+    private let lock = NSLock()
+    private var groupGone = false
+    private var forceKillSent = false
+    var didForceKillForLidInterrupt: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return lidInterrupt && forceKillSent
+    }
+    var isAlive: Bool {
+        if process.isRunning { return true }
+        guard let g = group else { return false }
+        lock.lock(); defer { lock.unlock() }
+        if groupGone { return false }
+        if kill(-g, 0) == 0 || errno == EPERM { return true }
+        groupGone = true
+        return false
+    }
+    func sendTerm() {
+        if let g = group { _ = kill(-g, SIGTERM) } else { process.terminate() }
+    }
+    func sendKill() {
+        let pid = process.processIdentifier
+        var sent = false
+        if let g = group, isAlive, kill(-g, SIGKILL) == 0 { sent = true }
+        if process.isRunning, kill(pid, SIGKILL) == 0 { sent = true }
+        if sent, lidInterrupt {
+            lock.lock(); forceKillSent = true; lock.unlock()
+        }
+    }
+    /// 背景等：最多 5 秒（SIGTERM 階段），還活著就 SIGKILL，確認結束後在主執行緒呼叫 done
+    func watchInBackground(done: @escaping () -> Void) {
+        DispatchQueue.global(qos: .utility).async { [self] in
+            let end = Date().addingTimeInterval(5)
+            while isAlive && Date() < end { Thread.sleep(forTimeInterval: 0.025) }
+            if isAlive {
+                EventLog.log("聊天程序", "程序群組 \(process.processIdentifier) 5 秒沒結束，強制結束")
+                sendKill()
+                let end2 = Date().addingTimeInterval(3)
+                while isAlive && Date() < end2 { Thread.sleep(forTimeInterval: 0.025) }
+            }
+            DispatchQueue.main.async(execute: done)
+        }
+    }
 }

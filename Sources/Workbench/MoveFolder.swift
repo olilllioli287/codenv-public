@@ -72,7 +72,8 @@ enum ConversationMover {
 extension MainWindowController {
     /// 右鍵「換工作資料夾…」：選資料夾 → 問一次 → 搬
     func changeFolder(_ id: UUID) {
-        guard let window, let c = store.conversation(id), let old = store.project(c.projectID)?.path else { return }
+        guard let window, let c = store.conversation(id) else { return }
+        let old = store.workingDirectory(for: c)
         // state.json 沒讀到或正在保護原檔：搬了之後新的資料夾位置存不下來，紀錄卻已經搬走，對話會找不到
         if store.isSaveProtected {
             confirm(L("現在不能換資料夾"), L("codenv 的設定檔 state.json 這次沒讀到（或讀不懂），為了保護原檔先不存任何改動。換資料夾會搬走紀錄但位置存不下來。請先處理設定檔（看啟動時的提示或 state.json.讀不到-*）再換。"), button: L("好")) {}
@@ -106,7 +107,9 @@ extension MainWindowController {
 
     /// 不問、直接搬（測試的 --move-folder 也叫這個）
     func moveConversation(_ id: UUID, to new: String) {
-        guard let c = store.conversation(id), let old = store.project(c.projectID)?.path, new != old else { return }
+        guard let c = store.conversation(id) else { return }
+        let old = store.workingDirectory(for: c)
+        guard new != old else { return }
         if hasUnsentInput(id) { return warnUnsentInput() }
         // 按下確認之後才開始跑（問的時候它可能又動起來了）：再確認一次，還在做事就不搬
         if store.status[id] != nil {
@@ -149,7 +152,11 @@ extension MainWindowController {
             host.invalidate(id); return
         }
         let pid = store.projects.first(where: { $0.path == new })?.id ?? store.addProject(path: new).id
-        if let i = store.conversations.firstIndex(where: { $0.id == id }) { store.conversations[i].projectID = pid }
+        if let i = store.conversations.firstIndex(where: { $0.id == id }) {
+            store.conversations[i].projectID = pid
+            store.conversations[i].worktreePath = nil
+            store.conversations[i].worktreeBranch = nil
+        }
         if let group { store.move(id, toGroup: group) }
         // 紀錄已經搬走了：state.json 馬上寫，不等延遲存檔（中間閃退的話重開會指著舊資料夾）
         if !store.saveNow() {

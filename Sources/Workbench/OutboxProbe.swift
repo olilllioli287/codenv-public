@@ -133,6 +133,32 @@ enum OutboxProbe {
             // 原子更新不應留下暫存 JSON。
             let files = try FileManager.default.contentsOfDirectory(atPath: store.fileURL.deletingLastPathComponent().path)
             check(!files.contains { $0.hasSuffix(".tmp") }, "no temporary JSON remains")
+            // 07-30：「仍要送出」留了明文的紀錄。非 Claude 引擎寫進 jsonl 的字已被遮罩，沒有 uuid，比對時 wireText 要用同樣規則遮。
+            let keyStore = OutboxPersistence(directory: directory, conversationID: UUID())
+            let fakeKey = "nvapi-" + "Zq8Lm3Xv9Tk2Rb7Wd4Hs6Yc1Nf5Gp0Ja"   // 測試用假格式，不是真金鑰
+            let keyText = "我的金鑰是 \(fakeKey) 請收好"
+            let keyTranscript = directory.appendingPathComponent("key-fixture.jsonl")
+            try Data().write(to: keyTranscript)
+            try keyStore.append(id: "k1", text: keyText, wireText: keyText, quotes: [], filePaths: [], images: [], transcriptURLs: [keyTranscript])
+            check(String(decoding: try Data(contentsOf: keyStore.fileURL), as: UTF8.self).contains(fakeKey), "plaintext kept until delivered")
+            let maskedRow: [String: Any] = ["type": "user", "message": ["role": "user", "content": [["type": "text", "text": keyText]]]]
+            let maskedData = Transcripts.redactedJSON(maskedRow) ?? Data()
+            check(!String(decoding: maskedData, as: UTF8.self).contains(fakeKey), "transcript row is masked")
+            try (maskedData + Data([0x0a])).write(to: keyTranscript)
+            check(try keyStore.reconcile(transcriptURLs: [keyTranscript]).isEmpty, "masked transcript confirms plaintext record")
+            check(!FileManager.default.fileExists(atPath: keyStore.fileURL.path), "delivered record leaves no outbox file")
+            // 沒送達的明文紀錄：超過存活上限就只留遮罩版，且遮罩版仍能比對（不重塞、不重送）。
+            let ttlTranscript = directory.appendingPathComponent("ttl-fixture.jsonl")
+            try Data().write(to: ttlTranscript)
+            try keyStore.append(id: "k2", text: keyText, wireText: keyText, quotes: [MessageQuote(qid: "q", role: "assistant", text: keyText)],
+                                filePaths: [], images: [], transcriptURLs: [ttlTranscript])
+            try keyStore.scrubExpired(now: Date().addingTimeInterval(OutboxPersistence.ttl - 60))
+            check(String(decoding: try Data(contentsOf: keyStore.fileURL), as: UTF8.self).contains(fakeKey), "plaintext still kept before TTL")
+            try keyStore.scrubExpired(now: Date().addingTimeInterval(OutboxPersistence.ttl + 60))
+            let scrubbed = String(decoding: try Data(contentsOf: keyStore.fileURL), as: UTF8.self)
+            check(!scrubbed.contains(fakeKey) && scrubbed.contains("〔金鑰…"), "plaintext gone after TTL (text/wireText/quotes)")
+            try (maskedData + Data([0x0a])).write(to: ttlTranscript)
+            check(try keyStore.reconcile(transcriptURLs: [ttlTranscript]).isEmpty, "masked-only record still matches after TTL")
         } catch { failures.append(String(describing: error)) }
         print("outbox-selftest: " + (failures.isEmpty ? "PASS" : "FAIL\n" + failures.joined(separator: "\n")))
         print("fixtures=" + directory.path)

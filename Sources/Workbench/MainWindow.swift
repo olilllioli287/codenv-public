@@ -10,12 +10,23 @@ final class MainWindowController: NSWindowController {
     var detachedWindows: [UUID: DetachedWindowController] = [:]
     private weak var splitController: NSSplitViewController?
     private var collabSub: AnyCancellable?
+    private var webEditingFocusSub: AnyCancellable?
     private var bag: Set<AnyCancellable> = []
     var openSettings: () -> Void = {}
     private var keys: PrefixKeys?
     var lidKeeper: LidKeeper?
     var lidTimer: Timer?
     var sprintRunner: SprintRunner?
+    /// 考卷可替換的引擎操作；正式情況走每格既有 interrupt／send。
+    var commanderInterrupt: (ChatPane) -> Void = { $0.session.interrupt() }
+    var commanderDeliver: (ChatPane, String, String?, Bool, TimeInterval?, ((Bool) -> Void)?, String) -> Bool = {
+        $0.sendAutomatedText($1, source: $6, uuid: $2, now: $3, deliveryTimeout: $4, onDelivery: $5)
+    }
+    /// 測試實例（--state-dir）專用：confirm() 被要求的次數與 sweepDrafts() 刪掉的聊天室數。
+    private(set) var testConfirmRequestCount = 0
+    var testSweepDraftsDeletedCount = 0
+    /// 測試實例（--state-dir）專用：若設定則由回呼直接決定 confirm() 結果（true＝確定、false＝取消），不真的彈出 NSAlert。
+    var testConfirmHandler: ((String, String, String) -> Bool)?
     lazy var floatingTerminal = FloatingTerminalController(parent: window!, store: store, workspace: workspace)
 
     init(store: Store, workspace: Workspace) {
@@ -33,6 +44,9 @@ final class MainWindowController: NSWindowController {
         let testing = CommandLine.arguments.contains("--state-dir")   // 測試 App 不記視窗大小，免得蓋掉使用者調好的
         w.minSize = NSSize(width: 480, height: 400)   // 寬 480：Rectangle 等的「一半」在 iPad 第二螢幕（1366 寬→683）、筆電的「三分之一」（504）都放得下（版面超出一半）
         super.init(window: w)
+        workspace.onCommanderDispatchEvent = { [weak self] id, uuid, event in
+            self?.commanderDispatchEvent(conversationID: id, messageID: uuid, event: event)
+        }
         shouldCascadeWindows = false
         // 上次的位置（自己記的原始座標；沒有就讀以前系統記的那份）
         let savedFrame = testing ? nil : (UserDefaults.standard.string(forKey: Self.frameKey) ?? UserDefaults.standard.string(forKey: "NSWindow Frame " + Self.frameName))
@@ -101,6 +115,7 @@ final class MainWindowController: NSWindowController {
             return false
         }
         collab.start()
+        CommanderStuck.shared.start(store: store, main: self)
         setUpSchedules()
         // 聊天室被拿出取過名字的 Window、或 Window 改回預設名字／被關：它在 Window 框上的記號清掉（Bundles.swift syncWindowBundles）
         store.$sessions.dropFirst().debounce(for: .seconds(0.3), scheduler: RunLoop.main)
@@ -150,12 +165,14 @@ final class MainWindowController: NSWindowController {
             }
         }
         TestScreen.fit(w)      // 測試用：--test-screen 指定的螢幕（只在測試實例生效）
+        TestScreen.concealIfNoScreen(w) // 無指定螢幕的隔離測試，第一次顯示前就隱藏
         // 擺好了才開始記：拖動、調大小就存原始座標（⌘ Q 時 AppDelegate 再存一次）
         if !testing {
             for n in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
                 NotificationCenter.default.addObserver(forName: n, object: w, queue: .main) { [weak self] _ in self?.saveFrame() }
             }
         }
+        WindowDiag.install(on: w)
 
         host.onCollabPause = { [weak self] p in self?.pauseCollab(p) }
         host.onNewWindow = { [weak self] in self?.newWindow() }
@@ -178,6 +195,10 @@ final class MainWindowController: NSWindowController {
         host.tabBar.onSessions = { [weak self] v in self?.showSessionPanel(from: v) }
         floatingTerminal.onVisibilityChange = { visible in FloatTermButton.setVisible(visible) }
         floatingTerminal.chatRect = { [weak self] in self?.host.chatScreenRect }
+        floatingTerminal.onDragStateChange = { [weak self] dragging in
+            ChatGraphView.rightInstance?.setFloatingTerminalDragging(dragging)
+            self?.graphPanel.graphView?.setFloatingTerminalDragging(dragging)
+        }
         keys = PrefixKeys(controller: self)
         watchDrafts()
         // 設定檔存不進去：在這個視窗上跳一次說明（sheet，不把 App 叫到前景、不搶別的 App 的焦點）
@@ -215,18 +236,20 @@ final class MainWindowController: NSWindowController {
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
             done(self.store.commanderRename(caller: conv, target: target, name: name))
         }
-        BrowserServer.shared.newChat = { [weak self] conv, name, dir, project, model, effort, mcp, topic, area, sandboxed, done in
+        BrowserServer.shared.newChat = { [weak self] conv, name, dir, project, model, effort, mcp, topic, area, worktree, sandboxed, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
-            self.commanderNewChat(caller: conv, name: name, dir: dir, project: project, model: model, effort: effort, mcp: mcp, topic: topic, area: area, sandboxed: sandboxed, done: done)
+            self.commanderNewChat(caller: conv, name: name, dir: dir, project: project, model: model, effort: effort, mcp: mcp, topic: topic, area: area, worktree: worktree, sandboxed: sandboxed, done: done)
         }
         BrowserServer.shared.areaCmd = { [weak self] req, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
             let conv = req["conv"] as? String
             switch req["op"] as? String {
             case "add": done(self.store.commanderAreaAdd(caller: conv, name: (req["name"] as? String) ?? "", parent: req["parent"] as? String))
+            case "rm": done(self.store.commanderAreaRemove(caller: conv, name: (req["name"] as? String) ?? ""))
             case "move": done(self.store.commanderAreaMove(caller: conv, target: (req["target"] as? String) ?? "", area: (req["area"] as? String) ?? ""))
+            case "lead": done(self.store.commanderAreaSetLead(caller: conv, name: (req["name"] as? String) ?? "", target: (req["target"] as? String) ?? "", clear: req["clear"] as? Bool == true))
             case "ls": done(self.store.commanderAreaList(conversation: conv, name: req["name"] as? String) { [weak self] id in (self?.workspace.panes[id] as? ChatPane)?.session.isRunning == true })
-            default: done(["ok": false, "error": "area 只有 add、move、ls"])
+            default: done(["ok": false, "error": "area 只有 add、rm、move、lead、ls"])
             }
         }
         BrowserServer.shared.setTopicChat = { [weak self] conv, target, topic, done in
@@ -237,13 +260,41 @@ final class MainWindowController: NSWindowController {
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
             done(self.store.commanderArchive(caller: conv, target: target))
         }
-        BrowserServer.shared.newEngineChat = { [weak self] conv, name, engine, dir, project, model, effort, topic, done in
+        BrowserServer.shared.archiveOrphanChat = { [weak self] conv, id, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
-            self.commanderNewEngineChat(caller: conv, name: name, engine: engine, dir: dir, project: project, model: model, effort: effort, topic: topic, done: done)
+            done(self.store.commanderArchiveOrphan(caller: conv, id: id))
         }
-        BrowserServer.shared.sendChat = { [weak self] conv, target, text, wait, timeout, done in
+        BrowserServer.shared.handoffInfo = { [weak self] conv, target, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
-            self.commanderSendChat(caller: conv, target: target, text: text, wait: wait, timeout: timeout, done: done)
+            done(self.store.commanderHandoffInfo(caller: conv, target: target))
+        }
+        BrowserServer.shared.handoffCreate = { [weak self] conv, target, name, model, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            self.commanderHandoffCreate(caller: conv, target: target, name: name, model: model, done: done)
+        }
+        BrowserServer.shared.handoffSend = { [weak self] conv, target, text, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            self.commanderHandoffSend(caller: conv, target: target, text: text, done: done)
+        }
+        BrowserServer.shared.handoffFinish = { [weak self] conv, oldID, newID, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            done(self.store.commanderFinishHandoff(caller: conv, oldID: oldID, newID: newID))
+        }
+        BrowserServer.shared.newEngineChat = { [weak self] conv, name, engine, dir, project, model, effort, topic, area, worktree, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            self.commanderNewEngineChat(caller: conv, name: name, engine: engine, dir: dir, project: project, model: model, effort: effort, topic: topic, area: area, worktree: worktree, done: done)
+        }
+        BrowserServer.shared.stopChat = { [weak self] conv, target, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            done(self.commanderStopChat(caller: conv, target: target))
+        }
+        BrowserServer.shared.sendChat = { [weak self] conv, target, text, wait, timeout, interrupt, steer, worktree, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            self.commanderSendChat(caller: conv, target: target, text: text, wait: wait, timeout: timeout, interrupt: interrupt, steer: steer, worktree: worktree, done: done)
+        }
+        BrowserServer.shared.mergeCheck = { [weak self] conv, branch, base, done in
+            guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
+            done(self.commanderMergeCheck(caller: conv, branch: branch, base: base))
         }
         BrowserServer.shared.lastChat = { [weak self] conv, target, done in
             guard let self else { return done(["ok": false, "error": "codenv 關閉中"]) }
@@ -572,9 +623,18 @@ final class MainWindowController: NSWindowController {
 
     func setupActivationFocus() {
         activationObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.activatedAt = Date()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self?.focusChatInput() }
+            self?.handleAppDidBecomeActive()
         })
+        activationObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.clearWebEditingAfterAppResign()
+        })
+        webEditingFocusSub = store.$selected.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in
+            guard let self else { return }
+            self.workspace.panes.values.compactMap { $0 as? ChatPane }.forEach { $0.clearWebEditing() }
+            if let id = self.store.selected, let pane = self.workspace.panes[id] as? ChatPane {
+                pane.refreshWebEditingFromPage()
+            }
+        }
         if let m = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] e in
             // 切回來的那一下點擊：等點擊本身處理完（網頁拿走游標、側欄換對話）再放回輸入框
             if let self, e.window === self.window, Date().timeIntervalSince(self.activatedAt) < 0.6 {
@@ -585,10 +645,51 @@ final class MainWindowController: NSWindowController {
         }) { activationObservers.append(m) }
     }
 
+    /// App 切回前景時使用；隔離探針直接呼叫同一路徑，不真的切換 App 或搶焦點。
+    func handleAppDidBecomeActive(requireKeyWindow: Bool = true, completion: ((Bool) -> Void)? = nil) {
+        activatedAt = Date()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            let focused = self?.focusChatInput(requireKeyWindow: requireKeyWindow) ?? false
+            completion?(focused)
+        }
+    }
+
+    /// App 失焦時使用；隔離探針直接呼叫同一路徑，不真的切換 App 或搶焦點。
+    func clearWebEditingAfterAppResign() {
+        workspace.panes.values.compactMap { $0 as? ChatPane }.forEach { $0.clearWebEditing() }
+    }
+
+    /// 判斷 App 切回前景時是否應將焦點放回聊天輸入框（純邏輯，供單元測試直接驗證）。
+    static func shouldFocusChatInputOnActivation(
+        isKeyWindow: Bool,
+        requireKeyWindow: Bool = true,
+        hasFocusedChatPane: Bool,
+        responderInCodeLab: Bool,
+        responderIsOtherEditableTextView: Bool
+    ) -> Bool {
+        guard (!requireKeyWindow || isKeyWindow), hasFocusedChatPane else { return false }
+        if responderInCodeLab { return false }
+        if responderIsOtherEditableTextView { return false }
+        return true
+    }
+
     @discardableResult
-    func focusChatInput() -> Bool {
-        guard let w = window, w.isKeyWindow, let f = store.currentWindow?.focused, let c = workspace.panes[f] as? ChatPane else { return false }
-        if let t = w.firstResponder as? NSTextView, t.isEditable, t !== c.inputBar.textView { return false }   // 正在別的欄位打字（改名、搜尋）
+    func focusChatInput(requireKeyWindow: Bool = true) -> Bool {
+        guard let w = window else { return false }
+        let focusedChat = store.currentWindow?.focused.flatMap { workspace.panes[$0] as? ChatPane }
+        let responderView = w.firstResponder as? NSView
+        let responderInCodeLab = focusedChat.map { inCodeLab($0, responderView) } ?? false
+        let responderIsOtherEditableTextView: Bool = {
+            guard let c = focusedChat, let t = w.firstResponder as? NSTextView else { return false }
+            return t.isEditable && t !== c.inputBar.textView   // 正在別的欄位打字（改名、搜尋）
+        }()
+        guard Self.shouldFocusChatInputOnActivation(
+            isKeyWindow: w.isKeyWindow,
+            requireKeyWindow: requireKeyWindow,
+            hasFocusedChatPane: focusedChat != nil,
+            responderInCodeLab: responderInCodeLab,
+            responderIsOtherEditableTextView: responderIsOtherEditableTextView
+        ), let c = focusedChat else { return false }
         return c.focusInput()
     }
 
@@ -645,8 +746,8 @@ final class MainWindowController: NSWindowController {
         store.focus(dx: dx, dy: dy)
     }
 
-    /// 焦點在這格的程式碼區（編輯器、執行畫面）裡：聊天室的快捷鍵都要讓給它
-    private func inCodeLab(_ c: ChatPane, _ v: NSView?) -> Bool {
+    /// 焦點在這格的程式碼區（編輯器、執行畫面）裡：聊天室的快捷鍵與切回焦點都要讓給它
+    func inCodeLab(_ c: ChatPane, _ v: NSView?) -> Bool {
         guard let v, let lab = c.codeLab else { return false }
         return v.isDescendant(of: lab)
     }
@@ -668,6 +769,13 @@ final class MainWindowController: NSWindowController {
     // MARK: 小對話框（Enter 確定、Esc 取消；輸入法開著也能按）
 
     func confirm(_ title: String, _ info: String, button: String = L("關掉"), _ ok: @escaping () -> Void) {
+        if CommandLine.arguments.contains("--state-dir") {
+            testConfirmRequestCount += 1
+            if let handler = testConfirmHandler {
+                if handler(title, info, button) { ok() }
+                return
+            }
+        }
         guard let window else { return }
         let a = NSAlert()
         a.messageText = title
@@ -740,7 +848,8 @@ final class MainWindowController: NSWindowController {
     /// 交接：先存文字，再開新聊天室送出；收到指定訊息的送達確認才換格與封存。
     func handoff(_ id: UUID) {
         guard let c = store.conversation(id), c.terminal != true, !c.isBrowser,
-              let dir = store.project(c.projectID)?.path, let pane = workspace.pane(for: c) as? ChatPane else { return }
+              let pane = workspace.pane(for: c) as? ChatPane else { return }
+        let dir = store.workingDirectory(for: c)
         if handingOff.contains(id) { pane.notice(L("這段對話正在交接，請等這次完成。")); return }
         if let reason = handoffBlockReason(c, pane: pane) { pane.notice(reason); return }
         guard Store.claudeHasSession(c.claudeSession, path: dir) else {
@@ -764,7 +873,7 @@ final class MainWindowController: NSWindowController {
             if background { completion?(.deferred(reason)) } else { pane.notice(reason) }
             return
         }
-        guard store.project(c.projectID)?.path == directory,
+        guard store.workingDirectory(for: c) == directory,
               let version = try? handoffTranscriptVersions(c, pane: pane, directory: directory) else {
             let why = L("交接沒有開始：讀不到這段對話的紀錄，或工作資料夾已經改變。")
             if background { completion?(.failed(why)) } else { pane.notice(why) }
@@ -878,7 +987,7 @@ final class MainWindowController: NSWindowController {
 
     private func handoffSourceUnchanged(_ source: Conversation, directory: String, version: [URL: Handoff.TranscriptVersion]) -> Bool {
         guard let old = store.conversation(source.id), old.claudeSession == source.claudeSession, old.projectID == source.projectID,
-              store.project(old.projectID)?.path == directory,
+              store.workingDirectory(for: old) == directory,
               let pane = workspace.pane(for: old) as? ChatPane,
               let current = try? handoffTranscriptVersions(old, pane: pane, directory: directory) else { return false }
         return current == version
@@ -973,7 +1082,7 @@ final class MainWindowController: NSWindowController {
         workspace.switchMode(id, terminal: terminal) { [weak self] in self?.host.invalidate(id) }
     }
 
-    /// 刪對話（側欄、清空草稿）：程式碼區有沒存的修改先存（刪的是對話，不是你寫的程式），存不了就不刪（Codex 11/6）
+    /// 刪對話（側欄右鍵等手動刪除）：先跳確認，程式碼區有沒存的修改先存（刪的是對話，不是你寫的程式），存不了就不刪（Codex 11/6）
     func deleteConversation(_ id: UUID) {
         guard let c = store.conversation(id) else { return }
         let running = store.status[id].map { $0 != .idle } == true || ClaudeSessions.live()[c.claudeSession] != nil
@@ -994,7 +1103,8 @@ final class MainWindowController: NSWindowController {
         }
     }
 
-    private func reallyDeleteConversation(_ id: UUID) {
+    /// 實際刪除對話（不含確認視窗；供手動刪除確認後、整理視窗批次刪除與空草稿自動清理共用）
+    func reallyDeleteConversation(_ id: UUID) {
         workspace.close(id)
         // 草稿檔：格子沒開也要刪，不然留下孤兒檔；放在關格之後，關格時寫的草稿也一起刪
         DraftPersistence(directory: store.directory, conversationID: id).remove()
@@ -1036,14 +1146,7 @@ final class MainWindowController: NSWindowController {
 
     /// F6：大的關聯圖面板（總指揮模式才有）；左緣貼左欄右邊緣，左欄收起或在程式碼學習專區時貼視窗左邊
     lazy var graphPanel: GraphPanelController = {
-        let g = GraphPanelController(window: window!, store: store, workspace: workspace)
-        g.sidebarEdge = { [weak self] in
-            guard let self, let split = self.splitController, let cv = self.window?.contentView,
-                  let item = split.splitViewItems.first, !item.isCollapsed, self.store.area != Store.codeLabArea else { return 0 }
-            let v = item.viewController.view
-            return v.convert(v.bounds, to: cv).maxX
-        }
-        return g
+        GraphPanelController(window: window!, store: store, workspace: workspace)
     }()
     @objc func toggleGraphPanel() {
         guard Prefs.shared.sidebarMode == "commander" || graphPanel.isOpen else { return }
@@ -1098,7 +1201,7 @@ final class MainWindowController: NSWindowController {
             for c in targets {
                 if self.store.status[c.id] != nil || liveNow[c.claudeSession] != nil
                     || (self.workspace.panes[c.id] as? ChatPane)?.codeLab?.hasUnsaved == true { failed.append(c.title + L("（剛開始在跑，沒刪）")); continue }
-                let path = self.store.project(c.projectID)?.path ?? NSHomeDirectory()
+                let path = self.store.workingDirectory(for: c)
                 let file = Store.claudeTranscript(c.claudeSession, path: path)
                 let side = file.deletingPathExtension()   // 子代理的紀錄放在同名資料夾
                 // 紀錄檔丟垃圾桶失敗（權限、垃圾桶滿了）就不刪這段對話：不然紀錄檔留在磁碟上、codenv 裡卻沒有入口了
@@ -1139,7 +1242,7 @@ extension MainWindowController {
     /// 協作看板要讀的對話：codenv 裡每段 Claude 對話的紀錄檔（測試 App 讀 --state-dir 裡的 projects）
     func collabSources() -> [(UUID, URL, String)] {
         store.conversations.compactMap { c in
-            guard let path = store.project(c.projectID)?.path else { return nil }
+            let path = store.workingDirectory(for: c)
             let url = CollabBoardModel.projectsRoot.appendingPathComponent(ConversationMover.slug(path))
                 .appendingPathComponent(c.claudeSession.uuidString.lowercased() + ".jsonl")
             return (c.id, url, c.title)
@@ -1203,7 +1306,8 @@ extension MainWindowController {
         // 送到一半當掉重開：紀錄檔最後 512 KB 裡已經有這則（開頭帶到期時間）就算送過
         // 送出時「〔codenv」會被 QuoteText.neutralize 改成「〔 codenv」：兩種都找；各家模型的紀錄都查（Codex 11/6：原本只找原樣、只查 Claude，當掉重開會重送）
         sched.alreadySent = { [weak self] id, marker in
-            guard let self, let c = self.store.conversation(id), let path = self.store.project(c.projectID)?.path else { return false }
+            guard let self, let c = self.store.conversation(id) else { return false }
+            let path = self.store.workingDirectory(for: c)
             let urls = [ConversationMover.root.appendingPathComponent(ConversationMover.slug(path)).appendingPathComponent(c.claudeSession.uuidString.lowercased() + ".jsonl"),
                         AgyBridge.transcript(for: c.claudeSession), CodexBridge.transcript(for: c.claudeSession), CopilotBridge.transcript(for: c.claudeSession),
                         LocalBridge.transcript(for: c.claudeSession), AppleBridge.transcript(for: c.claudeSession)]

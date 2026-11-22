@@ -15,6 +15,7 @@ struct KeyRowInfo: Identifiable {
 struct KeyVaultPage: View {
     @State private var rev = 0
     @State private var rows: [KeyRowInfo] = []
+    @State private var learnedFeatures: [KeyGuardLearnedFeature] = []
 
     var body: some View {
         Form {
@@ -24,6 +25,29 @@ struct KeyVaultPage: View {
             }
             Section(L("服務")) {
                 ForEach(rows) { r in KeyRow(info: r, rev: rev, onChange: { rev += 1 }) }
+            }
+            Section(L("已學會的弱規則誤報")) {
+                Text(L("只適用於十六進位與高熵長字串；明確金鑰前綴與 JWT 永遠會警告。資料只存在本機。"))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if learnedFeatures.isEmpty {
+                    Text(L("目前沒有已學會的特徵。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ForEach(learnedFeatures) { item in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(item.feature) · \(item.rule)").font(.callout)
+                                Text(L("誤報回報 \(item.count) 次"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button(L("刪除"), role: .destructive) {
+                                KeyGuard.removeLearnedFeature(item.id)
+                                rev += 1
+                            }
+                        }
+                    }
+                }
             }
         }
         .formStyle(.grouped)
@@ -46,6 +70,7 @@ struct KeyVaultPage: View {
             list.append(KeyRowInfo(id: s, name: svc?.name ?? id, note: "", signup: svc?.signup ?? "", service: nil))
         }
         rows = list
+        learnedFeatures = KeyGuard.learnedFeatures()
     }
 }
 

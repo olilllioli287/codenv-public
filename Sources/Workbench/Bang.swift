@@ -19,6 +19,8 @@ struct BangRecord: Codable, Identifiable, Equatable {
     var truncated = false       // 超過 1 MB 的後面截掉了
     var attached = false        // 已經附給模型（或使用者按 ✕ 取消了）
     var dismissed = false       // 按 ✕ 取消附上
+    var fullOutputPath: String? = nil // 輸出超過卡片保存上限時，完整 stdout/stderr 的 JSONL 路徑
+    var fullOutputSaveFailed: Bool? = nil
 
     var running: Bool { status == "running" }
     var stdout: String { segs.filter { !$0.e }.map(\.t).joined() }
@@ -51,12 +53,58 @@ enum BangStore {
         for i in all.indices where all[i].running { all[i].status = "interrupted" }
         return all
     }
+    /// 紀錄檔存在但讀不懂（或有 .recovery 備份）：呼叫端（sweepDrafts）不能把這個聊天室當空草稿刪掉。每次都重讀磁碟，不靠記憶體裡的 unreadable
+    static func hasUnreadableFile(_ chat: UUID) -> Bool {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: dir.appendingPathComponent(chat.uuidString.lowercased() + ".recovery.json").path) { return true }
+        guard fm.fileExists(atPath: url(chat).path) else { return false }
+        guard let data = try? Data(contentsOf: url(chat)), (try? coder.1.decode([BangRecord].self, from: data)) != nil else { return true }
+        return false
+    }
     static func save(_ chat: UUID, _ records: [BangRecord]) {
         let destination: URL = unreadable.contains(chat)
             ? dir.appendingPathComponent(chat.uuidString.lowercased() + ".recovery.json") : url(chat)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // 留最近 200 筆，檔案不會一直長
         if let d = try? coder.0.encode(Array(records.suffix(200))) { try? d.write(to: destination, options: .atomic) }
+    }
+
+    private static func outputURL(_ chat: UUID, _ id: String) -> URL {
+        dir.appendingPathComponent("output", isDirectory: true)
+            .appendingPathComponent(chat.uuidString.lowercased(), isDirectory: true)
+            .appendingPathComponent("\(id).jsonl")
+    }
+
+    private static func outputLine(_ segment: BangSeg) -> Data? {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["stderr": segment.e, "text": segment.t]),
+              var line = String(data: data, encoding: .utf8) else { return nil }
+        line.append("\n")
+        return Data(line.utf8)
+    }
+
+    /// 超過卡片容量後保存完整分流輸出；每行保留 stdout/stderr 標記與原始文字。
+    static func writeFullOutput(_ chat: UUID, _ id: String, segments: [BangSeg]) -> URL? {
+        let url = outputURL(chat, id)
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let contents = segments.compactMap(outputLine).reduce(into: Data()) { $0.append($1) }
+            try contents.write(to: url, options: .atomic)
+            return url
+        } catch { return nil }
+    }
+
+    /// 追加截斷後的輸出；回傳 false 表示完整輸出檔已無法保證完整。
+    static func appendFullOutput(_ segment: BangSeg, to path: String) -> Bool {
+        guard let data = outputLine(segment), let handle = FileHandle(forWritingAtPath: path) else { return false }
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+            try handle.close()
+            return true
+        } catch {
+            try? handle.close()
+            return false
+        }
     }
 }
 
@@ -90,10 +138,21 @@ enum Bang {
         return head + "\n…（中間省略 \(s.count - limit) 字）…\n" + tail
     }
 
-    /// 附在下一則訊息前面的文字（Claude Code 的格式）。連續好幾個就依序全部附上
+    /// 附在訊息前面的文字（Claude Code 的格式）。連續好幾個就依序全部附上
     static func attachment(_ records: [BangRecord]) -> String {
         records.map { r in
             var s = "<bash-input>\(r.cmd)</bash-input>\n<bash-stdout>\(clip(r.stdout))</bash-stdout>\n<bash-stderr>\(clip(r.stderr))</bash-stderr>"
+            s += "\n<bash-exit-code>\(r.code.map(String.init) ?? "未知")</bash-exit-code>"
+            let attachmentClipped = r.truncated || r.stdout.count > attachLimit || r.stderr.count > attachLimit
+            if attachmentClipped {
+                if let path = r.fullOutputPath, r.fullOutputSaveFailed != true {
+                    s += "\n（輸出過長已截斷；完整 stdout/stderr JSONL：\(path)）"
+                } else if r.fullOutputSaveFailed == true {
+                    s += "\n（輸出過長已截斷，但完整輸出檔無法保存）"
+                } else {
+                    s += "\n（輸出過長已截斷；完整輸出檔尚未建立）"
+                }
+            }
             if r.status == "stopped" || r.status == "timeout" || r.status == "interrupted" { s += "\n（這個指令\(r.status == "timeout" ? "逾時被停掉" : r.status == "stopped" ? "被使用者停掉" : "執行到一半 codenv 被關掉")，輸出可能不完整）" }
             return s
         }.joined(separator: "\n") + "\n\n"
@@ -121,6 +180,9 @@ final class BangRun {
     private var started = Date()
     private var ended = false
     private var status = "done"
+    private var lidInterruptTerminationRequested = false
+    private var lidInterruptGroupGone = false
+    private(set) var lidInterruptForceKillOccurred = false
     private let q = DispatchQueue(label: "codenv.bang.read")
     // 以下只在 q 上碰
     private var leftover: [Bool: Data] = [false: Data(), true: Data()]
@@ -130,6 +192,15 @@ final class BangRun {
     init(id: String, cmd: String, dir: String) { self.id = id; self.cmd = cmd; self.dir = dir }
 
     var isRunning: Bool { proc != nil && !ended }
+
+    /// 闔蓋中斷後，整個 ! 指令程序群組是否還沒排空。
+    var isDrainingForLidInterrupt: Bool {
+        guard lidInterruptTerminationRequested, !lidInterruptGroupGone,
+              let pid = proc?.processIdentifier, pid > 1 else { return false }
+        if killpg(pid, 0) == 0 || errno == EPERM { return true }
+        lidInterruptGroupGone = true
+        return false
+    }
 
     func start() {
         let p = Process()
@@ -235,6 +306,29 @@ final class BangRun {
         guard isRunning else { return }
         status = "stopped"
         terminate()
+    }
+
+    /// 闔蓋專用：即使 zsh 已結束、背景子程序仍留在獨立群組，也要停止並等待該群組排空。
+    func terminateForLidInterrupt() {
+        guard let p = proc, p.processIdentifier > 1 else { return }
+        let pid = p.processIdentifier
+        lidInterruptTerminationRequested = true
+        lidInterruptGroupGone = false
+        lidInterruptForceKillOccurred = false
+        status = "stopped"
+        _ = killpg(pid, SIGTERM)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.isDrainingForLidInterrupt else { return }
+            if killpg(pid, SIGKILL) == 0 { self.lidInterruptForceKillOccurred = true }
+        }
+    }
+
+    @discardableResult
+    func forceKillForLidInterrupt() -> Bool {
+        guard isDrainingForLidInterrupt, let pid = proc?.processIdentifier, pid > 1 else { return false }
+        let sent = killpg(pid, SIGKILL) == 0
+        if sent { lidInterruptForceKillOccurred = true }
+        return sent
     }
 
     private func terminate() {

@@ -21,7 +21,12 @@ extension EnvironmentValues {
 /// 把目前的文字大小傳給底下的 SwiftUI 畫面（改了就整塊重畫）
 struct Scaled<Content: View>: View {
     @ObservedObject private var scale = UIScale.shared
+    @ObservedObject private var prefs = Prefs.shared
     let content: Content
     init(@ViewBuilder _ content: () -> Content) { self.content = content() }
-    var body: some View { content.environment(\.uiScale, scale.f) }
+    var body: some View {
+        content
+            .environment(\.uiScale, scale.f)
+            .environment(\.font, InterfaceFont.swiftUIFont(for: prefs.interfaceFont))
+    }
 }

@@ -38,6 +38,10 @@ enum AgyNet {
     static var quickOK: Bool {
         start()
         if testOffline { return false }
+        if AgyBridge.isTestInstance && !AgyBridge.canLaunchInCurrentInstance { return false }
+        // --agy-bin 只在隔離測試中替換成假程序；此時不需要真的網路。
+        if CommandLine.arguments.contains("--state-dir"),
+           (CommandLine.arguments.contains("--agy-bin") || AgyBridge.testMode != nil) { return true }
         lock.lock(); defer { lock.unlock() }
         if let t = _blockedUntil, t > Date() { return false }
         return _up
@@ -46,6 +50,8 @@ enum AgyNet {
     /// 背景用：quickOK 加上真的連一次 Google 的登入伺服器（最多等 timeout 秒，會卡住呼叫的執行緒）
     static func canCall(timeout: TimeInterval = 3) -> Bool {
         guard quickOK else { return false }
+        // 測試實例有明確假 agy 時，不需要也不能連 Google OAuth 主機做預檢。
+        if AgyBridge.isTestInstance { return true }
         var host = "oauth2.googleapis.com"
         let a = CommandLine.arguments
         if a.contains("--state-dir"), let i = a.firstIndex(of: "--agy-check-host"), i + 1 < a.count { host = a[i + 1] }

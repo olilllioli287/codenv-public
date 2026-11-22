@@ -300,14 +300,38 @@ final class GitPanelModel: ObservableObject {
     struct Tree: Identifiable, Hashable {
         let path: String
         let branch: String
-        let isCurrent: Bool
+        var isCurrent: Bool
+        var isBare = false
+        var changeCount = 0
         var id: String { path }
+    }
+    struct RelatedRepo: Identifiable, Equatable {
+        let path: String
+        let commonPath: String
+        let name: String
+        let branch: String
+        let uncommittedCount: Int
+        let latestCommit: String
+        let worktrees: [Tree]
+        let extraPaths: [String]
+        var id: String { commonPath }
+        var rowText: String { "\(name) · \(branch) · 未提交 \(uncommittedCount) · \(latestCommit)" }
+        var worktreeHeaderText: String { "Worktree (\(worktrees.count))" }
+        func worktreeRowText(_ tree: Tree) -> String {
+            let pathText = RPData.abbreviate(tree.path)
+            let changes = tree.isBare ? "bare" : "未提交 \(tree.changeCount)"
+            return "\(tree.branch) · \(pathText) · \(changes)"
+        }
     }
 
     @Published private(set) var isRepo: Bool?          // nil＝還沒查
     @Published private(set) var branch = ""
     @Published private(set) var changes: [Change] = []
     @Published private(set) var worktrees: [Tree] = []
+    @Published private(set) var relatedRepos: [RelatedRepo] = []
+    @Published private(set) var isRelatedOverview = false
+    @Published private(set) var loaded = false
+    @Published private(set) var focusedRelatedRepoPath: String?
     @Published private(set) var diff = ""
     @Published private(set) var diffNote = ""
     @Published private(set) var loading = false
@@ -316,28 +340,62 @@ final class GitPanelModel: ObservableObject {
     private(set) var project: String?
     private var top: String?
     private var generation = 0
+    private var commanderRoot = false
+    private var extraRepoPaths: [String] = []
 
     func setProject(_ path: String?) {
-        guard path != project else { return }
+        setContext(path, commanderRoot: false, extraRepos: [])
+    }
+
+    func setContext(_ path: String?, commanderRoot: Bool, extraRepos: [String]) {
+        let normalized = extraRepos.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+        guard path != project || commanderRoot != self.commanderRoot || normalized != extraRepoPaths else { return }
+        loading = false
         project = path
+        self.commanderRoot = commanderRoot
+        extraRepoPaths = normalized
+        focusedRelatedRepoPath = nil
         selected = nil; diff = ""; diffNote = ""
         top = nil; isRepo = nil; changes = []; worktrees = []; branch = ""
+        relatedRepos = []; isRelatedOverview = false; loaded = false
+        refresh()
+    }
+
+    func showRelatedRepo(_ path: String?) {
+        guard focusedRelatedRepoPath != path else { return }
+        loading = false
+        focusedRelatedRepoPath = path
+        selected = nil; diff = ""; diffNote = ""
+        top = nil; isRepo = nil; changes = []; worktrees = []; branch = ""
+        isRelatedOverview = false; loaded = false
         refresh()
     }
 
     func refresh() {
+        guard !loading else { return }
         generation += 1
         let gen = generation
-        guard let path = project else { return }
+        guard let path = focusedRelatedRepoPath ?? project else {
+            isRepo = nil; loading = false; loaded = true
+            return
+        }
         loading = true
+        loaded = false
         let sel = selected
+        let discoverRelated = focusedRelatedRepoPath == nil && commanderRoot
+        let extras = extraRepoPaths
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let topR = RPShell.git(["rev-parse", "--show-toplevel"], cwd: path, timeout: 5)
             let topDir = topR.out.trimmingCharacters(in: .whitespacesAndNewlines)
             guard topR.status == 0, !topDir.isEmpty else {
+                let related = discoverRelated ? Self.discoverRelatedRepos(root: path, extras: extras) : []
                 DispatchQueue.main.async {
                     guard let self, self.generation == gen else { return }
-                    self.isRepo = false; self.loading = false; self.changes = []; self.worktrees = []; self.top = nil
+                    self.isRepo = false
+                    self.isRelatedOverview = discoverRelated
+                    self.relatedRepos = related
+                    self.loading = false; self.loaded = true
+                    self.changes = []; self.worktrees = []; self.top = nil; self.branch = ""
                 }
                 return
             }
@@ -346,7 +404,8 @@ final class GitPanelModel: ObservableObject {
             if st.timedOut {
                 DispatchQueue.main.async {
                     guard let self, self.generation == gen else { return }
-                    self.isRepo = true; self.branch = L("git status 逾時"); self.changes = []; self.worktrees = []; self.top = topDir; self.loading = false
+                    self.isRepo = true; self.isRelatedOverview = false; self.relatedRepos = []
+                    self.branch = L("git status 逾時"); self.changes = []; self.worktrees = []; self.top = topDir; self.loading = false; self.loaded = true
                 }
                 return
             }
@@ -356,14 +415,47 @@ final class GitPanelModel: ObservableObject {
                 guard let self, self.generation == gen else { return }
                 self.top = topDir
                 self.isRepo = true
+                self.isRelatedOverview = false; self.relatedRepos = []
                 self.branch = branch
                 self.changes = changes
                 self.worktrees = trees
-                self.loading = false
+                self.loading = false; self.loaded = true
                 if let sel, let again = changes.first(where: { $0.id == sel.id }) { self.selected = again; self.loadDiff(again) }
                 else if sel != nil { self.selected = nil; self.diff = ""; self.diffNote = "" }
             }
         }
+    }
+
+    func relatedScreenRows() -> [String] {
+        guard isRelatedOverview else { return [] }
+        var rows = [L("相關的 repo")]
+        for repo in relatedRepos {
+            rows.append(repo.rowText)
+            rows.append(repo.worktreeHeaderText)
+            rows.append(contentsOf: repo.worktrees.map(repo.worktreeRowText))
+        }
+        return rows
+    }
+
+    /// 測試探針輸出與 Git 分頁相同的列字串，避免另造一套只測資料模型的摘要。
+    func relatedScreenProbe() -> [String: Any] {
+        [
+            "loaded": loaded,
+            "isRepo": isRepo.map { $0 as Any } ?? NSNull(),
+            "isRelatedOverview": isRelatedOverview,
+            "visibleRows": relatedScreenRows(),
+            "repos": relatedRepos.map { repo in
+                [
+                    "name": repo.name,
+                    "branch": repo.branch,
+                    "uncommittedCount": repo.uncommittedCount,
+                    "latestCommit": repo.latestCommit,
+                    "rowText": repo.rowText,
+                    "worktreeGroup": repo.worktreeHeaderText,
+                    "worktrees": repo.worktrees.map(repo.worktreeRowText)
+                ] as [String: Any]
+            }
+        ]
     }
 
     func select(_ c: Change) {
@@ -423,18 +515,126 @@ final class GitPanelModel: ObservableObject {
     static func parseWorktrees(_ text: String, current: String) -> [Tree] {
         var out: [Tree] = []
         var path = "", branch = ""
+        var bare = false
         func flush() {
-            if !path.isEmpty { out.append(Tree(path: path, branch: branch.isEmpty ? L("（沒有在分支上）") : branch, isCurrent: path == current)) }
-            path = ""; branch = ""
+            if !path.isEmpty {
+                let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+                let currentPath = URL(fileURLWithPath: current).standardizedFileURL.path
+                out.append(Tree(path: normalized, branch: branch.isEmpty ? L("（沒有在分支上）") : branch,
+                                isCurrent: normalized == currentPath, isBare: bare))
+            }
+            path = ""; branch = ""; bare = false
         }
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
             if line.isEmpty { flush(); continue }
             if line.hasPrefix("worktree ") { path = String(line.dropFirst(9)) }
             else if line.hasPrefix("branch ") { branch = String(line.dropFirst(7)).replacingOccurrences(of: "refs/heads/", with: "") }
-            else if line == "bare" { branch = "(bare)" }
+            else if line == "bare" { branch = "(bare)"; bare = true }
         }
         flush()
         return out
+    }
+
+    private static func discoverRelatedRepos(root: String, extras: [String]) -> [RelatedRepo] {
+        let fm = FileManager.default
+        var candidates = Set<String>()
+        func visit(_ directory: String, depth: Int) {
+            guard depth < 2,
+                  let entries = try? fm.contentsOfDirectory(at: URL(fileURLWithPath: directory),
+                                                            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                                                            options: []) else { return }
+            for entry in entries.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
+                let name = entry.lastPathComponent
+                if [".git", "node_modules", ".build", "DerivedData"].contains(name) { continue }
+                let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
+                let path = entry.standardizedFileURL.path
+                if fm.fileExists(atPath: entry.appendingPathComponent(".git").path) {
+                    candidates.insert(path)
+                } else {
+                    visit(path, depth: depth + 1)
+                }
+            }
+        }
+        visit(root, depth: 0)
+        for extra in extras {
+            let path = URL(fileURLWithPath: extra).standardizedFileURL.path
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue { candidates.insert(path) }
+        }
+
+        var byCommonPath: [String: RelatedRepo] = [:]
+        let extraSet = Set(extras.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
+        for candidate in candidates.sorted() {
+            guard let snapshot = readRelatedRepo(candidate) else { continue }
+            var existing = byCommonPath[snapshot.commonPath] ?? snapshot
+            let normalizedCandidate = URL(fileURLWithPath: candidate).standardizedFileURL.path
+            if extraSet.contains(normalizedCandidate), !existing.extraPaths.contains(normalizedCandidate) {
+                existing = RelatedRepo(path: existing.path, commonPath: existing.commonPath, name: existing.name,
+                                       branch: existing.branch, uncommittedCount: existing.uncommittedCount,
+                                       latestCommit: existing.latestCommit, worktrees: existing.worktrees,
+                                       extraPaths: existing.extraPaths + [normalizedCandidate])
+            }
+            byCommonPath[snapshot.commonPath] = existing
+        }
+        return byCommonPath.values.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.path < $1.path : order == .orderedAscending
+        }
+    }
+
+    private static func readRelatedRepo(_ candidate: String) -> RelatedRepo? {
+        let topResult = RPShell.git(["rev-parse", "--show-toplevel"], cwd: candidate, timeout: 5)
+        let top = topResult.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard topResult.status == 0, !top.isEmpty else { return nil }
+        let commonResult = RPShell.git(["rev-parse", "--git-common-dir"], cwd: top, timeout: 5)
+        let commonRaw = commonResult.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        let commonURL = commonRaw.hasPrefix("/")
+            ? URL(fileURLWithPath: commonRaw)
+            : URL(fileURLWithPath: top).appendingPathComponent(commonRaw)
+        let commonPath = commonURL.standardizedFileURL.path
+        let worktreeResult = RPShell.git(["worktree", "list", "--porcelain"], cwd: top, timeout: 5)
+        var worktrees = Self.parseWorktrees(worktreeResult.out, current: top)
+        if worktrees.isEmpty {
+            worktrees = [Tree(path: top, branch: L("（沒有在分支上）"), isCurrent: true)]
+        }
+        let mainPath = worktrees.first(where: { !$0.isBare })?.path ?? top
+        for index in worktrees.indices {
+            worktrees[index].isCurrent = worktrees[index].path == mainPath
+        }
+        let mainStatus = RPShell.git(["--no-optional-locks", "status", "--porcelain=v1", "-b"], cwd: mainPath, timeout: 5)
+        let (branch, mainChanges) = Self.parseStatus(mainStatus.out)
+        var totalChanges = 0
+        for index in worktrees.indices where !worktrees[index].isBare {
+            let count: Int
+            if worktrees[index].path == mainPath {
+                count = Set(mainChanges.map(\.path)).count
+            } else {
+                let status = RPShell.git(["--no-optional-locks", "status", "--porcelain=v1", "-b"], cwd: worktrees[index].path, timeout: 5)
+                count = Set(Self.parseStatus(status.out).1.map(\.path)).count
+            }
+            worktrees[index].changeCount = count
+            totalChanges += count
+        }
+        let commitResult = RPShell.git(["log", "-1", "--all", "--format=%ct%x00%s"], cwd: mainPath, timeout: 5)
+        let commit = Self.formatLastCommit(commitResult)
+        let name = URL(fileURLWithPath: mainPath).lastPathComponent
+        return RelatedRepo(path: mainPath, commonPath: commonPath, name: name,
+                           branch: branch.isEmpty ? (worktrees.first(where: { !$0.isBare })?.branch ?? "") : branch,
+                           uncommittedCount: totalChanges, latestCommit: commit, worktrees: worktrees, extraPaths: [])
+    }
+
+    private static func formatLastCommit(_ result: RPShell.Result) -> String {
+        guard !result.timedOut, result.status == 0 else { return result.timedOut ? L("讀取逾時") : L("尚無 commit") }
+        let fields = result.out.split(separator: "\0", maxSplits: 1, omittingEmptySubsequences: false)
+        guard fields.count == 2, let seconds = TimeInterval(fields[0]) else { return L("尚無 commit") }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        let date = formatter.string(from: Date(timeIntervalSince1970: seconds))
+        let message = String(fields[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return date + " " + (message.isEmpty ? L("（無訊息）") : message)
     }
 }
 

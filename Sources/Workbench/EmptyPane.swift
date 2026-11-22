@@ -35,7 +35,7 @@ final class EmptyPaneView: NSView {
         self.slot = slot
         super.init(frame: .zero)
         label.font = .systemFont(ofSize: 15, weight: .medium)
-        label.textColor = .secondaryLabelColor
+        label.textColor = Theme.secondaryTextColor
         addSubview(label)
         addButton.bezelStyle = .rounded
         addButton.controlSize = .large
@@ -45,11 +45,11 @@ final class EmptyPaneView: NSView {
         addButton.action = #selector(add)
         addSubview(addButton)
         hint.font = .systemFont(ofSize: 12)
-        hint.textColor = .tertiaryLabelColor
+        hint.textColor = Theme.secondaryTextColor
         addSubview(hint)
         closeButton.isBordered = false
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: L("關掉這格"))?.withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
-        closeButton.contentTintColor = .tertiaryLabelColor
+        closeButton.contentTintColor = Theme.secondaryTextColor
         closeButton.target = self
         closeButton.action = #selector(closeSlot)
         closeButton.toolTip = L("關掉這格")

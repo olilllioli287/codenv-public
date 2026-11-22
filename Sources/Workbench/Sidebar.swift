@@ -28,6 +28,7 @@ struct SidebarActions {
 
 struct SidebarView: View {
     @Environment(\.uiScale) private var s
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var store: Store
     @ObservedObject private var prefs = Prefs.shared
     let workspace: Workspace
@@ -63,7 +64,7 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     // 兩區標題同一種寫法：短英文、同字級（codelab＝程式碼學習專區；組名本身照舊是「程式碼學習專區」）
-                    Text(mode == "codelab" ? "codelab" : "codenv").font(.system(size: 20 * s, weight: .semibold))
+                    Text(mode == "codelab" ? "codelab" : "codenv").font(InterfaceFont.swiftUIFont(size: 20 * s, weight: .semibold))
                         .lineLimit(1).minimumScaleFactor(0.7)
                     Spacer()
                     // 收起側欄的按鈕拿掉了：只靠 F3（或選單的 ⌃ ⌘ S）
@@ -74,7 +75,11 @@ struct SidebarView: View {
 
                 if let r = update.available {
                     Button(action: { update.showPopup(r) }) {
-                        Label(L("有新版 \(r.version)"), systemImage: "arrow.down.circle.fill").font(.system(size: 12 * s))
+                        Label {
+                            Text(L("有新版 \(r.version)")).font(InterfaceFont.swiftUIFont(size: 12 * s))
+                        } icon: {
+                            Image(systemName: "arrow.down.circle.fill").font(.system(size: 12 * s))
+                        }
                     }
                     .buttonStyle(.plain).foregroundStyle(Color.accentColor)
                     .padding(.horizontal, 16).padding(.bottom, 8)
@@ -101,20 +106,20 @@ struct SidebarView: View {
                                 Button(action: { store.setAllGroups(expanded: folded) }) {
                                     Image(systemName: folded ? "chevron.down.2" : "chevron.up.2")
                                 }
-                                .buttonStyle(.plain).foregroundStyle(.secondary)
+                                .buttonStyle(.plain).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
                                 .help(folded ? L("全部展開") : L("全部收起（也可以 ⌥ 點任一組的名字）"))
                             }
                             Button(action: { showArchived.toggle(); appDefaults.set(showArchived, forKey: "sidebarShowArchived") }) {
                                 Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
                             }
-                            .buttonStyle(.plain).foregroundStyle(showArchived ? Color.accentColor : Color.secondary)
+                            .buttonStyle(.plain).foregroundStyle(showArchived ? Color.accentColor : Color(nsColor: Theme.secondaryTextColor))
                             .help(showArchived ? L("收起封存的對話") : L("顯示封存的對話（一個禮拜沒碰的，灰字列在各組最下面）"))
                             Button(action: { NSApp.sendAction(#selector(AppDelegate.showOrganizer), to: nil, from: nil) }) { Image(systemName: "list.bullet.rectangle") }
-                                .buttonStyle(.plain).foregroundStyle(.secondary).help(L("整理對話（⌘ ⇧ L）：一張表看全部，多選一次改組、封存、刪除"))
+                                .buttonStyle(.plain).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).help(L("整理對話（⌘ ⇧ L）：一張表看全部，多選一次改組、封存、刪除"))
                             Button(action: { NSApp.sendAction(#selector(AppDelegate.showImporter), to: nil, from: nil) }) { Image(systemName: "square.and.arrow.down") }
-                                .buttonStyle(.plain).foregroundStyle(.secondary).help(L("從 Claude Code 匯入對話（⌘ ⇧ I）：在 iTerm／tmux 開過的"))
+                                .buttonStyle(.plain).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).help(L("從 Claude Code 匯入對話（⌘ ⇧ I）：在 iTerm／tmux 開過的"))
                             Button(action: actions.addProject) { Image(systemName: "plus") }
-                                .buttonStyle(.plain).foregroundStyle(.secondary).help(L("新增專案（選一個資料夾）"))
+                                .buttonStyle(.plain).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).help(L("新增專案（選一個資料夾）"))
                         }))
                         .background(RoundedRectangle(cornerRadius: 7).fill(topTargeted ? Color.accentColor.opacity(0.25) : .clear))
                         .onDrop(of: [.text], isTargeted: $topTargeted) { items in
@@ -122,7 +127,7 @@ struct SidebarView: View {
                             Self.loadGroupDrop(items) { id in store.setGroupParent(id, to: nil) }
                         }
                         if store.projects.isEmpty {
-                            Text(L("按 ＋ 選一個資料夾當專案")).font(.callout).foregroundStyle(.tertiary).padding(.horizontal, 16).padding(.vertical, 4)
+                            Text(L("按 ＋ 選一個資料夾當專案")).font(.callout).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.horizontal, 16).padding(.vertical, 4)
                         }
                         // 程式碼學習專區不算（它放在最左邊的圖示列）：除了它之外沒有別的組時，首頁照樣直接列專案；
                         // 不然只建了學習專區的人，首頁會整個空掉（專案和對話都看不到）
@@ -139,7 +144,7 @@ struct SidebarView: View {
                             sectionHeader(L("最近項目")).padding(.top, 14)
                             ForEach(recent) { c in
                                 ConversationRow(title: c.title, selected: store.selected == c.id, indent: false,
-                                                status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id)) { store.open(c.id) }
+                                                status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id), interruptedAt: c.interruptedAt) { store.open(c.id) }
                                     .onDrag { Self.dragItem(c.id) }
                                     .contextMenu { conversationMenu(c) }
                             }
@@ -154,6 +159,7 @@ struct SidebarView: View {
             }
         }
         .frame(minWidth: 250)
+        .background(Color(nsColor: colorScheme == .dark ? .controlBackgroundColor : Theme.lightPanelBackground))
         // 打開的聊天室在哪一區，側欄就切到哪一區：改由 Store 做（目前的 Session 屬於哪區就是哪區，followSessionArea），
         // 不看選到的對話在哪一組——不然 codelab 那套裡擺了首頁的對話，點它會整套跳走
         .alert(addingGroup ? (addingParent.map { L("新增子組（在「\(store.groupPath($0))」底下）") } ?? L("新增一組")) : L("重新命名這一組"), isPresented: Binding(get: { renamingGroup != nil || addingGroup }, set: { if !$0 { renamingGroup = nil; addingGroup = false } })) {
@@ -208,29 +214,36 @@ struct SidebarView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     sectionHeader(L("總指揮"), trailing: AnyView(
                         Button(action: { creatingCommander = true }) { Image(systemName: "plus") }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                            .buttonStyle(.plain).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
                             .help(L("新增總指揮"))
                             .accessibilityIdentifier("commander-add")))
                     let commanders = store.sessions.filter { $0.area == nil && $0.groups != nil }
                     if commanders.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(L("尚未建立總指揮")).font(.system(size: 12 * s)).foregroundStyle(.secondary)
-                            Text(L("總指揮管一批分組，左欄列出底下的聊天室，並有一個總指揮聊天室負責派工。")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+                            Text(L("尚未建立總指揮")).font(InterfaceFont.swiftUIFont(size: 12 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
+                            Text(L("總指揮管一批分組，左欄列出底下的聊天室，並有一個總指揮聊天室負責派工。")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
                             Button(L("新增總指揮")) { creatingCommander = true }
                                 .accessibilityIdentifier("commander-add-empty")
-                            Text(L("想用原本的樹狀清單：設定 → 外觀 → 左欄。")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+                            Text(L("想用原本的樹狀清單：設定 → 外觀 → 左欄。")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
                         }.padding(12)
                     }
+                    let topGroups = store.topGroups.filter { $0.name != Store.codeLabGroupName }
+                    let activeIDs = activity.activeIDs
                     ForEach(commanders) { session in
                         let covered = store.conversations(inCommander: session)
+                        let chiefInterrupted = session.chief.flatMap { store.conversation($0) }.map { !store.isArchived($0) && $0.interruptedAt != nil } ?? false
+                        let interrupted = chiefInterrupted || InterruptedIndicatorPresentation.aggregate(covered, archived: store.isArchived)
                         CommanderRow(name: session.name,
                                      chief: session.chief.flatMap { store.conversation($0)?.title } ?? L("尚未指定總指揮聊天室"),
-                                     count: covered.count, running: commanderIsRunning(covered), working: covered.contains { store.status[$0.id] == .working }, selected: store.currentSession == session.id) {
+                                     count: covered.count, running: commanderIsRunning(covered, activeIDs: activeIDs), working: covered.contains { store.status[$0.id] == .working }, interrupted: interrupted, selected: store.currentSession == session.id) {
                             store.scope = nil
                             store.selectSession(session.id)
+                            if let shown = store.selected { store.clearInterrupted(shown) }
                         }
+                        .onDrag { Self.commanderDragItem(session.id) }
+                        .modifier(CommanderReorderDrop(target: session.id, store: store))
                         .help(L("涵蓋 \(covered.count) 段聊天室（含子組與封存）"))
-                        .contextMenu { commanderMenu(session) }
+                        .contextMenu { commanderMenu(session, covered: covered, topGroups: topGroups) }
                     }
                     let others = store.sessions.filter { $0.area == nil && $0.groups == nil }
                     if !others.isEmpty {
@@ -239,6 +252,7 @@ struct SidebarView: View {
                             CommanderRow(name: session.name, selected: store.currentSession == session.id) {
                                 store.scope = nil
                                 store.selectSession(session.id)
+                                if let shown = store.selected { store.clearInterrupted(shown) }
                             }
                         }
                     }
@@ -248,17 +262,25 @@ struct SidebarView: View {
         }
     }
 
-    private func commanderIsRunning(_ covered: [Conversation]) -> Bool {
-        let active = activity.activeIDs
-        return covered.contains { c in
+    static let commanderDragPrefix = "codenv-commander:"
+    private static func commanderDragItem(_ id: UUID) -> NSItemProvider {
+        CommanderReorderDrop.dragging = (id, Date())
+        ReorderDrop.dragging = nil
+        GroupDrop.dragging = nil
+        NotificationCenter.default.post(name: DropOverlay.began, object: nil)
+        return NSItemProvider(object: (commanderDragPrefix + id.uuidString) as NSString)
+    }
+
+    private func commanderIsRunning(_ covered: [Conversation], activeIDs: Set<UUID>) -> Bool {
+        covered.contains { c in
             if let pane = workspace.panes[c.id] as? ChatPane, pane.session.isRunning { return true }
             if let pane = workspace.panes[c.id] as? TerminalPane, pane.hasRunningProcess { return true }
-            return active.contains(c.id)
+            return activeIDs.contains(c.id)
         }
     }
 
     @ViewBuilder
-    private func commanderMenu(_ session: SessionLayout) -> some View {
+    private func commanderMenu(_ session: SessionLayout, covered: [Conversation], topGroups: [ConvGroup]) -> some View {
         Button(L("改名")) { renamingCommander = session; commanderRenameText = session.name }
         Button(L("刪除總指揮…"), role: .destructive) { deletingCommander = session }
         Divider()
@@ -269,7 +291,7 @@ struct SidebarView: View {
             Button((session.commanderKind == "multi" ? "✓ " : "") + L("多個子專案（底下的子群組各是一個專案）")) { store.setCommanderKind(session.id, "multi") }
         }
         Menu(L("換總指揮聊天室")) {
-            let chats = store.conversations(inCommander: session).filter { Store.isChat($0) }
+            let chats = covered.filter { Store.isChat($0) }
             if chats.isEmpty { Text(L("沒有對話")) }
             ForEach(chats) { c in
                 Button(action: { store.setCommanderChief(session.id, to: c.id) }) {
@@ -279,7 +301,7 @@ struct SidebarView: View {
             }
         }
         Menu(L("編輯涵蓋的組")) {
-            ForEach(store.topGroups.filter { $0.name != Store.codeLabGroupName }) { g in
+            ForEach(topGroups) { g in
                 Toggle(g.name, isOn: Binding(get: {
                     store.sessions.first { $0.id == session.id }?.groups?.contains(g.id) == true
                 }, set: { included in
@@ -302,22 +324,22 @@ struct SidebarView: View {
                         Button(action: { showArchived.toggle(); appDefaults.set(showArchived, forKey: "sidebarShowArchived") }) {
                             Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
                         }
-                        .buttonStyle(.plain).foregroundStyle(showArchived ? Color.accentColor : Color.secondary)
+                        .buttonStyle(.plain).foregroundStyle(showArchived ? Color.accentColor : Color(nsColor: Theme.secondaryTextColor))
                         .help(showArchived ? L("收起封存的練習") : L("顯示封存的練習"))))
                     if active.isEmpty && archived.isEmpty {
                         Text(L("還沒有練習。按上面的「新的練習」開一個。"))
-                            .font(.system(size: 13 * s)).foregroundStyle(.tertiary).padding(.horizontal, 12).padding(.vertical, 6)
+                            .font(InterfaceFont.swiftUIFont(size: 13 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.horizontal, 12).padding(.vertical, 6)
                     }
                     ForEach(active) { c in
                         ConversationRow(title: c.title, selected: store.selected == c.id, indent: false,
-                                        status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id), compact: true) { store.open(c.id) }
+                                        status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id), interruptedAt: c.interruptedAt, compact: true) { store.open(c.id) }
                             .help(folderHint(c))
                             .onDrag { Self.dragItem(c.id) }
                             .modifier(ReorderDrop(target: c.id, store: store))
                             .contextMenu { conversationMenu(c) }
                     }
                     ForEach(archived) { c in
-                        ConversationRow(title: c.title, selected: store.selected == c.id, indent: false, dimmed: true, compact: true) { store.open(c.id) }
+                        ConversationRow(title: c.title, selected: store.selected == c.id, indent: false, interruptedAt: c.interruptedAt, dimmed: true, compact: true) { store.open(c.id) }
                             .help(folderHint(c))
                             .onDrag { Self.dragItem(c.id) }
                             .contextMenu { conversationMenu(c) }
@@ -349,13 +371,13 @@ struct SidebarView: View {
         }
         if p.expanded {
             if convs.isEmpty && archived.isEmpty {
-                Text(L("沒有對話")).font(.system(size: 14 * s)).foregroundStyle(.tertiary).padding(.leading, 40).padding(.vertical, 5)
+                Text(L("沒有對話")).font(InterfaceFont.swiftUIFont(size: 14 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.leading, 40).padding(.vertical, 5)
             }
             ForEach(Self.sideItems(convs, windowFrames: store.windowFrames)) { item in sideItem(item, depth: 0) }
             // 一個禮拜沒碰的：按上面的封存按鈕才列出來，灰色字
             if showArchived {
                 ForEach(archived) { c in
-                    ConversationRow(title: c.title, selected: store.selected == c.id, indent: true, dimmed: true) { store.open(c.id) }
+                    ConversationRow(title: c.title, selected: store.selected == c.id, indent: true, interruptedAt: c.interruptedAt, dimmed: true) { store.open(c.id) }
                         .onDrag { Self.dragItem(c.id) }
                         .contextMenu { conversationMenu(c) }
                 }
@@ -500,7 +522,7 @@ struct SidebarView: View {
             // 子組先列（像 Finder 資料夾在前），再列這一組自己的對話
             ForEach(children) { c in AnyView(groupBlock(c, depth: depth + 1)) }
             if active.isEmpty && archived.isEmpty && children.isEmpty {
-                Text(L("沒有對話")).font(.system(size: 14 * s)).foregroundStyle(.tertiary).padding(.leading, 36 + CGFloat(depth) * 16 * s).padding(.vertical, 4)
+                Text(L("沒有對話")).font(InterfaceFont.swiftUIFont(size: 14 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.leading, 36 + CGFloat(depth) * 16 * s).padding(.vertical, 4)
                     // 空資料夾拖到「沒有對話」這行也要放得進去（以前只有標題收）
                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     .onDrop(of: [.text], isTargeted: groupTargeted(g)) { dropOnGroup(g, $0) }
@@ -509,7 +531,7 @@ struct SidebarView: View {
             // 封存的平常不列，按上面的封存按鈕才在各組最下面用灰字列出來
             ForEach(Self.sideItems(active, windowFrames: store.windowFrames)) { item in sideItem(item, depth: depth) }
             ForEach(archived) { c in
-                ConversationRow(title: c.title, selected: store.selected == c.id, indent: true, dimmed: true) { store.open(c.id) }
+                ConversationRow(title: c.title, selected: store.selected == c.id, indent: true, interruptedAt: c.interruptedAt, dimmed: true) { store.open(c.id) }
                     .padding(.leading, CGFloat(depth) * 16 * s)
                     .help(folderHint(c) + "\n" + L("（封存：一個禮拜沒碰。打開就會回到上面）"))
                     .onDrag { Self.dragItem(c.id) }
@@ -601,7 +623,7 @@ struct SidebarView: View {
     /// 一段沒封存的對話（組、資料夾、掛件框裡共用）
     private func activeRow(_ c: Conversation, indent: Bool) -> some View {
         ConversationRow(title: c.title, selected: store.selected == c.id, indent: indent,
-                        status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id)) { store.open(c.id) }
+                        status: store.status[c.id], unread: store.unread.contains(c.id), scheduled: schedules.has(c.id), interruptedAt: c.interruptedAt) { store.open(c.id) }
             .help(folderHint(c))
             .onDrag { Self.dragItem(c.id) }
             .modifier(ReorderDrop(target: c.id, store: store))
@@ -629,13 +651,60 @@ struct SidebarView: View {
 
     private func sectionHeader(_ title: String, trailing: AnyView? = nil) -> some View {
         HStack {
-            Text(title).font(.system(size: 13 * s, weight: .medium)).foregroundStyle(.secondary)
+            Text(title).font(InterfaceFont.swiftUIFont(size: 13 * s, weight: .medium)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
             Spacer()
             if let trailing { trailing }
         }
         .padding(.horizontal, 8)
         .padding(.top, 10)
         .padding(.bottom, 4)
+    }
+}
+
+/// 側欄與隔離探針共用的燈號呈現決策。
+enum InterruptedIndicatorPresentation {
+    static let darkColor = "#F5A623"
+    static let lightColor = "#D98200"
+    static let shape = "hollow"
+    static let pulsing = false
+    static let diameter: CGFloat = 8
+    static let stroke: CGFloat = 1.5
+    static let tooltip = L("休眠時被中斷，還沒做完")
+    static func commander(working: Bool, interrupted: Bool, running: Bool) -> String {
+        working ? "working" : interrupted ? "interrupted" : running ? "running" : "sleeping"
+    }
+    static func aggregate(_ conversations: [Conversation], archived: (Conversation) -> Bool) -> Bool {
+        conversations.contains { !archived($0) && $0.interruptedAt != nil }
+    }
+    static func row(marked: Bool, archived: Bool, status: ChatStatus?, unread: Bool) -> [String] {
+        var slots: [String] = []
+        if marked && !archived { slots.append("ring") }
+        slots.append("title")
+        if status == .waiting { slots.append("waiting") }
+        else if status == .working { slots.append("working") }
+        else if unread { slots.append("unread") }
+        return slots
+    }
+}
+
+/// 休眠時被主動中斷、還沒做完的琥珀色空心環（§8.1 / §8.2 / §8.5）
+private struct InterruptedRing: View {
+    @Environment(\.uiScale) private var s
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var ringColor: Color {
+        let hex = colorScheme == .dark ? InterruptedIndicatorPresentation.darkColor : InterruptedIndicatorPresentation.lightColor
+        let rgb = UInt32(hex.dropFirst(), radix: 16) ?? 0
+        return Color(.sRGB, red: Double((rgb >> 16) & 255) / 255,
+                     green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
+    }
+
+    var body: some View {
+        Circle()
+            .strokeBorder(ringColor, lineWidth: InterruptedIndicatorPresentation.shape == "hollow" ? InterruptedIndicatorPresentation.stroke : 0)
+            .frame(width: InterruptedIndicatorPresentation.diameter * s, height: InterruptedIndicatorPresentation.diameter * s)
+            .help(InterruptedIndicatorPresentation.tooltip)
+            .animation(InterruptedIndicatorPresentation.pulsing ? .easeInOut.repeatForever() : nil, value: colorScheme)
     }
 }
 
@@ -647,32 +716,94 @@ private struct CommanderRow: View {
     var count: Int? = nil
     var running = false
     var working = false       // 涵蓋的聊天室有在工作中：綠點呼吸閃爍
+    var interrupted = false   // 總指揮自己或任一未封存子聊天室在休眠時被中斷
     let selected: Bool
     var action: () -> Void
     @State private var hover = false
 
     var body: some View {
-        Button(action: action) {
+        HStack {
             // 名稱和總指揮聊天室同一行，列高約 22 點
             HStack(spacing: 7 * s) {
                 if chief != nil {
-                    if working { PulseDot(color: .green, size: 6 * s) }
-                    else { Circle().fill(running ? Color.green : Color.secondary.opacity(0.35)).frame(width: 6 * s, height: 6 * s) }
+                    if InterruptedIndicatorPresentation.commander(working: working, interrupted: interrupted, running: running) == "working" { PulseDot(color: .green, size: 6 * s) }
+                    else if InterruptedIndicatorPresentation.commander(working: working, interrupted: interrupted, running: running) == "interrupted" { InterruptedRing() }
+                    else { Circle().fill(running ? Color.green : Color(nsColor: Theme.secondaryTextColor).opacity(0.35)).frame(width: 6 * s, height: 6 * s) }
                 }
-                Text(name).font(.system(size: 13 * s, weight: .semibold)).lineLimit(1).layoutPriority(1)
+                Text(name).font(InterfaceFont.swiftUIFont(size: 13 * s, weight: .semibold)).lineLimit(1).layoutPriority(1)
                 if let chief {
-                    Text(chief).font(.system(size: 11 * s)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                    Text(chief).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).lineLimit(1).truncationMode(.tail)
                 }
                 Spacer(minLength: 4)
-                if let count { Text("\(count)").font(.system(size: 11 * s)).monospacedDigit().foregroundStyle(.secondary) }
+                if let count { Text("\(count)").font(InterfaceFont.swiftUIFont(size: 11 * s)).monospacedDigit().foregroundStyle(Color(nsColor: Theme.secondaryTextColor)) }
             }
             .padding(.horizontal, 8 * s).padding(.vertical, 3 * s)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(selected ? 0.12 : (hover ? 0.06 : 0))))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+        .accessibilityAddTraits(.isButton)
         .onHover { hover = $0 }
+    }
+}
+
+/// 總指揮列自己的拖放排序：只有拖自本清單的列才接受，插入線顯示前／後位置。
+private struct CommanderReorderDrop: ViewModifier {
+    static var dragging: (id: UUID, at: Date)?
+    let target: UUID
+    let store: Store
+    @State private var below: Bool? = nil
+    @State private var height: CGFloat = 30
+
+    func body(content: Content) -> some View {
+        content
+            .background(GeometryReader { g in
+                Color.clear.onAppear { height = g.size.height }
+                    .onChange(of: g.size.height) { _, newHeight in height = newHeight }
+            })
+            .overlay(alignment: below == true ? .bottom : .top) {
+                Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 8)
+                    .opacity(below == nil ? 0 : 1).allowsHitTesting(false)
+            }
+            .onDrop(of: [.text], delegate: Delegate(target: target, store: store, height: height, below: $below))
+    }
+
+    private struct Delegate: DropDelegate {
+        let target: UUID
+        let store: Store
+        let height: CGFloat
+        @Binding var below: Bool?
+
+        private var draggedID: UUID? {
+            guard let drag = CommanderReorderDrop.dragging,
+                  Date().timeIntervalSince(drag.at) < 60, drag.id != target else { return nil }
+            return drag.id
+        }
+
+        func validateDrop(info: DropInfo) -> Bool { draggedID != nil }
+        func dropUpdated(info: DropInfo) -> DropProposal? {
+            guard draggedID != nil else { below = nil; return nil }
+            below = info.location.y > height / 2
+            return DropProposal(operation: .move)
+        }
+        func dropExited(info: DropInfo) { below = nil }
+        func performDrop(info: DropInfo) -> Bool {
+            let isBelow = info.location.y > height / 2
+            below = nil
+            guard let id = draggedID,
+                  let targetIndex = store.sessions.filter({ $0.area == nil && $0.groups != nil }).firstIndex(where: { $0.id == target }) else {
+                CommanderReorderDrop.dragging = nil
+                return false
+            }
+            CommanderReorderDrop.dragging = nil
+            let expected = SidebarView.commanderDragPrefix + id.uuidString
+            verifyOwnDrag(info.itemProviders(for: [.text]), expect: expected) {
+                store.moveCommander(id, to: targetIndex + (isBelow ? 1 : 0))
+            }
+            return true
+        }
     }
 }
 
@@ -693,8 +824,9 @@ struct IconRail: View {
             // 點協作圖示彈出「待你處理」收件匣（完整看板從收件匣右上角進）；有東西時右上角亮數字，0 就不顯示
             RailIcon(name: "bubble.left.and.bubble.right", help: L("待你處理（收件匣）；完整看板在裡面"), active: boardOn || collab.inboxOpen) { collab.inboxOpen.toggle() }
                 .overlay(alignment: .topTrailing) {
-                    if collab.waitingOnYou > 0 {
-                        Text("\(collab.waitingOnYou)").font(.system(size: 9.5 * s, weight: .bold)).foregroundStyle(.white)
+                    let waiting = collab.waitingOnYou
+                    if waiting > 0 {
+                        Text("\(waiting)").font(InterfaceFont.swiftUIFont(size: 9.5 * s, weight: .bold)).foregroundStyle(.white)
                             .padding(.horizontal, 4.5).frame(minWidth: 15, minHeight: 15)
                             .background(Capsule().fill(Color.accentColor)).offset(x: 2, y: -2).allowsHitTesting(false)
                     } else if !boardOn && !collab.warnings.isEmpty {
@@ -726,7 +858,7 @@ struct RailIcon: View {
                 .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(active ? 0.12 : (hover ? 0.07 : 0))))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(active ? .primary : .secondary)
+        .foregroundStyle(active ? Color.primary : Color(nsColor: Theme.secondaryTextColor))
         .help(help)
         .onHover { hover = $0 }
     }
@@ -741,11 +873,11 @@ struct SidebarButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: icon).frame(width: 22 * s)   // 跟著字級放大：寬的圖示（</>）才不會擠出框、看起來沒對齊
+                Image(systemName: icon).font(.system(size: 15 * s)).frame(width: 22 * s)   // 跟著字級放大：寬的圖示（</>）才不會擠出框、看起來沒對齊
                 Text(title)
                 Spacer()
             }
-            .font(.system(size: 15 * s))
+            .font(InterfaceFont.swiftUIFont(size: 15 * s))
             .padding(.horizontal, 8).padding(.vertical, 7)
             .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(hover ? 0.07 : 0)))
             .contentShape(Rectangle())
@@ -765,11 +897,11 @@ struct ProjectRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: expanded ? "folder" : "folder.fill").frame(width: 18).foregroundStyle(.secondary)
+                Image(systemName: expanded ? "folder" : "folder.fill").font(.system(size: 15 * s)).frame(width: 18).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
                 Text(name).lineLimit(1)
                 Spacer()
             }
-            .font(.system(size: 15 * s))
+            .font(InterfaceFont.swiftUIFont(size: 15 * s))
             .padding(.horizontal, 8).padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(selected ? 0.1 : (hover ? 0.06 : 0))))
             .contentShape(Rectangle())
@@ -787,6 +919,7 @@ struct ConversationRow: View {
     var status: ChatStatus? = nil
     var unread = false
     var scheduled = false       // 有開著的排程：標題旁一個小時鐘
+    var interruptedAt: Date? = nil
     var dimmed = false          // 封存裡的：灰色字
     var compact = false         // 壓扁一行（跟總指揮清單同款：13 點字、列高約 22、圓角 5）；程式碼學習專區用
     var action: () -> Void
@@ -795,22 +928,23 @@ struct ConversationRow: View {
     // 改成點一下＝onTapGesture、按住拖＝onDrag，兩個各管各的
     var body: some View {
             HStack {
+                if InterruptedIndicatorPresentation.row(marked: interruptedAt != nil, archived: dimmed, status: status, unread: unread).contains("ring") { InterruptedRing() }
                 Text(title).lineLimit(1).truncationMode(.tail)
-                    .foregroundStyle(dimmed ? Color.secondary.opacity(0.7) : Color.primary)
-                if scheduled { Image(systemName: "clock").font(.system(size: 10 * s)).foregroundStyle(.secondary).help(L("有排程")) }
+                    .foregroundStyle(dimmed ? Color(nsColor: Theme.secondaryTextColor).opacity(0.7) : Color.primary)
+                if scheduled { Image(systemName: "clock").font(.system(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).help(L("有排程")) }
                 Spacer()
                 // 狀態：工作中轉圈、等你回覆是藍色小標籤、做完沒看過是小藍點（跟 Codex 一樣一次只顯示一種）
-                if status == .waiting {
-                    Text(L("等你")).font(.system(size: 11 * s, weight: .medium)).foregroundStyle(.white)
+                if InterruptedIndicatorPresentation.row(marked: interruptedAt != nil, archived: dimmed, status: status, unread: unread).contains("waiting") {
+                    Text(L("等你")).font(InterfaceFont.swiftUIFont(size: 11 * s, weight: .medium)).foregroundStyle(.white)
                         .padding(.horizontal, 6).padding(.vertical, 1)
                         .background(Capsule().fill(Color.blue))
-                } else if status == .working {
+                } else if InterruptedIndicatorPresentation.row(marked: interruptedAt != nil, archived: dimmed, status: status, unread: unread).contains("working") {
                     ProgressView().controlSize(.mini)
-                } else if unread {
+                } else if InterruptedIndicatorPresentation.row(marked: interruptedAt != nil, archived: dimmed, status: status, unread: unread).contains("unread") {
                     Circle().fill(Color.blue).frame(width: 7, height: 7)
                 }
             }
-            .font(.system(size: (compact ? 13 : 15) * s))
+            .font(InterfaceFont.swiftUIFont(size: (compact ? 13 : 15) * s))
             .padding(.leading, indent ? 28 : 8).padding(.trailing, 8).padding(.vertical, (compact ? 3 : 6) * s)
             .background(RoundedRectangle(cornerRadius: compact ? 5 : 7).fill(Color.primary.opacity(selected ? 0.12 : (hover ? 0.06 : 0))))
             .contentShape(Rectangle())
@@ -840,14 +974,14 @@ struct GroupHeader: View {
             HStack(spacing: 8) {
                 if let onArchive {
                     Image(systemName: archiveOpen ? "archivebox.fill" : "archivebox").font(.system(size: 11 * s))
-                        .foregroundStyle(archiveOpen ? AnyShapeStyle(Color.accentColor) : archivedCount > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.quaternary))
+                        .foregroundStyle(archiveOpen ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color(nsColor: Theme.secondaryTextColor)))
                         .frame(width: 16 * s, height: 16 * s).contentShape(Rectangle())
                         .onTapGesture { if archivedCount > 0 || archiveOpen { onArchive() } }
                         .help(archivedCount > 0 ? (archiveOpen ? L("收起這一組封存的對話") : L("展開這一組封存的對話（\(archivedCount) 段）")) : L("這一組沒有封存的對話"))
                 }
-                Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 10 * s, weight: .bold)).foregroundStyle(.tertiary).frame(width: 12)
-                Text(name).font(.system(size: 15 * s, weight: .semibold))
-                if count > 0 { Text("\(count)").font(.system(size: 12 * s)).foregroundStyle(.tertiary) }
+                Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 10 * s, weight: .bold)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).frame(width: 12)
+                Text(name).font(InterfaceFont.swiftUIFont(size: 15 * s, weight: .semibold))
+                if count > 0 { Text("\(count)").font(InterfaceFont.swiftUIFont(size: 12 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)) }
                 Spacer()
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
@@ -870,10 +1004,10 @@ struct FolderSubRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "folder").font(.system(size: 11 * s))
-            Text(name).font(.system(size: 12 * s))
+            Text(name).font(InterfaceFont.swiftUIFont(size: 12 * s))
             Spacer()
         }
-        .foregroundStyle(.tertiary)
+        .foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
         .padding(.leading, 28).padding(.top, 4).padding(.bottom, 1)
     }
 }

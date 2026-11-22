@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix="search-test-") as d:
         json.dump({"conversations": [{"id": conv, "claudeSession": sid.upper(), "title": "設計聊天室"},
                                      {"id": "BBBBBBBB-0000-0000-0000-000000000002", "title": "本機聊天"}]}, f)
     with open(os.path.join(state, "transcripts", "本機聊天.md"), "w", encoding="utf-8") as f:
-        f.write("# 本機聊天\n\n## 2026-10-25 14:29｜使用者\n\n你好，請介紹 Qwen 模型\n\n## 2026-10-25 14:30｜Qwen3.6 35B\n\n我是本機模型 Qwen。\n")
+        f.write("# 本機聊天\n\n## 2026-10-25 14:29｜使用者\n\n你好，請介紹 Bolt-E4B\n\n## 2026-10-25 14:30｜Bolt-E4B\n\n我是本機模型 Bolt-E4B。\n")
     with open(os.path.join(state, "transcripts", ".index.json"), "w") as f:
         json.dump({"BBBBBBBB-0000-0000-0000-000000000002": "本機聊天.md"}, f)
 
@@ -53,12 +53,12 @@ with tempfile.TemporaryDirectory(prefix="search-test-") as d:
     assert len(hits('"hello world"')) == 1, "片語"
     assert hits("zebracorn") == [] and hits("quokkaquux") == [] and hits("narwhalnoodle") == [], "系統提醒／工具輸出／meta 不收"
     assert len(hits("真正的問題")) == 1
-    assert [h["chat"] for h in hits("Qwen")] == ["本機聊天", "本機聊天"], "md 紀錄也搜得到，最新在前"
-    assert hits("Qwen")[0]["role"] == "assistant" and hits("Qwen")[0]["conv"] == "BBBBBBBB-0000-0000-0000-000000000002"
-    assert len(hits("Qwen", "--chat", "本機")) == 2 and hits("Qwen", "--chat", "設計") == [], "--chat"
+    assert [h["chat"] for h in hits("Bolt-E4B")] == ["本機聊天", "本機聊天"], "md 紀錄也搜得到，最新在前"
+    assert hits("Bolt-E4B")[0]["role"] == "assistant" and hits("Bolt-E4B")[0]["conv"] == "BBBBBBBB-0000-0000-0000-000000000002"
+    assert len(hits("Bolt-E4B", "--chat", "本機")) == 2 and hits("Bolt-E4B", "--chat", "設計") == [], "--chat"
     assert hits("全文檢索", "--since", "7d") == [] and len(hits("全文檢索", "--since", "30d")) == 1, "--since"
-    assert len(hits("Qwen", "--limit", "1")) == 1, "--limit"
-    assert len(hits("Qwen", "--conv", "bbbbbbbb-0000-0000-0000-000000000002")) == 2 and hits("Qwen", "--conv", "CCCC") == [], "--conv"
+    assert len(hits("Bolt-E4B", "--limit", "1")) == 1, "--limit"
+    assert len(hits("Bolt-E4B", "--conv", "bbbbbbbb-0000-0000-0000-000000000002")) == 2 and hits("Bolt-E4B", "--conv", "CCCC") == [], "--conv"
     c = hits("trigram", "--context", "1")[0]["context"]
     assert [x["role"] for x in c] == ["user", "user"], ("前後文", c)
     out = run("金鑰長這樣")

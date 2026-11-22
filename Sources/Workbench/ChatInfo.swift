@@ -152,6 +152,21 @@ final class ChatInfoCard {
     /// 滑鼠停多久才浮出
     static var delay: TimeInterval = 1.5
 
+    /// 資訊卡上的列（測試用 --dump-permission 也讀這裡）
+    static func rows(for c: Conversation, store: Store, workspace: Workspace) -> [(String, String)] {
+        let state = RPData.state(c.id, store: store, workspace: workspace)
+        var rows: [(String, String)] = []
+        rows.append((L("模型"), c.model ?? Prefs.shared.defaultModel ?? L("預設")))
+        rows.append((L("狀態"), state.label))
+        if let engine = PermissionMode.engine(category: c.modelCategory) {
+            rows.append((L("權限"), PermissionMode.displayName(engine: engine, mode: c.permissionMode ?? Prefs.shared.permissionMode ?? "default")))
+        }
+        let path = store.workingDirectory(for: c)
+        rows.append((L("工作資料夾"), (path as NSString).abbreviatingWithTildeInPath))
+        if let s = store.commander(of: c.id) { rows.append((L("總指揮"), s.name)) }
+        return rows
+    }
+
     /// 滑鼠進入某列：停滿 delay 秒就浮出
     func hoverBegan(_ id: UUID, store: Store, workspace: Workspace, window: NSWindow?) {
         cancel()
@@ -173,12 +188,7 @@ final class ChatInfoCard {
     func show(_ id: UUID, store: Store, workspace: Workspace, in window: NSWindow) {
         guard let c = store.conversation(id), let cv = window.contentView else { return }
         hide()
-        let state = RPData.state(id, store: store, workspace: workspace)
-        var rows: [(String, String)] = []
-        rows.append((L("模型"), c.model ?? Prefs.shared.defaultModel ?? L("預設")))
-        rows.append((L("狀態"), state.label))
-        if let p = store.project(c.projectID)?.path { rows.append((L("工作資料夾"), (p as NSString).abbreviatingWithTildeInPath)) }
-        if let s = store.commander(of: id) { rows.append((L("總指揮"), s.name)) }
+        let rows = Self.rows(for: c, store: store, workspace: workspace)
         let v = PassthroughHost(rootView: ChatInfoCardView(name: c.title, topic: Store.cleanTopic(c.topic ?? ""), rows: rows))
         let size = v.fittingSize
         v.frame = NSRect(x: (cv.bounds.width - size.width) / 2, y: (cv.bounds.height - size.height) / 2, width: size.width, height: size.height)

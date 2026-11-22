@@ -88,7 +88,7 @@ struct SprintCard: View {
             HStack {
                 Button(action: { expanded.toggle() }) {
                     HStack(spacing: 4) {
-                        Text(L("額度衝刺")).font(.system(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary)
+                        Text(L("額度衝刺")).font(InterfaceFont.swiftUIFont(size: 13 * s, weight: .semibold)).foregroundStyle(.secondary)
                         Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 9 * s, weight: .semibold)).foregroundStyle(.tertiary)
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain)
@@ -101,33 +101,33 @@ struct SprintCard: View {
             }
             switch st.phase {
             case "running":
-                Text(L("衝刺中（\(st.convTitle)）")).font(.system(size: 12 * s)).foregroundStyle(.green)
-                if let t = st.targetReset { Text(L("\(st.watchLabel) 還有 \(countdown(t)) 重置")).font(.system(size: 11 * s)).foregroundStyle(.secondary) }
+                Text(L("衝刺中（\(st.convTitle)）")).font(InterfaceFont.swiftUIFont(size: 12 * s)).foregroundStyle(.green)
+                if let t = st.targetReset { Text(L("\(st.watchLabel) 還有 \(countdown(t)) 重置")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.secondary) }
             case "winding":
-                Text(L("已重置，等 \(st.convTitle) 交總結…")).font(.system(size: 12 * s)).foregroundStyle(.orange)
+                Text(L("已重置，等 \(st.convTitle) 交總結…")).font(InterfaceFont.swiftUIFont(size: 12 * s)).foregroundStyle(.orange)
             case "done":
-                Text(L("上次衝刺已結束（\(st.endedAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? "")）")).font(.system(size: 11 * s)).foregroundStyle(.secondary)
+                Text(L("上次衝刺已結束（\(st.endedAt.map { $0.formatted(date: .omitted, time: .shortened) } ?? "")）")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.secondary)
             default:
-                Text(L("還沒有衝刺")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+                Text(L("還沒有衝刺")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.tertiary)
             }
             if let reason = st.checkStuckReason {
-                Text(L("卡住：") + reason).font(.system(size: 11 * s)).foregroundStyle(.red)
+                Text(L("卡住：") + reason).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.red)
             }
             if !st.goal.isEmpty {
-                Text(L("目標：") + st.goal).font(.system(size: 11 * s)).foregroundStyle(.primary).lineLimit(expanded ? nil : 2)
+                Text(L("目標：") + st.goal).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.primary).lineLimit(expanded ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
             } else if st.phase == "running" {
-                Text(L("目標：（agent 還沒寫）")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+                Text(L("目標：（agent 還沒寫）")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.tertiary)
             }
             if expanded {
                 ForEach(Array(st.notes.suffix(8).enumerated()), id: \.offset) { _, n in
-                    Text("\(n.at.formatted(date: .omitted, time: .shortened)) \(n.text)").font(.system(size: 11 * s)).foregroundStyle(.secondary)
+                    Text("\(n.at.formatted(date: .omitted, time: .shortened)) \(n.text)").font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if !st.summary.isEmpty {
-                Text(L("最後總結") + (st.summaryAuto ? L("（自動擷取）") : "") + "：").font(.system(size: 11 * s, weight: .semibold)).foregroundStyle(.secondary)
-                Text(st.summary).font(.system(size: 11 * s)).foregroundStyle(.secondary)
+                Text(L("最後總結") + (st.summaryAuto ? L("（自動擷取）") : "") + "：").font(InterfaceFont.swiftUIFont(size: 11 * s, weight: .semibold)).foregroundStyle(.secondary)
+                Text(st.summary).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.secondary)
                     .lineLimit(expanded ? 40 : 4).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
         }

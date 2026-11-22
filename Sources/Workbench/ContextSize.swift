@@ -84,7 +84,7 @@ struct ContextBlock: View {
         if !ids.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 Divider().padding(.vertical, 4)
-                Text(L(ids.count > 1 ? "這個分頁的上下文" : "目前這段對話的上下文")).font(.system(size: 12 * s)).foregroundStyle(.secondary)
+                Text(L(ids.count > 1 ? "這個分頁的上下文" : "目前這段對話的上下文")).font(InterfaceFont.swiftUIFont(size: 12 * s)).foregroundStyle(.secondary)
                 ForEach(ids, id: \.self) { id in row(id, focused: ids.count == 1 || id == store.currentWindow?.focused) }
             }
             .onAppear { ids.forEach(load) }
@@ -103,18 +103,18 @@ struct ContextBlock: View {
                     Image(nsImage: gl.image).resizable().renderingMode(gl.template ? .template : .original)
                         .aspectRatio(contentMode: .fit).frame(width: 12 * s, height: 12 * s).foregroundStyle(.secondary)
                 }
-                Text(c?.title ?? "").font(.system(size: 12 * s, weight: focused ? .semibold : .regular)).lineLimit(1).truncationMode(.tail)
+                Text(c?.title ?? "").font(InterfaceFont.swiftUIFont(size: 12 * s, weight: focused ? .semibold : .regular)).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
-                Text(n.map(ContextMonitor.text) ?? "—").font(.system(size: (focused ? 15 : 13) * s, weight: .semibold)).monospacedDigit()
+                Text(n.map(ContextMonitor.text) ?? "—").font(InterfaceFont.swiftUIFont(size: (focused ? 15 : 13) * s, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(n.map(ContextMonitor.color) ?? .secondary)
             }
             .help(c?.title ?? "")
             // 這格是哪個模型在跑
             Text(store.displayModel(id))
-                .font(.system(size: 10.5 * s)).foregroundStyle(.tertiary).lineLimit(1).padding(.leading, 18 * s)
+                .font(InterfaceFont.swiftUIFont(size: 10.5 * s)).foregroundStyle(.tertiary).lineLimit(1).padding(.leading, 18 * s)
             if let n, n >= 600_000 {
                 HStack(spacing: 6) {
-                    Text(L("很長了：每一輪都很慢、很吃額度")).font(.system(size: 11 * s)).foregroundStyle(ContextMonitor.color(n))
+                    Text(L("很長了：每一輪都很慢、很吃額度")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(ContextMonitor.color(n))
                     Button(L("壓縮")) { compact(id) }
                         .controlSize(.small)
                         .help(L("送 /compact：Claude 把前面的內容濃縮成摘要，上下文會變小很多（原本的紀錄檔還在）"))
@@ -124,7 +124,7 @@ struct ContextBlock: View {
     }
 
     private func load(_ id: UUID) {
-        guard monitor.tokens[id] == nil, let c = store.conversation(id), let p = store.project(c.projectID) else { return }
-        monitor.load(c, path: p.path)
+        guard monitor.tokens[id] == nil, let c = store.conversation(id) else { return }
+        monitor.load(c, path: store.workingDirectory(for: c))
     }
 }

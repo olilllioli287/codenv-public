@@ -103,8 +103,30 @@ struct Theme {
         let b = CGFloat(hex & 0xFF) / 255
         return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
     }
+    static let lightPanelBackground = rgb(0xE3E3E0)
+    static let lightSeparatorColor = rgb(0xD0D0CD)
+    static let lightSecondaryText = rgb(0x656565)
+    static let secondaryTextColor = NSColor(name: "CodenvSecondaryText") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .secondaryLabelColor : Theme.lightSecondaryText
+    }
+    static func panelBackground(for appearance: NSAppearance) -> NSColor {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .controlBackgroundColor : lightPanelBackground
+    }
+    static func mainSurface(for appearance: NSAppearance) -> NSColor {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .windowBackgroundColor : defaultLight.bg
+    }
+    static func separatorColor(for appearance: NSAppearance) -> NSColor {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .separatorColor : lightSeparatorColor
+    }
     static let xterm16: [NSColor] = xterm16Hex.map(rgb)
-    static let defaultLight = Palette(fg: .black, bg: .white, cursor: .black, selection: .selectedTextBackgroundColor, bold: .black, ansi: xterm16)
+    // 柔化高面積白底與純黑字；一般視圖另用 AppKit 語意色來形成系統式層次。
+    private static let lightAnsiHex: [Int] = [
+        0x30343B, 0xB42318, 0x18794E, 0x8A5A00, 0x175CD3, 0x9E2A83, 0x087E8B, 0x667085,
+        0x475467, 0xD92D20, 0x16803C, 0x8A5A00, 0x175CD3, 0xA12A8A, 0x087E8B, 0x344054,
+    ]
+    static let defaultLight = Palette(fg: rgb(0x262626), bg: rgb(0xECECEA),
+                                      cursor: NSColor(white: 0.20, alpha: 1), selection: .selectedTextBackgroundColor,
+                                      bold: rgb(0x1A1A1A), ansi: lightAnsiHex.map(rgb))
     static let defaultDark = Palette(fg: NSColor(white: 0.86, alpha: 1), bg: NSColor(white: 0.08, alpha: 1), cursor: .white,
                                      selection: .selectedTextBackgroundColor, bold: .white, ansi: xterm16)
 }

@@ -1,0 +1,145 @@
+{
+  "C360": {
+    "name": "中斷記錄標記與琥珀環",
+    "expected": {
+      "interruptedAtPresent": true,
+      "ringVisible": true,
+      "ringShape": "hollow",
+      "darkColor": "#F5A623",
+      "lightColor": "#D98200",
+      "diameterScale": 8,
+      "stroke": 1.5,
+      "pulsing": false,
+      "tooltip": "休眠時被中斷，還沒做完"
+    }
+  },
+  "C361": {
+    "name": "使用者選取清除並存檔",
+    "expected": {
+      "beforeMarked": true,
+      "afterMarked": false,
+      "persistedMarked": false
+    }
+  },
+  "C362": {
+    "name": "重新工作清除並存檔",
+    "expected": {
+      "beforeMarked": true,
+      "status": "working",
+      "afterMarked": false,
+      "persistedMarked": false
+    }
+  },
+  "C363": {
+    "name": "退出重開仍保留旗標",
+    "expected": {
+      "beforeMarked": true,
+      "reopenedMarked": true,
+      "sameConversationId": true,
+      "didReloadFromDisk": true
+    }
+  },
+  "C364": {
+    "name": "長間隔無睡眠不誤標",
+    "expected": {
+      "workingFixture": true,
+      "jumpNoSleepSeconds": 30,
+      "recordsCount": 0,
+      "markedCount": 0
+    }
+  },
+  "C365": {
+    "name": "總指揮聚合子旗標與清除",
+    "expected": {
+      "childMarkedBefore": true,
+      "commanderRingBefore": true,
+      "childMarkedAfter": false,
+      "commanderRingAfter": false
+    }
+  },
+  "C366": {
+    "name": "舊存檔缺欄位仍可讀",
+    "expected": {
+      "legacyFieldAbsent": true,
+      "loaded": true,
+      "markedCount": 0
+    }
+  },
+  "C367": {
+    "name": "關閉主動中斷不亮",
+    "expected": {
+      "interruptOnCloseEnabled": false,
+      "recordsCount": 0,
+      "markedCount": 0,
+      "settingExplainsNoIndicator": true
+    }
+  },
+  "C368": {
+    "name": "三處清單環與右側標示共存",
+    "expected": {
+      "recent": {
+        "ringLeftOfTitle": true,
+        "waitingVisible": true,
+        "unreadVisible": true
+      },
+      "codeLab": {
+        "ringLeftOfTitle": true,
+        "waitingVisible": true,
+        "unreadVisible": true
+      },
+      "activeRow": {
+        "ringLeftOfTitle": true,
+        "waitingVisible": true,
+        "unreadVisible": true
+      },
+      "archivedRingVisible": false
+    }
+  },
+  "C369": {
+    "name": "總指揮自己標記與優先序封存排除",
+    "expected": {
+      "selfOnlyRing": true,
+      "manualArchivedChildRing": false,
+      "autoArchivedChildRing": false,
+      "workingIndicator": "working",
+      "markedRunningIndicator": "interrupted",
+      "runningIndicator": "running",
+      "idleIndicator": "sleeping"
+    }
+  },
+  "C370": {
+    "name": "仍工作與僅背景記錄不設旗標",
+    "expected": {
+      "workingMarked": false,
+      "backgroundOnlyMarked": false,
+      "recipientUnavailableMarked": true
+    }
+  },
+  "C371": {
+    "name": "啟動選取不清與同列點選清除",
+    "expected": {
+      "restoredSelectionMarked": true,
+      "sameRowClickMarked": false,
+      "persistedMarked": false,
+      "nilClearSaveCount": 0
+    }
+  },
+  "C372": {
+    "name": "彙總代收只標組員並過濾無效記錄",
+    "expected": {
+      "memberMarked": true,
+      "commanderMarked": false,
+      "archivedMarked": false,
+      "missingConversationCreated": false
+    }
+  },
+  "C373": {
+    "name": "Codable 往返與封存清除",
+    "expected": {
+      "nilKeyAbsent": true,
+      "dateRoundTripEqual": true,
+      "archivedMarked": false,
+      "persistedArchivedMarked": false
+    }
+  }
+}

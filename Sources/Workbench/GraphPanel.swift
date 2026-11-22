@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// F6：大的關聯圖面板。從主視窗右邊緣往左滑出，左緣停在左欄右邊緣（蓋住聊天欄和右欄），再按 F6 或 Esc 滑回去。
+/// F6：大的關聯圖面板。從主視窗右邊緣往左滑出並覆蓋整個主視窗，再按 F6 或 Esc 滑回去。
 /// 加在 contentView 上的子視圖（不是另一個視窗）：不搶焦點、開著時聊天格的程序照跑。
 final class GraphPanelController {
     static let changed = Notification.Name("GraphPanelController.changed")
@@ -10,8 +10,6 @@ final class GraphPanelController {
     private weak var window: NSWindow?
     private let store: Store
     private let workspace: Workspace
-    /// 左欄右邊緣（視窗座標）；左欄收起時是 0
-    var sidebarEdge: () -> CGFloat = { 0 }
     private var container: GraphPanelContainer?
     private var previousResponder: NSResponder?
     private var observers: [NSObjectProtocol] = []
@@ -27,8 +25,7 @@ final class GraphPanelController {
     func toggle() { isOpen ? hide() : show() }
 
     private func openFrame(in cv: NSView) -> NSRect {
-        let x = min(max(0, sidebarEdge()), max(0, cv.bounds.width - 200))
-        return NSRect(x: x, y: 0, width: cv.bounds.width - x, height: cv.bounds.height)
+        NSRect(origin: .zero, size: cv.bounds.size)
     }
 
     func show() {
@@ -92,7 +89,7 @@ final class GraphPanelController {
     var graphView: ChatGraphView? { container?.graph }
 }
 
-/// 面板本體：左緣一條陰影、底色、上面一個標題列，其餘是關聯圖
+/// 面板本體：底色、上面一個標題列，其餘是關聯圖
 final class GraphPanelContainer: NSView {
     private(set) var graph: ChatGraphView!
     private var host: NSHostingView<Scaled<GraphPanelRoot>>!
@@ -111,7 +108,10 @@ final class GraphPanelContainer: NSView {
 
     override func layout() { super.layout(); host.frame = bounds }
     override var isOpaque: Bool { true }
-    override func draw(_ dirtyRect: NSRect) { NSColor.windowBackgroundColor.setFill(); dirtyRect.fill() }
+    override func draw(_ dirtyRect: NSRect) {
+        let color = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor.windowBackgroundColor : NSColor.controlBackgroundColor
+        color.setFill(); dirtyRect.fill()
+    }
 
     /// 讓圖拿到鍵盤焦點（i、Esc）
     func focusGraph() { if let g = graph { window?.makeFirstResponder(g) } }
@@ -128,12 +128,13 @@ struct GraphPanelRoot: View {
     let close: () -> Void
     let graphReady: (ChatGraphView) -> Void
     @State private var infoID: UUID?
+    @State private var graphLayoutOpen = false
 
     private struct InfoTarget: Identifiable { let id: UUID }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Color(nsColor: .windowBackgroundColor)
+            Color(nsColor: .controlBackgroundColor)
             ChatGraphRepresentable(store: store, workspace: workspace, big: true, isOverlay: true,
                                    onSummon: { id in
                                        if let sid = store.currentSessionLayout?.id { store.summonConversation(id, inSession: sid) }
@@ -141,18 +142,23 @@ struct GraphPanelRoot: View {
                                    },
                                    onInfo: { infoID = $0 },
                                    onEscape: close,
-                                   onCreate: graphReady)
+                                   onCreate: graphReady,
+                                   onLayoutRequested: { graphLayoutOpen = true })
             HStack(spacing: 8) {
                 Image(systemName: "point.3.connected.trianglepath.dotted").foregroundStyle(Color(nsColor: Store.bundleAccent))
                 Text(store.currentSessionLayout.map { $0.name + L(" · 關聯圖") } ?? L("關聯圖")).font(.system(size: 13 * s, weight: .semibold))
                 Spacer()
                 Text(L("單擊選取 · 雙擊叫出 · i 資訊 · 右鍵選單 · 拖曳或兩指捲動平移 · ⌘＋滾輪或捏合縮放 · 雙擊空白處置中")).font(.system(size: 10.5 * s)).foregroundStyle(.tertiary).lineLimit(1)
+                Button { graphLayoutOpen = true } label: { Image(systemName: "gearshape").font(.system(size: 11 * s)).frame(width: 22, height: 22) }
+                    .buttonStyle(.plain).help(L("關聯圖版面"))
+                    .popover(isPresented: $graphLayoutOpen, arrowEdge: .top) {
+                        GraphLayoutControls(store: store, sessionID: store.currentSessionLayout?.id)
+                    }
                 Button(action: close) { Image(systemName: "xmark").font(.system(size: 11 * s, weight: .semibold)).frame(width: 22, height: 22).contentShape(Rectangle()) }
                     .buttonStyle(.plain).foregroundStyle(.secondary).help(L("收起（F6 或 Esc）"))
             }
             .padding(.leading, 14).padding(.trailing, 10).padding(.top, 8)
         }
-        .overlay(alignment: .leading) { Rectangle().fill(Color.primary.opacity(0.18)).frame(width: 1) }
         .sheet(item: Binding(get: { infoID.map { InfoTarget(id: $0) } }, set: { if $0 == nil { infoID = nil } })) { t in
             ChatInfoForm(store: store, id: t.id) { infoID = nil }
         }

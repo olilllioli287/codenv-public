@@ -25,7 +25,7 @@ final class OrganizerModel: ObservableObject {
         let scan = sizeScan
         // 別家模型（Gemini、ChatGPT、Copilot、本機、Apple）的紀錄不在 Claude 的資料夾：一起量，不然那些聊天室會被當成「空的」，選「空的」全選刪除就刪到有內容的對話
         let list = store.conversations.map { c in
-            (c.id, [Store.claudeTranscript(c.claudeSession, path: store.project(c.projectID)?.path ?? NSHomeDirectory()),
+            (c.id, [Store.claudeTranscript(c.claudeSession, path: store.workingDirectory(for: c)),
                     AgyBridge.transcript(for: c.claudeSession), CodexBridge.transcript(for: c.claudeSession), CopilotBridge.transcript(for: c.claudeSession),
                     LocalBridge.transcript(for: c.claudeSession), AppleBridge.transcript(for: c.claudeSession)])
         }
@@ -65,7 +65,7 @@ struct OrganizerView: View {
         store.organizerConversations.map { c in
             OrganizerRow(id: c.id, title: c.title,
                          group: store.group(store.groupOf(c))?.name ?? "",
-                         folder: store.project(c.projectID).map { ClaudeEnvs.tilde($0.path) } ?? "",
+                         folder: ClaudeEnvs.tilde(store.workingDirectory(for: c)),
                          lastUsed: store.lastTouched(c),
                          size: model.sizes[c.id] ?? 0,
                          archived: store.isArchived(c),

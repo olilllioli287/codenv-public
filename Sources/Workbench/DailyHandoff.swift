@@ -103,8 +103,9 @@ final class DailyHandoff {
         var out: [Candidate] = []
         for c in store.conversations {
             guard Store.isChat(c), c.modelCategory == "claude", !store.isArchived(c),
-                  let path = store.project(c.projectID)?.path, Store.claudeHasSession(c.claudeSession, path: path),
+                  Store.claudeHasSession(c.claudeSession, path: store.workingDirectory(for: c)),
                   (state.failures[c.id.uuidString] ?? 0) < 2 else { continue }
+            let path = store.workingDirectory(for: c)
             let url = Store.claudeTranscript(c.claudeSession, path: path)
             guard let a = try? FileManager.default.attributesOfItem(atPath: url.path),
                   let modified = a[.modificationDate] as? Date, let size = (a[.size] as? NSNumber)?.uint64Value else { continue }
@@ -155,7 +156,8 @@ final class DailyHandoff {
         guard room > 0 else { return }
         // 正在用的先濾掉再取名額：不然被延後的聊天室占著名額，後面閒著的輪不到（延後的下一輪檢查再看）
         let list = Self.pick(candidates(state: state, boundary: b).map(\.id), room: room) { id in
-            guard let c = self.store.conversation(id), let dir = self.store.project(c.projectID)?.path else { return true }   // 找不到的留給 runNext 處理
+            guard let c = self.store.conversation(id) else { return true }   // 找不到的留給 runNext 處理
+            let dir = self.store.workingDirectory(for: c)
             return self.inUse(c, dir: dir) == nil
         }
         guard !list.isEmpty else { return }
@@ -197,7 +199,8 @@ final class DailyHandoff {
         let b = boundary(now: ScheduleStore.now())
         var state = loadState(for: b)
         guard state.started < Prefs.shared.dailyHandoffMax else { log("今天已到上限 \(Prefs.shared.dailyHandoffMax) 件"); return finishRound() }
-        guard let c = store.conversation(id), !store.isArchived(c), let dir = store.project(c.projectID)?.path else { return step() }
+        guard let c = store.conversation(id), !store.isArchived(c) else { return step() }
+        let dir = store.workingDirectory(for: c)
         // 正在用的不交接（重開後正在聊的這段被交接掉）：擺在眼前的 Window、或 30 分鐘內有新對話的，留到閒下來
         if let why = inUse(c, dir: dir) { EventLog.log("每日交接", "延後：\(c.title)（\(why)）"); return step() }
         state.started += 1; saveState(state)

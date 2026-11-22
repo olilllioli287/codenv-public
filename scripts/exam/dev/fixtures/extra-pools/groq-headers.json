@@ -1,0 +1,10 @@
+{
+  "now": "2026-11-10T07:30:00Z",
+  "groq": {
+    "key": "value",
+    "headers": {"X-Ratelimit-Limit-Requests": "1000", "X-Ratelimit-Remaining-Requests": "999",
+      "X-Ratelimit-Limit-Tokens": "8000", "X-Ratelimit-Remaining-Tokens": "7990",
+      "X-Ratelimit-Reset-Requests": "1m26.4s", "X-Ratelimit-Reset-Tokens": "547ms",
+      "X-Request-Id": "non-rate-metadata", "Authorization": "Bearer dummy-test-secret"}
+  }
+}

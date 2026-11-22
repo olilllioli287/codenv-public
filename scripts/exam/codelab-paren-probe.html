@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<title>codelab C++ 括號與 Enter 縮排探針</title>
+<style>
+  body { margin: 16px; font: 14px system-ui, sans-serif; }
+  iframe { width: 100%; height: 280px; border: 1px solid #888; }
+  pre { white-space: pre-wrap; }
+</style>
+<h1>codelab C++ 括號與 Enter 縮排探針</h1>
+<pre id="result">載入 Monaco 中……</pre>
+<iframe id="editor" title="codelab Monaco 編輯器" src="../../Resources/codelab/editor.html?codelabParenProbe=1"></iframe>
+<script>
+  const result = document.getElementById('result');
+  const frame = document.getElementById('editor');
+  let passed = 0;
+  let failed = 0;
+  function check(name, expected, actual) {
+    const ok = expected === actual;
+    if (ok) passed++; else failed++;
+    result.textContent += `\n${ok ? 'PASS' : 'FAIL'} ${name}${ok ? '' : `（預期 ${JSON.stringify(expected)}，實際 ${JSON.stringify(actual)}）`}`;
+  }
+  function withoutAddedString(pair) {
+    const copy = { ...pair };
+    if (copy.notIn) {
+      copy.notIn = copy.notIn.filter(token => token !== 'string');
+      if (!copy.notIn.length) delete copy.notIn;
+    }
+    return copy;
+  }
+  // 每次輸入後讓出一個事件迴圈（MessageChannel，不受背景頁 setTimeout 節流影響）：
+  // 真實鍵盤的每個按鍵都是獨立事件；同一個呼叫堆疊內連續 type 時，Monaco 還沒對剛輸入的行做 tokenization，
+  // onEnterRules（退縮）看不到它，會得到與實際打字不同的結果。
+  const yieldTask = () => new Promise(resolve => { const channel = new MessageChannel(); channel.port1.onmessage = () => resolve(); channel.port2.postMessage(0); });
+  async function runSequence(api, name, initialText, input, expected) {
+    api.reset(initialText);
+    for (const text of input) { api.type(text); await yieldTask(); }
+    check(name, expected, api.value());
+  }
+  async function run(api) {
+    result.textContent = '';
+    const { original, effective } = api.configurations();
+    check('原設定欄位全部保留', Object.keys(original).every(key => key in effective), true);
+    check('comments／brackets／surroundingPairs／folding 等原值不變',
+      Object.keys(original).filter(key => !['autoClosingPairs', 'indentationRules', 'onEnterRules'].includes(key))
+        .every(key => original[key] === effective[key]), true);
+    check('只為三種括號加入 string 限制，其他 pair 保持原樣',
+      original.autoClosingPairs.length === effective.autoClosingPairs.length &&
+      original.autoClosingPairs.every((pair, index) => {
+        const changed = effective.autoClosingPairs[index];
+        if (!['(', '[', '{'].includes(pair.open)) return JSON.stringify(pair) === JSON.stringify(changed);
+        return JSON.stringify(pair) === JSON.stringify(withoutAddedString(changed)) && changed.notIn.includes('string');
+      }), true);
+    check('原有 onEnterRules 保留，並新增單行內容後退縮規則',
+      (original.onEnterRules || []).every((rule, index) => effective.onEnterRules[index] === rule) &&
+      effective.onEnterRules.some(rule => rule.action.indentAction === api.outdentAction), true);
+    check('控制標頭規則只接受完整、無大括號的控制行',
+      effective.indentationRules.indentNextLinePattern.test('for (int i=0; i<3; ++i)') &&
+      effective.indentationRules.indentNextLinePattern.test('if (ready && check(value))') &&
+      effective.indentationRules.indentNextLinePattern.test('else') &&
+      effective.indentationRules.indentNextLinePattern.test('for (;;)') &&
+      !effective.indentationRules.indentNextLinePattern.test('for ()') &&
+      !effective.indentationRules.indentNextLinePattern.test('if (())') &&
+      !effective.indentationRules.indentNextLinePattern.test('for (') &&
+      !effective.indentationRules.indentNextLinePattern.test('for (x) x++;') &&
+      !effective.indentationRules.indentNextLinePattern.test('for (x) {') &&
+      !effective.indentationRules.indentNextLinePattern.test('else if (x)') &&
+      !effective.indentationRules.indentNextLinePattern.test('while (x);') &&
+      !effective.indentationRules.indentNextLinePattern.test('} else {') &&
+      !effective.indentationRules.indentNextLinePattern.test('do { } while (x);'), true);
+
+    for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+      api.reset();
+      api.type('"');
+      api.type(open);
+      check(`雙引號字串內打 ${open} 不補 ${close}`, `"${open}"`, api.value());
+    }
+    for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+      api.reset();
+      api.type(open);
+      check(`字串外打 ${open} 仍補 ${close}`, `${open}${close}`, api.value());
+    }
+    api.reset();
+    api.type('"');
+    check('雙引號仍自動補齊', '""', api.value());
+    api.reset();
+    api.type("'");
+    check('單引號仍自動補齊', "''", api.value());
+
+    await runSequence(api, 'for 標頭縮排一層，單行內容後退回原縮排',
+      'for (int i = 0; i < 3; ++i)', ['\n', 'work();', '\n'],
+      'for (int i = 0; i < 3; ++i)\n    work();\n');
+    await runSequence(api, '巢狀括號 if 標頭縮排並退回',
+      'if (ready && check(value))', ['\n', 'work();', '\n'],
+      'if (ready && check(value))\n    work();\n');
+    await runSequence(api, 'else 標頭縮排並退回',
+      'if (ready) work();\nelse', ['\n', 'return 0;', '\n'],
+      'if (ready) work();\nelse\n    return 0;\n');
+    await runSequence(api, 'while 標頭縮排並退回',
+      'while (ready)', ['\n', 'work();', '\n'],
+      'while (ready)\n    work();\n');
+    await runSequence(api, '有大括號的 if 保持原本縮排',
+      'if (ready) {', ['\n'], 'if (ready) {\n    ');
+    await runSequence(api, '} else { 保持原本縮排',
+      '} else {', ['\n'], '} else {\n    ');
+    await runSequence(api, '一般行不增加縮排', 'int value = 1;', ['\n'], 'int value = 1;\n');
+    await runSequence(api, '同一行已有 for 內容不增加縮排',
+      'for (int i=0; i<3; ++i) work();', ['\n'], 'for (int i=0; i<3; ++i) work();\n');
+    await runSequence(api, 'else if 不增加額外縮排', 'else if (ready)', ['\n'], 'else if (ready)\n');
+    await runSequence(api, '同行 if body 不增加縮排', 'if (ready);', ['\n'], 'if (ready);\n');
+    await runSequence(api, 'while (x); 不增加縮排', 'while (x);', ['\n'], 'while (x);\n');
+    await runSequence(api, 'do-while 結尾不增加縮排', 'do { } while (ready);', ['\n'], 'do { } while (ready);\n');
+    await runSequence(api, '行註解中的 if 不增加縮排', '// if (ready)', ['\n'], '// if (ready)\n');
+    await runSequence(api, '字串中的 for 不增加縮排',
+      'const char *text = "for (x)";', ['\n'], 'const char *text = "for (x)";\n');
+    await runSequence(api, '多行註解中的 if 不增加縮排',
+      '/* comment\nif (ready)', ['\n'], '/* comment\nif (ready)\n');
+    await runSequence(api, '未完成的多行 for 條件不套用 body 縮排', 'for (', ['\n'], 'for (\n    ');
+    await runSequence(api, '一般未配對括號沿用相同既有縮排', 'call(', ['\n'], 'call(\n    ');
+    await runSequence(api, '完整條件後的行註解不阻止縮排',
+      'if (ready) // body follows', ['\n', 'work();', '\n'],
+      'if (ready) // body follows\n    work();\n');
+    result.textContent += `\n\n結果：${passed} 通過、${failed} 失敗`;
+  }
+  const deadline = Date.now() + 15000;
+  let probeStarted = false;
+  function waitForEditor() {
+    let api;
+    try { api = frame.contentWindow.__codenvCodelabParenProbe; } catch (_) {}
+    if (api && api.ready()) {
+      if (!probeStarted) { probeStarted = true; run(api); }
+      return;
+    }
+    if (Date.now() >= deadline) {
+      result.textContent = 'FAIL：15 秒內沒有載入 C++ 語言設定。請確認以同一個本機 HTTP 來源載入此探針與 Resources。';
+      failed++;
+      return;
+    }
+    setTimeout(waitForEditor, 50);
+  }
+  frame.addEventListener('load', waitForEditor);
+  waitForEditor();
+</script>
+</html>

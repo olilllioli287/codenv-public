@@ -5,6 +5,7 @@ import AppKit
 // 跟 agy／Codex／Copilot 不一樣：沒有別人幫忙跑工具，讀檔、寫檔、改檔、跑指令都是這裡自己做（權限卡也是這裡發）；
 // 對話也是這裡自己記（每次把整段送過去，伺服器有前綴快取，不會每次重算）。
 // 伺服器整個 App 共用一個（模型吃 13～15 GB 記憶體），閒置 15 分鐘自動關掉，下一則訊息再開。
+// 截斷回覆的工具安全閘與工具回合間插話參考 earendil-works/pi packages/agent/src/agent-loop.ts（MIT，Mario Zechner，2025），依本機 Bridge 生命週期改寫。
 
 final class LocalServer {
     static let shared = LocalServer()
@@ -58,6 +59,7 @@ final class LocalServer {
                 if busy { self.flush(L("本機模型要用的埠 \(port) 已經被別的程式占用了（可能是上次沒關掉的伺服器），先不開，免得對話送到它那裡。把它關掉再試")); return }
                 guard !self.waiters.isEmpty else { return }   // 等的時候被 stop() 取消了
                 let w = self.waiters
+                self.waiters = []      // 交給 launch 的 completion 去叫；不清掉的話 launch 當場失敗（找不到 Python 等）時，之後 stop()／flush 會再叫一次同一批
                 self.launch(model) { err in w.forEach { $0(err) } }
             }
         }
@@ -100,13 +102,14 @@ final class LocalServer {
             // mlx_vlm 預設聽 0.0.0.0（整個網路都連得到），只開給本機
             args += ["mlx_vlm.server", "--host", "127.0.0.1", "--port", "\(port)", "--model", model]
         } else {
-            args += ["mlx_lm", "server", "--model", model, "--port", "\(port)", "--max-tokens", "8192"]
+            args += ["mlx_lm", "server", "--model", model, "--host", "127.0.0.1", "--port", "\(port)", "--max-tokens", "8192"]
             if let t = LocalBridge.template(model) { args += ["--chat-template", t] }
         }
         p.arguments = args
         var env: [String: String] = [:]
         for kv in Workspace.environment() { if let i = kv.firstIndex(of: "=") { env[String(kv[..<i])] = String(kv[kv.index(after: i)...]) } }
         env["HF_HUB_OFFLINE"] = "1"   // 模型已經在快取裡，不用每次問 Hugging Face
+        env["HF_HUB_CACHE"] = LocalBridge.hfHubCacheDirectory.path
         p.environment = env
         let err = Pipe()
         p.standardOutput = FileHandle.nullDevice
@@ -140,7 +143,7 @@ final class LocalServer {
         probe { [weak self] ok in
             guard let self, self.process === p else { return }
             if ok { self.ready = true; self.flush(nil); return }
-            if tries > 120 { self.stop(); self.flush(L("本機模型伺服器 60 秒還沒開好")); return }
+            if tries > 120 { self.flush(L("本機模型伺服器 60 秒還沒開好")); self.stop(); return }   // 先叫 completion 再 stop（stop 會把還沒叫的改叫成「被關掉了」，原因就蓋掉了）
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.wait(p, tries: tries + 1) }
         }
     }
@@ -162,6 +165,25 @@ final class LocalServer {
 
     /// 一輪開始／結束：閒著 15 分鐘就關掉，把記憶體還回去
     func begin() { users += 1; idle?.invalidate(); idle = nil }
+    func beginBackgroundSummary() -> String? {
+        guard isReady, users == 0, let model else { return nil }
+        begin()
+        return model
+    }
+    /// 封存摘要先借用閒置伺服器；沒有啟動中的本機對話時才開預設快取模型。
+    func beginBackgroundSummary(_ done: @escaping (String?) -> Void) {
+        if let model = beginBackgroundSummary() { done(model); return }
+        guard users == 0, let model = LocalBridge.archiveSummaryModel(in: LocalBridge.available)?.id else {
+            done(nil)
+            return
+        }
+        begin()   // 開伺服器期間也保留名額，避免另一格換模型
+        ensure(model) { [weak self] error in
+            guard let self else { done(nil); return }
+            if error != nil { self.end(); done(nil) }
+            else { done(model) }
+        }
+    }
     func end() {
         users = max(0, users - 1)
         guard users == 0 else { return }
@@ -183,6 +205,24 @@ final class LocalServer {
 }
 
 final class LocalBridge {
+    static let boltModel = "mlx-community/NVIDIA-Nemotron-3.5-Bolt-E4B-OptiQ-4bit"
+    static let defaultModelID = boltModel
+    private static let testHFHubCache: URL? = {
+        let args = CommandLine.arguments
+        guard args.contains("--state-dir"), let i = args.firstIndex(of: "--hf-hub-cache-dir"), i + 1 < args.count,
+              !args[i + 1].isEmpty else { return nil }
+        return URL(fileURLWithPath: args[i + 1], isDirectory: true)
+    }()
+
+    static var hfHubCacheDirectory: URL {
+        if let testHFHubCache { return testHFHubCache }
+        let env = ProcessInfo.processInfo.environment
+        if let path = env["HF_HUB_CACHE"], !path.isEmpty { return URL(fileURLWithPath: path, isDirectory: true) }
+        if let path = env["HF_HOME"], !path.isEmpty { return URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent("hub", isDirectory: true) }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/huggingface/hub", isDirectory: true)
+    }
+
     /// 怎麼開關思考：lfm＝範本自己補 </think>（template）；qwen＝範本本來就認 enable_thinking（Qwen、Nemotron E4B）；
     /// harmony＝gpt-oss 的 reasoning_effort；none＝不會思考（面板不給拉桿）
     enum Think { case lfm, qwen, harmony, none }
@@ -194,23 +234,37 @@ final class LocalBridge {
         var tools = true          // 會用工具（讀檔、跑指令）；不會的就當純聊天，不送工具清單（實測小模型不叫、或吐出伺服器看不懂的格式）
         var vision = false        // 看得懂圖：改用 mlx_vlm 的伺服器（mlx_lm 只吃文字），圖片照 OpenAI 格式送進去
     }
-    /// 選單上的模型：快取裡有、Python 環境在才列（下載用本機模型資料夾裡的 mlx-get）
+    /// 選單上的模型：Bolt-E4B 優先；缺席時由其餘快取模型接手。
     static let models: [Model] = [
+        // gemma4 架構的 4-bit；mlx_lm 會把思考段放 reasoning、答案放 content，工具呼叫也可正常解析；沿用 enable_thinking 開關。
+        // 10/30 實測 100 題 87 分、約 33 tok/s、峰值約 7.2 GB；作為本機預設主力模型。
+        Model(id: boltModel, name: "Bolt-E4B", gb: 8, think: .qwen, temperature: 1.0),
         Model(id: "LiquidAI/LFM2.5-24B-A2B-MLX-4bit", name: "LFM2.5 24B", gb: 14, think: .lfm, temperature: 0.1),
         // 下面幾個權重裡都有視覺的部分（vision_tower／multi_modal_projector），走 mlx_vlm 才看得到圖（10/25 實測藍底 42）
-        Model(id: "mlx-community/Qwen3.6-35B-A3B-4bit", name: "Qwen3.6 35B", gb: 20, think: .qwen, temperature: 0.7, vision: true),
         Model(id: "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit", name: "Qwen3-VL 30B", gb: 17, think: .none, temperature: 0.7, vision: true),
         // GPT-OSS 20B 不列：mlx_lm 不懂它的 harmony 格式，回答混著 <|channel|> 控制符號、想完就停沒有正式回答（10/24 實測）
         Model(id: "mlx-community/Qwen3.5-4B-MLX-4bit", name: "Qwen3.5 4B", gb: 3, think: .qwen, temperature: 0.7, vision: true),   // 看得到圖但小，42 讀成 47
         Model(id: "mlx-community/gemma-3-4b-it-qat-4bit", name: "Gemma 3 4B", gb: 3, think: .none, temperature: 1.0, tools: false, vision: true),
         Model(id: "mlx-community/Ministral-3-3B-Instruct-2512-4bit", name: "Ministral 3 3B", gb: 3, think: .none, temperature: 0.15, tools: false, vision: true),
-        // gemma4 架構的 4-bit；mlx_lm 伺服器會把思考段（<|channel>thought…<channel|>）拆進 delta.reasoning、答案放在 delta.content，不用自己解析分隔符號。範本認得 enable_thinking（預設關，開了前面加 <|think|>），所以沿用 .qwen；tools 實測會叫（Read 工具有正確的 tool_calls）。vision 尚未驗過，先不開（權重有 optiq_vision.safetensors，要用 mlx_vlm 實測看圖後再開）。10/30 實測 100 題 87 分、約 33 tok/s、峰值約 7.2GB。
-        Model(id: "mlx-community/NVIDIA-Nemotron-3.5-Bolt-E4B-OptiQ-4bit", name: "Nemotron E4B", gb: 8, think: .qwen, temperature: 1.0),
         Model(id: "MXLouis/Llama-Breeze2-3B-Instruct-Text-mlx-8Bit", name: "Breeze2 3B", gb: 4, think: .none, temperature: 0.7, tools: false),
     ]
+    /// 完整存在 HF 快取中的模型；探針可用假 cache 走同一段選取邏輯，不啟動 MLX。
+    static var cachedModels: [Model] {
+        models.filter { snapshot($0.id).map(complete) ?? false }
+    }
+    static func defaultModel(in candidates: [Model]) -> Model? {
+        candidates.first { $0.id == defaultModelID } ?? candidates.first
+    }
+    /// 封存摘要與新本機模型選擇共用 Bolt 優先、否則第一個可用模型的規則。
+    static func archiveSummaryModel(in candidates: [Model]) -> Model? { defaultModel(in: candidates) }
+    static var defaultAvailableModel: Model? { defaultModel(in: available) }
+    static func resolveAvailableModel(_ requested: String) -> Model? {
+        let candidates = available
+        return candidates.first { $0.id == requested } ?? defaultModel(in: candidates)
+    }
     static var available: [Model] {
         guard FileManager.default.isExecutableFile(atPath: LocalServer.python) else { return [] }
-        return models.filter { (!$0.vision || hasVLM) && (snapshot($0.id).map(complete) ?? false) }
+        return cachedModels.filter { !$0.vision || hasVLM }
     }
     /// Python 環境裡裝了 mlx_vlm（pip install mlx-vlm）
     static var hasVLM: Bool {
@@ -255,9 +309,13 @@ final class LocalBridge {
     static func name(_ model: String) -> String { info(model)?.name ?? model }
 
     /// Hugging Face 快取裡這個模型的資料夾
+    static func snapshotsDirectory(_ model: String) -> URL {
+        hfHubCacheDirectory
+            .appendingPathComponent("models--" + model.replacingOccurrences(of: "/", with: "--"), isDirectory: true)
+            .appendingPathComponent("snapshots", isDirectory: true)
+    }
     static func snapshot(_ model: String) -> URL? {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/huggingface/hub/models--" + model.replacingOccurrences(of: "/", with: "--") + "/snapshots")
+        let dir = snapshotsDirectory(model)
         let snaps = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
         return snaps.first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("config.json").path) }
     }
@@ -296,6 +354,7 @@ final class LocalBridge {
 
     private var messages: [[String: Any]] = []          // 送給模型的整段對話（OpenAI 格式，不含系統提示）
     private var queue: [(uuid: String, text: String, msg: [String: Any])] = []   // msg：輪到它時才記進紀錄（排隊時記會插在上一則回覆前面）
+    private var steeringIDs: [String] = []              // ⌃ Enter 訊息在工具批次結束時優先插入
     private var busy = false
     private var turn = 0                                // 每輪加一：停止之後晚到的回呼看這個丟掉
     private var rounds = 0
@@ -309,6 +368,15 @@ final class LocalBridge {
     private var started = Date()
     private var lastTokens = 0                          // 上一輪結束時上下文多大（超過門檻就先壓縮，LocalCompact.swift）
     private var compacting = false
+    private var retryAttempts = 0
+    private var retryWorkItem: DispatchWorkItem?
+    private var retryGeneration = 0
+    private static let truncatedToolError = L("模型輸出被長度上限截斷，為了安全沒有執行這個工具，請重新輸出完整指令")
+
+    static func shouldRejectToolBatch(finishReason: String?, toolCount: Int) -> Bool {
+        guard toolCount > 0, let reason = finishReason?.lowercased() else { return false }
+        return ["length", "max_tokens", "max_output_tokens", "max_tokens_reached", "token_limit"].contains(reason)
+    }
 
     init(session: UUID, directory: String, model: String) {
         self.session = session
@@ -353,6 +421,8 @@ final class LocalBridge {
     /// 停止這一輪（Esc）：斷掉串流、殺掉正在跑的指令，還在等的權限卡收掉
     func interrupt() {
         guard busy, !compacting else { return }   // 壓縮中按停止：等 Claude 整理完（最多幾分鐘），不中斷
+        cancelRetry()
+        retryAttempts = 0
         turn += 1
         sse?.cancel(); sse = nil
         if shell?.isRunning == true { shell?.terminate() }
@@ -371,23 +441,30 @@ final class LocalBridge {
         done()
     }
 
-    /// ⌃ Enter：這則排到最前面、停下正在做的這一輪，停好馬上送
+    /// ⌃ Enter：工具批次結束後、下次叫模型前插入；不打斷目前的模型或工具工作
     func steer(_ uuid: String) {
-        guard let i = queue.firstIndex(where: { $0.uuid == uuid.lowercased() }) else { return }
-        queue.insert(queue.remove(at: i), at: 0)
-        if busy { interrupt() }
+        let id = uuid.lowercased()
+        guard let i = queue.firstIndex(where: { $0.uuid == id }), !steeringIDs.contains(id) else { return }
+        let message = queue.remove(at: i)
+        let insertAt = queue.prefix { steeringIDs.contains($0.uuid) }.count
+        queue.insert(message, at: insertAt)
+        steeringIDs.append(id)
     }
 
     /// 格子關掉：停下來，不再送事件
     func close() {
         if busy { turn += 1; sse?.cancel(); if shell?.isRunning == true { shell?.terminate() }; if !compacting { LocalServer.shared.end() } }      // 壓縮中已經交還過使用名額（done 先 end 才進 compact），再扣一次會把別的聊天室的模型關掉
         queue.removeAll()
+        steeringIDs.removeAll()
+        cancelRetry()
         emit = nil
     }
 
     private func next() {
         guard !busy, !queue.isEmpty else { return }
+        retryAttempts = 0
         let q = queue.removeFirst()
+        steeringIDs.removeAll { $0 == q.uuid }
         record(["type": "user", "message": q.msg])
         busy = true
         started = Date()
@@ -400,8 +477,46 @@ final class LocalBridge {
 
     private func done() {
         busy = false
+        cancelRetry()
         LocalServer.shared.end()
         if lastTokens >= LocalCompact.threshold(model: model), messages.count > 2 { compact() } else { next() }
+    }
+
+    /// When a complete tool batch has returned, deliver the earliest ⌃ Enter message before the next model request.
+    @discardableResult
+    private func consumeSteeredMessage() -> Bool {
+        while let id = steeringIDs.first {
+            steeringIDs.removeFirst()
+            guard let index = queue.firstIndex(where: { $0.uuid == id }) else { continue }
+            let q = queue.remove(at: index)
+            record(["type": "user", "message": q.msg])
+            emit?(["type": "user", "isReplay": true, "uuid": q.uuid, "message": ["role": "user", "content": []]])
+            messages.append(["role": "user", "content": Self.content(q.msg, vision: Self.info(model)?.vision == true)])
+            return true
+        }
+        return false
+    }
+
+    private func cancelRetry() {
+        retryGeneration += 1
+        retryWorkItem?.cancel()
+        retryWorkItem = nil
+    }
+
+    private func retry(_ error: String) -> Bool {
+        guard let plan = RetryPolicy.plan(error: error, completedRetries: retryAttempts) else { return false }
+        retryAttempts = plan.attempt
+        closeOpen()
+        emit?(RetryPolicy.event(attempt: plan.attempt, delay: plan.delay))
+        cancelRetry()
+        let generation = retryGeneration
+        let expectedTurn = turn
+        retryWorkItem = RetryPolicy.schedule(after: plan.delay) { [weak self] in
+            guard let self, self.retryGeneration == generation, self.turn == expectedTurn, self.busy else { return }
+            self.retryWorkItem = nil
+            self.ask()
+        }
+        return true
     }
 
     /// 上下文太長：先請 Claude 把前面整理成摘要，再送下一則（排隊中的訊息等它做完）。失敗就照原樣繼續
@@ -419,7 +534,7 @@ final class LocalBridge {
             if let summary {
                 let note = LocalCompact.summaryMessage(summary)
                 self.messages = [["role": "user", "content": note], ["role": "assistant", "content": LocalCompact.ack]]
-                let meta: [String: Any] = ["trigger": "auto", "pre_tokens": pre, "post_tokens": LocalCompact.estimateTokens(note), "summarized_by": "claude-haiku"]
+                let meta: [String: Any] = ["trigger": "auto", "pre_tokens": pre, "post_tokens": LocalCompact.estimateTokens(note), "summarized_by": "claude-" + (LocalCompact.claudeModel(Prefs.shared.localCompactModel) ?? "haiku")]
                 self.record(["type": "system", "subtype": "compact_boundary", "compact_metadata": meta])
                 self.record(["type": "user", "isCompactSummary": true, "message": ["role": "user", "content": note]])
                 self.emit?(["type": "system", "subtype": "status", "status": NSNull()])
@@ -435,6 +550,7 @@ final class LocalBridge {
     }
 
     private func fail(_ msg: String) {
+        retryAttempts = 0
         let partial = open?.kind == "text" ? (open?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : ""
         closeOpen()
         // 跟 interrupt 一樣：補工具結果、補一則 assistant 收尾，不然下一則會是連續兩個 user（Gemma 等範本會一直報錯）
@@ -478,7 +594,7 @@ final class LocalBridge {
             body["chat_template_kwargs"] = ["enable_thinking": level == "high"]   // 範本加的開關（template）
         case .qwen?:
             body["chat_template_kwargs"] = ["enable_thinking": level == "high"]
-            // mlx_vlm 的伺服器不看 chat_template_kwargs，要寫在最外層（不寫就照範本預設，Qwen3.6 會一直想）
+            // mlx_vlm 的伺服器不看 chat_template_kwargs，要寫在最外層，避免模型忽略關閉思考的設定。
             if m?.vision == true { body["enable_thinking"] = level == "high" }
         case .harmony?: body["chat_template_kwargs"] = ["reasoning_effort": level ?? "low"]
         default: break
@@ -491,6 +607,7 @@ final class LocalBridge {
         r.timeoutInterval = 600   // 第一次要把模型讀進記憶體
         usage = nil
         var pending: [Int: (id: String, name: String, args: String)] = [:]
+        var finishReason: String?
         // LFM 關掉思考時還是常常先講一小段、吐一個 </think> 才正式回答（實測）：開頭先壓著，
         // 看到 </think> 就把前面那段當思考；壓了 200 字還沒看到、或講完了，就當一般回答放出來。其他模型不用壓
         var held = "", decided = m?.think != .lfm || level == "high"
@@ -525,6 +642,7 @@ final class LocalBridge {
             guard let self, self.turn == t else { return }
             if let u = o["usage"] as? [String: Any] { self.usage = u }
             for c in o["choices"] as? [[String: Any]] ?? [] {
+                if let reason = c["finish_reason"] as? String { finishReason = reason }
                 let d = c["delta"] as? [String: Any] ?? [:]
                 if let s = d["reasoning"] as? String { self.chunk("thinking", s) }
                 if let s = d["content"] as? String { content(s) }
@@ -541,7 +659,12 @@ final class LocalBridge {
         }, onDone: { [weak self] err in
             guard let self, self.turn == t else { return }
             self.sse = nil
-            if let err { self.fail(L("本機模型：") + err); return }
+            if let err {
+                if self.retry(err) { return }
+                self.fail(L("本機模型：") + err)
+                return
+            }
+            self.retryAttempts = 0
             release()
             flushCarry()
             let tools = pending.keys.sorted().compactMap { pending[$0] }
@@ -551,12 +674,12 @@ final class LocalBridge {
                 self.fail(L("本機模型想完之前就結束了，沒有正式回答，請重試"))
                 return
             }
-            self.replied(tools)
+            self.replied(tools, finishReason: finishReason)
         })
     }
 
     /// 模型這次講完了：有要工具就一個一個做，做完再問；沒有就是這一輪結束
-    private func replied(_ tools: [(id: String, name: String, args: String)]) {
+    private func replied(_ tools: [(id: String, name: String, args: String)], finishReason: String? = nil, continueAfterTruncation: Bool = true) {
         let text = open?.kind == "text" ? open!.text : ""
         closeOpen()
         var a: [String: Any] = ["role": "assistant", "content": text.trimmingCharacters(in: .whitespacesAndNewlines)]
@@ -564,6 +687,11 @@ final class LocalBridge {
             a["tool_calls"] = tools.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.args.isEmpty ? "{}" : $0.args]] }
         }
         messages.append(a)
+        if Self.shouldRejectToolBatch(finishReason: finishReason, toolCount: tools.count) {
+            failTruncatedToolBatch(tools)
+            if continueAfterTruncation { ask() }
+            return
+        }
         guard !tools.isEmpty else {
             var out: [String: Any] = ["type": "result", "subtype": "success", "is_error": false, "duration_ms": ms()]
             if let u = usage { out["usage"] = ["input_tokens": u["prompt_tokens"] ?? 0, "output_tokens": u["completion_tokens"] ?? 0] }
@@ -576,8 +704,25 @@ final class LocalBridge {
         nextTool()
     }
 
+    private func failTruncatedToolBatch(_ tools: [(id: String, name: String, args: String)]) {
+        calls.removeAll()
+        for c in tools {
+            let input = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8))) as? [String: Any] ?? [:]
+            let use = toolUse(c.id, c.name, input)
+            emit?(use); record(use)
+            let result: [String: Any] = ["type": "user", "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": c.id, "content": Self.truncatedToolError, "is_error": true]]]]
+            emit?(result); record(result)
+            messages.append(["role": "tool", "tool_call_id": c.id, "content": Self.truncatedToolError])
+        }
+        emit?(["type": "system", "subtype": "status", "status": "tool_calls_truncated", "message": Self.truncatedToolError])
+    }
+
     private func nextTool() {
-        guard let c = calls.first else { ask(); return }
+        guard let c = calls.first else {
+            if consumeSteeredMessage() { ask(); return }
+            ask()
+            return
+        }
         let input = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8))) as? [String: Any] ?? [:]
         let use = toolUse(c.id, c.name, input)
         emit?(use); record(use)
@@ -602,11 +747,7 @@ final class LocalBridge {
         }()
         // 不用問的：讀檔；接受修改＝讀、寫、改檔；自動、全部允許＝都不問；選過「永遠允許」的
         // 讀檔：在這個工作資料夾裡才不問；資料夾外的絕對路徑（模型被誘導去讀私密檔案）要問
-        let readInside: Bool = {
-            guard c.name == "Read" else { return false }
-            let root = URL(fileURLWithPath: directory).resolvingSymlinksInPath().path + "/"
-            return (URL(fileURLWithPath: Self.path(input, directory)).resolvingSymlinksInPath().path + "/").hasPrefix(root)
-        }()
+        let readInside: Bool = c.name == "Read" && Self.isInside(Self.path(input, directory), root: directory)
         let auto = readInside || writeInside || always.contains(c.name) || mode == "auto" || mode == "bypassPermissions"
             || (mode == "acceptEdits" && c.name != "Bash" && (c.name != "Write" && c.name != "Edit" || writeInside))
         if auto { run(c.id, c.name, input); return }
@@ -706,6 +847,26 @@ final class LocalBridge {
                   ["file_path", "old_string", "new_string"]),
                 f("Bash", "Run a shell command (zsh) in the working directory. Times out after 2 minutes.",
                   ["command": ["type": "string"], "description": ["type": "string", "description": "What the command does, in a few words"]], ["command"])]
+    }
+
+    /// target 在 root 裡面嗎：兩邊都解開 symlink 並標準化（去掉 . 和 ..；不存在的子路徑加 .. 也不能繞出去，跟 writeInside 同一套）
+    static func isInside(_ target: String, root: String) -> Bool {
+        // 先去掉 . 和 ..（不存在的路徑 resolvingSymlinksInPath 不會處理 ..），再用 realpath 解開「最深的、存在的那一層」的 symlink，
+        // 剩下不存在的部分接回去；兩邊用同一套，/tmp 和 /private/tmp 這類別名才會一致
+        func norm(_ p: String) -> String {
+            let std = URL(fileURLWithPath: p).standardizedFileURL.path
+            var existing = std, rest: [String] = []
+            while existing != "/", !FileManager.default.fileExists(atPath: existing) {
+                rest.insert((existing as NSString).lastPathComponent, at: 0)
+                existing = (existing as NSString).deletingLastPathComponent
+            }
+            var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
+            let real = realpath(existing, &buf) != nil ? String(cString: buf) : existing
+            return rest.isEmpty ? real : (real == "/" ? "" : real) + "/" + rest.joined(separator: "/")
+        }
+        let r = norm(root), t = norm(target)
+        let base = r.hasSuffix("/") ? r : r + "/"
+        return t == String(base.dropLast()) || t.hasPrefix(base)
     }
 
     private static func path(_ input: [String: Any], _ dir: String) -> String {
@@ -851,6 +1012,87 @@ final class LocalBridge {
         ["type": "stream_event", "event": event, "api_message_id": msgID]
     }
 
+    /// 用假 OpenAI 相容回應測長度截斷：執行 Bash 工具的副作用路徑必須完全不被呼叫。
+    static func runToolTruncationSelfTest(in dir: URL, out: String) -> Bool {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let sentinel = dir.appendingPathComponent("truncated-tool-ran")
+        let command = "touch " + sentinel.path
+        let args = (try? JSONSerialization.data(withJSONObject: ["command": command]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let fakeResponse: [String: Any] = ["choices": [["finish_reason": "length", "delta": ["tool_calls": [[
+            "index": 0, "id": "fake-truncated-call", "function": ["name": "Bash", "arguments": args]
+        ]]]]]]
+        let choice = (fakeResponse["choices"] as? [[String: Any]])?.first ?? [:]
+        let reason = choice["finish_reason"] as? String
+        let calls = ((choice["delta"] as? [String: Any])?["tool_calls"] as? [[String: Any]] ?? []).map { call -> (id: String, name: String, args: String) in
+            let function = call["function"] as? [String: Any] ?? [:]
+            return (call["id"] as? String ?? "fake", function["name"] as? String ?? "", function["arguments"] as? String ?? "{}")
+        }
+        let bridge = LocalBridge(session: UUID(), directory: dir.path, model: "fake")
+        var events: [[String: Any]] = []
+        bridge.emit = { events.append($0) }
+        bridge.replied(calls, finishReason: reason, continueAfterTruncation: false)
+        let hasErrorResult = events.contains { event in
+            guard event["type"] as? String == "user",
+                  let message = event["message"] as? [String: Any],
+                  let block = (message["content"] as? [[String: Any]])?.first,
+                  block["type"] as? String == "tool_result" else { return false }
+            return block["content"] as? String == truncatedToolError && block["is_error"] as? Bool == true
+        }
+        let hasVisibleNotice = events.contains { $0["type"] as? String == "system" && $0["status"] as? String == "tool_calls_truncated" && $0["message"] as? String == truncatedToolError }
+        let blocked = shouldRejectToolBatch(finishReason: reason, toolCount: calls.count)
+        let safeFinishAllowed = !shouldRejectToolBatch(finishReason: "tool_calls", toolCount: 1)
+        let textOnlyAllowed = !shouldRejectToolBatch(finishReason: "length", toolCount: 0)
+        let noSideEffect = !FileManager.default.fileExists(atPath: sentinel.path)
+        let values: [(String, Bool)] = [
+            ("length_finish_reason_blocks_tool_batch", blocked),
+            ("truncated_tool_returns_error", hasErrorResult),
+            ("truncation_notice_is_visible", hasVisibleNotice),
+            ("truncated_bash_was_not_run", noSideEffect),
+            ("complete_tool_finish_reason_is_allowed", safeFinishAllowed),
+            ("length_without_tools_is_not_blocked", textOnlyAllowed)
+        ]
+        let text = values.map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
+        try? text.write(toFile: out, atomically: true, encoding: .utf8)
+        try? FileManager.default.removeItem(at: bridge.transcriptURL)
+        return values.allSatisfy(\.1)
+    }
+
+    /// Fake tool turn verifies ⌃ Enter is consumed after tools without cancelling the turn or its pending calls.
+    static func runSteerSelfTest(in dir: URL, out: String) -> Bool {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let bridge = LocalBridge(session: UUID(), directory: dir.path, model: "fake")
+        var events: [[String: Any]] = []
+        bridge.emit = { events.append($0) }
+        bridge.busy = true
+        bridge.turn = 7
+        bridge.calls = [("tool-1", "Read", "{}")]
+        bridge.queue = [
+            ("later", "later", ["role": "user", "content": "later"]),
+            ("urgent", "urgent", ["role": "user", "content": "urgent"])
+        ]
+        bridge.steer("urgent")
+        let steeringDidNotInterrupt = bridge.busy && bridge.turn == 7 && bridge.calls.count == 1 && bridge.queue.first?.uuid == "urgent"
+        bridge.calls.removeAll()
+        let consumed = bridge.consumeSteeredMessage()
+        let appended = (bridge.messages.last?["content"] as? String) == "urgent"
+        let replayed = events.contains { $0["type"] as? String == "user" && $0["isReplay"] as? Bool == true && $0["uuid"] as? String == "urgent" }
+        let queuedOrderKept = bridge.queue.map(\.uuid) == ["later"]
+        let remainsInSameTurn = bridge.busy && bridge.turn == 7
+        let values: [(String, Bool)] = [
+            ("steer_does_not_interrupt_tools", steeringDidNotInterrupt),
+            ("steered_message_consumed_after_tool_batch", consumed),
+            ("steered_message_added_to_next_model_context", appended),
+            ("steered_bubble_replayed_into_chat", replayed),
+            ("other_queued_messages_keep_order", queuedOrderKept),
+            ("current_turn_remains_active", remainsInSameTurn)
+        ]
+        let text = values.map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
+        try? text.write(toFile: out, atomically: true, encoding: .utf8)
+        try? FileManager.default.removeItem(at: bridge.transcriptURL)
+        return values.allSatisfy(\.1)
+    }
+
     /// 送給模型的使用者訊息：看得懂圖的模型有附圖就照 OpenAI 格式（文字＋data URL 圖片）送，其他的只送文字
     private static func content(_ msg: [String: Any], vision: Bool) -> Any {
         let blocks = msg["content"] as? [[String: Any]] ?? []
@@ -970,6 +1212,8 @@ final class SSE: NSObject, URLSessionDataDelegate {
     private let onDone: (String?) -> Void
     private var status = 0
     private var body = Data()   // 不是 200 時的錯誤內容
+    private var receivedDone = false
+    private var receivedFinishReason = false
 
     init(_ request: URLRequest, onEvent: @escaping ([String: Any]) -> Void, onDone: @escaping (String?) -> Void) {
         self.onEvent = onEvent
@@ -993,18 +1237,40 @@ final class SSE: NSObject, URLSessionDataDelegate {
         while let nl = buffer.firstIndex(of: 0x0a) {
             let line = buffer[buffer.startIndex..<nl]
             buffer.removeSubrange(buffer.startIndex...nl)
-            guard line.starts(with: Data("data: ".utf8)) else { continue }
-            let payload = line.dropFirst(6)
-            if payload.starts(with: Data("[DONE]".utf8)) { continue }
-            if let o = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any] { onEvent(o) }
+            consume(line)
         }
+    }
+
+    private func consume(_ rawLine: Data) {
+        var line = rawLine
+        if line.last == 0x0d { line.removeLast() }
+        guard line.starts(with: Data("data: ".utf8)) else { return }
+        let payload = line.dropFirst(6)
+        if payload.starts(with: Data("[DONE]".utf8)) { receivedDone = true; return }
+        guard let o = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any] else { return }
+        if let choices = o["choices"] as? [[String: Any]],
+           choices.contains(where: { $0["finish_reason"] is String }) {
+            receivedFinishReason = true
+        }
+        onEvent(o)
     }
 
     func urlSession(_ s: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         session.finishTasksAndInvalidate()
+        if status == 200, !buffer.isEmpty {
+            // SSE 最後一行可能沒有換行；關閉連線時仍要解析完整的 data frame。
+            consume(buffer)
+            buffer.removeAll()
+        }
         if let e = error as? URLError, e.code == .cancelled { return }
-        if let error { onDone(error.localizedDescription); return }
+        if let error {
+            if receivedFinishReason { onDone(nil); return }
+            if let e = error as? URLError { onDone("URLError \(e.errorCode)：\(e.localizedDescription)") }
+            else { onDone(error.localizedDescription) }
+            return
+        }
         if status != 200 { onDone(L("伺服器回 \(status)：") + String(decoding: body.prefix(300), as: UTF8.self)); return }
+        guard receivedDone || receivedFinishReason else { onDone(L("串流中途斷掉")); return }
         onDone(nil)
     }
 }

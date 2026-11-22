@@ -83,6 +83,8 @@ final class RightPanelModel: ObservableObject {
     let git = GitPanelModel()
     let history = HistorySearchModel()
     private(set) var projectPath: String?
+    private var testGitRoot: String?
+    private var testGitRepos: [String]?
 
     private init() {
         tab = RightTab(rawValue: appDefaults.string(forKey: "rightPanelTab") ?? "") ?? .windows
@@ -97,12 +99,22 @@ final class RightPanelModel: ObservableObject {
     }
 
     /// 目前專案換了：檔案樹、git 都跟著換
-    func syncProject(_ path: String?) {
-        guard path != projectPath else { return }
-        projectPath = path
-        files.setRoot(path)
-        search.clear()
-        git.setProject(path)
+    func syncProject(_ path: String?, commanderRoot: Bool = false, extraRepos: [String] = []) {
+        let effectivePath = testGitRoot ?? path
+        let pathChanged = effectivePath != projectPath
+        if pathChanged {
+            projectPath = effectivePath
+            files.setRoot(effectivePath)
+            search.clear()
+        }
+        git.setContext(effectivePath, commanderRoot: testGitRoot != nil || commanderRoot,
+                       extraRepos: testGitRepos ?? extraRepos)
+    }
+
+    func configureGitRelatedTest(root: String, extraRepos: [String]) {
+        testGitRoot = URL(fileURLWithPath: root).standardizedFileURL.path
+        testGitRepos = extraRepos.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+        syncProject(projectPath, commanderRoot: true, extraRepos: extraRepos)
     }
 
     var boardShown: Bool { panelOn && tab == .board }
@@ -110,14 +122,26 @@ final class RightPanelModel: ObservableObject {
 
 // MARK: 資料
 
-enum RPState: String {
-    case working, waiting, idle, asleep
+enum RPState: Equatable {
+    case working, waiting, idle, asleep, background(Int), stuck(Int)
+    var rawValue: String {
+        switch self {
+        case .working: return "working"
+        case .waiting: return "waiting"
+        case .idle: return "idle"
+        case .asleep: return "asleep"
+        case .background(let count): return "background:\(count)"
+        case .stuck(let minutes): return "stuck:\(minutes)"
+        }
+    }
     var label: String {
         switch self {
         case .working: return L("工作中")
         case .waiting: return L("等你")
         case .idle: return L("待命")
         case .asleep: return L("休眠")
+        case .background(let count): return L("等背景任務（\(count)）")
+        case .stuck(let minutes): return L("可能卡住（\(minutes) 分鐘沒輸出）")
         }
     }
     var color: Color {
@@ -126,6 +150,8 @@ enum RPState: String {
         case .waiting: return .orange
         case .idle: return Color.blue.opacity(0.75)
         case .asleep: return Color.gray.opacity(0.4)
+        case .background(_): return .orange
+        case .stuck(_): return .orange
         }
     }
 }
@@ -167,16 +193,36 @@ struct RPChats {
 }
 
 enum RPData {
+    private static var graphTestStates: [UUID: RPState] = [:]
+
+    /// --graph-op state 僅在 --state-dir 測試實例覆寫關聯圖狀態；不影響正式狀態計算。
+    static func setGraphTestState(_ state: RPState?, for id: UUID) {
+        guard CommandLine.arguments.contains("--state-dir") else { return }
+        graphTestStates[id] = state
+    }
+
+    static func graphState(_ id: UUID, store: Store, workspace: Workspace) -> RPState {
+        if CommandLine.arguments.contains("--state-dir"), let state = graphTestStates[id] { return state }
+        return self.state(id, store: store, workspace: workspace)
+    }
+
     /// 狀態點：只查 workspace.panes[id]，不呼叫 pane(for:)（那會把聊天室開起來）
     static func state(_ id: UUID, store: Store, workspace: Workspace) -> RPState {
+        if store.status[id] == .working, let minutes = CommanderStuck.shared.minutes(id) { return .stuck(minutes) }
         switch store.status[id] ?? .idle {
         case .working: return .working
         case .waiting: return .waiting
         case .idle: break
         }
-        guard let p = workspace.panes[id] else { return .asleep }
-        if let c = p as? ChatPane { return c.session.isRunning ? .idle : .asleep }
-        return .idle
+        if let p = workspace.panes[id] {
+            let backgroundCount = SessionActivity.shared.running(id).filter(\.background).count
+            if backgroundCount > 0 { return .background(backgroundCount) }
+            if let c = p as? ChatPane { return c.session.isRunning ? .idle : .asleep }
+            return .idle
+        }
+        let backgroundCount = SessionActivity.shared.running(id).filter(\.background).count
+        if backgroundCount > 0 { return .background(backgroundCount) }
+        return .asleep
     }
 
     static func windows(_ store: Store) -> [RPWindowRow] {
@@ -233,10 +279,27 @@ enum RPData {
         return out
     }
 
+    struct ChatHeaderSummary {
+        var sessionID: UUID?
+        var isCommander = false
+        var count = 0
+    }
+
+    /// 關聯圖顯示時的輕量摘要：只取 sessionID、是否總指揮與未封存聊天室數量，避免重跑整份 RPData.chats。
+    static func chatHeaderSummary(_ store: Store) -> ChatHeaderSummary {
+        guard let s = store.currentSessionLayout else { return ChatHeaderSummary() }
+        guard s.groups != nil else { return ChatHeaderSummary(sessionID: s.id, isCommander: false, count: 0) }
+        let count = store.conversations(inCommander: s).reduce(0) { acc, c in
+            (!c.isBrowser && !c.isGadget && c.draft != true && !store.isArchived(c)) ? acc + 1 : acc
+        }
+        return ChatHeaderSummary(sessionID: s.id, isCommander: true, count: count)
+    }
+
     static func historyTargets(_ store: Store) -> [HistorySearchModel.Target] {
         guard let sess = store.currentSessionLayout, sess.groups != nil else { return [] }
         return store.conversations(inCommander: sess).compactMap { c in
-            guard !c.isBrowser, c.modelCategory == "claude", let p = store.project(c.projectID)?.path else { return nil }
+            guard !c.isBrowser, c.modelCategory == "claude" else { return nil }
+            let p = store.workingDirectory(for: c)
             return .init(id: c.id, title: c.title, url: Store.claudeTranscript(c.claudeSession, path: p))
         }
     }
@@ -263,9 +326,20 @@ extension Store {
     func rightPanelProject() -> (name: String, path: String)? {
         // single 總指揮：檔案／Git 固定看總指揮的專案資料夾；multi 跟著目前點的聊天室（它所在的子專案）
         if let s = currentSessionLayout, s.groups != nil, !commanderIsMulti(s), let p = commanderProjectPath(s) { return p }
-        if let f = currentWindow?.focused, let c = conversation(f), let p = project(c.projectID) { return (p.name, p.path) }
+        if let f = currentWindow?.focused, let c = conversation(f), let p = project(c.projectID) { return (p.name, workingDirectory(for: c)) }
         if let ch = currentSessionLayout?.chief, let c = conversation(ch), let p = project(c.projectID) { return (p.name, p.path) }
         return nil
+    }
+
+    /// 只有右欄正顯示總指揮主聊天室使用的資料夾時，才把非 repo 資料夾展開成相關 repo 清單。
+    func rightPanelIsCommanderRoot() -> Bool {
+        guard let session = currentSessionLayout,
+              let chief = session.chief,
+              let chiefConversation = conversation(chief),
+              let chiefProject = project(chiefConversation.projectID),
+              let shownProject = rightPanelProject() else { return false }
+        return URL(fileURLWithPath: chiefProject.path).standardizedFileURL.path ==
+            URL(fileURLWithPath: shownProject.path).standardizedFileURL.path
     }
 
     /// 右欄點 Window：一般的切過去；獨立視窗叫到前景
@@ -283,6 +357,7 @@ extension Store {
 
 struct RightPanelView: View {
     @Environment(\.uiScale) private var s
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var store: Store
     let workspace: Workspace
     var pause: (CollabPair) -> Void = { _ in }
@@ -305,8 +380,15 @@ struct RightPanelView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .onAppear { model.syncProject(project?.path) }
-        .onChange(of: project?.path) { _, new in model.syncProject(new) }
+        .background(Color(nsColor: colorScheme == .dark ? .controlBackgroundColor : Theme.lightPanelBackground))
+        .onAppear { syncRightPanelProject(project?.path) }
+        .onChange(of: project?.path) { _, new in syncRightPanelProject(new) }
+        .onChange(of: store.relatedGitRepos) { _, _ in syncRightPanelProject(project?.path) }
+        .onChange(of: store.rightPanelIsCommanderRoot()) { _, _ in syncRightPanelProject(project?.path) }
+    }
+
+    private func syncRightPanelProject(_ path: String?) {
+        model.syncProject(path, commanderRoot: store.rightPanelIsCommanderRoot(), extraRepos: store.relatedGitRepos)
     }
 
     private var tabBar: some View {
@@ -315,10 +397,11 @@ struct RightPanelView: View {
                 Button { model.tab = t } label: {
                     HStack(spacing: 3) {
                         Image(systemName: t.icon).font(.system(size: 11 * s))
-                        Text(t.label).font(.system(size: 11 * s, weight: model.tab == t ? .semibold : .regular)).lineLimit(1).fixedSize()
+                        Text(t.label).font(InterfaceFont.swiftUIFont(size: 11 * s, weight: model.tab == t ? .semibold : .regular)).lineLimit(1).fixedSize()
                     }
-                    .foregroundStyle(model.tab == t ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(model.tab == t ? Color.accentColor : Color(nsColor: Theme.secondaryTextColor))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
                     .overlay(alignment: .bottom) {
                         if model.tab == t { Rectangle().fill(Color.accentColor).frame(height: 2) }
                     }
@@ -328,7 +411,7 @@ struct RightPanelView: View {
             }
             Button { model.petSlotOn.toggle() } label: {
                 Image(systemName: "pawprint\(model.petSlotOn ? ".fill" : "")").font(.system(size: 10 * s))
-                    .foregroundStyle(model.petSlotOn ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(model.petSlotOn ? Color.accentColor : Color(nsColor: Theme.secondaryTextColor))
                     .frame(width: 26 * s).frame(maxHeight: .infinity).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -347,17 +430,17 @@ struct RPProjectBar: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: "folder.fill").font(.system(size: 10 * s)).foregroundStyle(.secondary)
+            Image(systemName: "folder.fill").font(.system(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
             if let project {
-                Text(project.name).font(.system(size: 11.5 * s, weight: .semibold)).lineLimit(1)
-                Text(RPData.abbreviate(project.path)).font(.system(size: 10 * s)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
+                Text(project.name).font(InterfaceFont.swiftUIFont(size: 11.5 * s, weight: .semibold)).lineLimit(1)
+                Text(RPData.abbreviate(project.path)).font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).lineLimit(1).truncationMode(.head)
             } else {
-                Text(L("沒有目前專案")).font(.system(size: 11 * s)).foregroundStyle(.secondary)
+                Text(L("沒有目前專案")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
             }
             Spacer(minLength: 2)
             if let refresh {
                 Button(action: refresh) { Image(systemName: "arrow.clockwise").font(.system(size: 10 * s)) }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).help(L("重新整理"))
+                    .buttonStyle(.plain).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).help(L("重新整理"))
             }
         }
         .padding(.horizontal, 10).frame(height: 24 * s)
@@ -386,7 +469,7 @@ struct RPSmallButton: View {
     var action: () -> Void
     var body: some View {
         Button(action: action) {
-            Text(title).font(.system(size: 10.5 * s)).lineLimit(1).fixedSize().padding(.horizontal, 6).padding(.vertical, 1.5)
+            Text(title).font(InterfaceFont.swiftUIFont(size: 10.5 * s)).lineLimit(1).fixedSize().padding(.horizontal, 6).padding(.vertical, 1.5)
                 .background(Capsule().fill(Color.accentColor.opacity(0.16)))
                 .foregroundStyle(Color.accentColor)
         }
@@ -405,6 +488,8 @@ struct RPWindowsTab: View {
     @ObservedObject private var activity = SessionActivity.shared
     @ObservedObject private var ports = PortsMonitor.shared
     @ObservedObject private var colab = ColabMonitor.shared
+    @ObservedObject private var stuck = CommanderStuck.shared
+    @StateObject private var progress = RunningActivityProgressModel()
     @State private var colabOpen = false
     @State private var archivedOpen = false
     @State private var runOpen: Bool?
@@ -418,27 +503,42 @@ struct RPWindowsTab: View {
     @State private var windowBox = WindowGrabber.Box()
     @State private var dividerDragStart: CGFloat?
     @State private var panelHeight: CGFloat = 0
+    @State private var graphLayoutOpen = false
     private let tick = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
+    private let progressTick = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        let chats = RPData.chats(store, workspace: workspace)
+        let showGraph = panelModel.chatGraph && (store.currentSessionLayout?.groups != nil)
+        let graphHeader = showGraph ? RPData.chatHeaderSummary(store) : nil
+        let chats: RPChats? = showGraph ? nil : RPData.chats(store, workspace: workspace)
+        let chatCount = graphHeader?.count ?? chats?.count ?? 0
+        let isCommander = graphHeader?.isCommander ?? chats?.isCommander ?? false
+        let sessionID = graphHeader?.sessionID ?? chats?.sessionID
         VStack(spacing: 0) {
             running
                 .frame(height: upperRegionHeight, alignment: .top)
                 .clipped()
             divider
-            header(L("聊天室 (\(chats.count))"), trailing: chats.isCommander ? AnyView(modeToggle(chats.isCommander)) : nil)
-            if chats.isCommander && !panelModel.chatGraph { columns }
-            if panelModel.chatGraph && chats.isCommander {
+            header(L("聊天室 (\(chatCount))"), trailing: isCommander ? AnyView(modeToggle(isCommander)) : nil)
+            if isCommander && !panelModel.chatGraph { columns }
+            if showGraph {
                 ChatGraphRepresentable(store: store, workspace: workspace,
-                                       onSummon: { id in if let sid = chats.sessionID { store.summonConversation(id, inSession: sid) } },
-                                       onInfo: { openInfo($0) })
+                                       onSummon: { id in if let sid = sessionID { store.summonConversation(id, inSession: sid) } },
+                                       onInfo: { openInfo($0) }, onLayoutRequested: { graphLayoutOpen = true })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+                    .overlay(alignment: .topTrailing) {
+                        Button { graphLayoutOpen = true } label: { Image(systemName: "gearshape") .frame(width: 26, height: 26) }
+                            .buttonStyle(.plain).help(L("關聯圖版面"))
+                            .padding(6)
+                            .popover(isPresented: $graphLayoutOpen, arrowEdge: .top) {
+                                GraphLayoutControls(store: store, sessionID: sessionID)
+                            }
+                    }
+            } else if let chats {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if !chats.isCommander {
-                        Text(L("這一區沒有總指揮")).font(.system(size: 11 * s)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.vertical, 4)
+                        Text(L("這一區沒有總指揮")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.horizontal, 10).padding(.vertical, 4)
                     }
                     ForEach(chats.sections) { sec in
                         let hidden = sec.ancestors.contains { collapsedSections.contains($0) }
@@ -451,10 +551,10 @@ struct RPWindowsTab: View {
                                 } label: {
                                     HStack(spacing: 4) {
                                         Image(systemName: collapsed ? "chevron.right" : "chevron.down").font(.system(size: 8 * s, weight: .semibold))
-                                        Text(collapsed ? "\(name) (\(sec.rows.count + sec.total))" : name).font(.system(size: 10.5 * s, weight: .semibold))
+                                        Text(collapsed ? "\(name) (\(sec.rows.count + sec.total))" : name).font(InterfaceFont.swiftUIFont(size: 10.5 * s, weight: .semibold))
                                         Spacer()
                                     }
-                                    .foregroundStyle(.secondary).padding(.leading, 10 + CGFloat(sec.depth) * 10).padding(.trailing, 10).padding(.top, 5).padding(.bottom, 1).contentShape(Rectangle())
+                                    .foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.leading, 10 + CGFloat(sec.depth) * 10).padding(.trailing, 10).padding(.top, 5).padding(.bottom, 1).contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -467,10 +567,10 @@ struct RPWindowsTab: View {
                         Button { archivedOpen.toggle() } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: archivedOpen ? "chevron.down" : "chevron.right").font(.system(size: 8 * s, weight: .semibold))
-                                Text(L("已封存 (\(chats.archived.count))")).font(.system(size: 10.5 * s))
+                                Text(L("已封存 (\(chats.archived.count))")).font(InterfaceFont.swiftUIFont(size: 10.5 * s))
                                 Spacer()
                             }
-                            .foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2).contentShape(Rectangle())
+                            .foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         if archivedOpen { ForEach(chats.archived) { chatRow($0, session: chats.sessionID, indent: 0).opacity(0.6) } }
@@ -513,8 +613,8 @@ struct RPWindowsTab: View {
     private var portsBarHeight: CGFloat { 26 * s }
 
     private var divider: some View {
-        Rectangle().fill(Color.primary.opacity(0.18))
-            .overlay(Rectangle().fill(Color.primary.opacity(0.28)).frame(height: 1))
+        Rectangle().fill(Color(nsColor: Theme.separatorColor(for: NSApp.effectiveAppearance)))
+            .overlay(Rectangle().fill(Color(nsColor: Theme.separatorColor(for: NSApp.effectiveAppearance))).frame(height: 1))
             .frame(height: RightPanelLayout.dividerHitHeight)
             .contentShape(Rectangle())
             .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
@@ -535,7 +635,7 @@ struct RPWindowsTab: View {
             ForEach([false, true], id: \.self) { g in
                 Button { panelModel.chatGraph = g } label: {
                     Image(systemName: g ? "point.3.connected.trianglepath.dotted" : "list.bullet").font(.system(size: 10 * s))
-                        .foregroundStyle(panelModel.chatGraph == g ? Color.accentColor : Color.secondary)
+                        .foregroundStyle(panelModel.chatGraph == g ? Color.accentColor : Color(nsColor: Theme.secondaryTextColor))
                         .frame(width: 20 * s, height: 16 * s)
                         .background(RoundedRectangle(cornerRadius: 4).fill(panelModel.chatGraph == g ? Color.accentColor.opacity(0.15) : .clear))
                         .contentShape(Rectangle())
@@ -553,14 +653,14 @@ struct RPWindowsTab: View {
             Text(L("記憶體")).frame(width: RightPanelLayout.memoryColumnWidth * s, alignment: .trailing).accessibilityIdentifier("rightPanelMemoryHeader")
             Text(L("上下文")).frame(width: RightPanelLayout.contextColumnWidth * s, alignment: .trailing).accessibilityIdentifier("rightPanelContextHeader")
         }
-        .font(.system(size: 9.5 * s)).foregroundStyle(.tertiary)
+        .font(InterfaceFont.swiftUIFont(size: 9.5 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
         .padding(.trailing, RightPanelLayout.chatColumnTrailingInset)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func header(_ t: String, trailing: AnyView? = nil) -> some View {
         HStack(spacing: 0) {
-            Text(t).font(.system(size: 10.5 * s, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            Text(t).font(InterfaceFont.swiftUIFont(size: 10.5 * s, weight: .semibold)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).lineLimit(1).fixedSize(horizontal: true, vertical: false)
             Spacer(minLength: 0)
             if trailing != nil { Spacer().frame(width: RightPanelLayout.toggleButtonsWidth * s) }
         }
@@ -570,23 +670,28 @@ struct RPWindowsTab: View {
 
     // 正在跑（沿用 ActivityBlock）：有任務才展開
     @ViewBuilder private var running: some View {
-        let ids = (store.currentWindow?.root?.leaves ?? []).filter { store.conversation($0) != nil }
-        let n = ids.filter { (store.status[$0] ?? .idle) != .idle || !activity.running($0).isEmpty }.count
+        let ids = RunningActivitySummary.visibleChatIDs(store)
+        let aggregated = RunningActivitySummary.aggregatedEntries(store: store)
+        let n = RunningActivitySummary.activeChatCount(ids, store: store) + aggregated.count
         let open = runOpen ?? (n > 0)
         VStack(alignment: .leading, spacing: 0) {
             Button { runOpen = !open } label: {
                 HStack(spacing: 4) {
                     Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 8 * s, weight: .semibold))
-                    Text(L("正在跑 (\(n))")).font(.system(size: 10.5 * s, weight: .semibold))
+                    Text(L("正在跑 (\(n))")).font(InterfaceFont.swiftUIFont(size: 10.5 * s, weight: .semibold))
                     Spacer()
                 }
-                .foregroundStyle(n > 0 ? Color.green : Color.secondary)
+                .foregroundStyle(n > 0 ? Color.green : Color(nsColor: Theme.secondaryTextColor))
                 .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 2).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             if open {
-                ScrollView(.vertical) { ActivityBlock(store: store).padding(.horizontal, 10).padding(.bottom, 4) }
+                ScrollView(.vertical) { ActivityBlock(store: store, progress: progress, aggregated: aggregated).padding(.horizontal, 10).padding(.bottom, 4) }
                     .frame(maxHeight: .infinity, alignment: .top)
+                    .onAppear { progress.refresh(RunningActivitySummary.ownEntries(store: store) + RunningActivitySummary.aggregatedEntries(store: store)) }
+                    .onReceive(progressTick) { _ in
+                        progress.refresh(RunningActivitySummary.ownEntries(store: store) + RunningActivitySummary.aggregatedEntries(store: store))
+                    }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -599,13 +704,13 @@ struct RPWindowsTab: View {
                 else { Circle().fill(r.state.color).frame(width: 7 * s, height: 7 * s) }
             }.help(r.state.label)
             if r.chief { Image(systemName: "star.fill").font(.system(size: 8 * s)).foregroundStyle(.orange) }
-            Text(r.title).font(.system(size: 12 * s, weight: r.placed ? .medium : .regular)).lineLimit(1).truncationMode(.tail)
-                .foregroundStyle(r.placed ? Color.primary : Color.secondary)
+            Text(r.title).font(InterfaceFont.swiftUIFont(size: 12 * s, weight: r.placed ? .medium : .regular)).lineLimit(1).truncationMode(.tail)
+                .foregroundStyle(r.placed ? Color.primary : Color(nsColor: Theme.secondaryTextColor))
             Spacer(minLength: 2)
             // 滑過去才出現的小 ⓘ：點了打開「聊天室資訊」
             if hoverRow == r.id || panelModel.selectedChat == r.id {
                 Button { openInfo(r.id) } label: { Image(systemName: "info.circle").font(.system(size: 11 * s)) }
-                    .buttonStyle(.plain).foregroundStyle(hoverRow == r.id ? Color.primary.opacity(0.7) : Color.secondary.opacity(0.5))
+                    .buttonStyle(.plain).foregroundStyle(hoverRow == r.id ? Color.primary.opacity(0.7) : Color(nsColor: Theme.secondaryTextColor).opacity(0.5))
                     .help(L("聊天室資訊（選取後按 i）"))
             }
             Text(r.memory.map(RPData.shortBytes) ?? "—").frame(width: RightPanelLayout.memoryColumnWidth * s, alignment: .trailing)
@@ -613,7 +718,7 @@ struct RPWindowsTab: View {
             Text(r.context.map(ContextMonitor.text) ?? "—").frame(width: RightPanelLayout.contextColumnWidth * s, alignment: .trailing)
                 .accessibilityIdentifier("rightPanelContextValue")
         }
-        .font(.system(size: 10.5 * s)).monospacedDigit().foregroundStyle(.secondary)
+        .font(InterfaceFont.swiftUIFont(size: 10.5 * s)).monospacedDigit().foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
         .padding(.leading, 10 + indent).padding(.trailing, RightPanelLayout.chatColumnTrailingInset).padding(.vertical, 2)
         .frame(minHeight: 20 * s)
         // 不要「叫出來」按鈕；滑鼠移到那一列整列淡底色、單擊選取（紫框保持）、雙擊叫出來（右鍵選單裡還有「叫出來」）；
@@ -673,7 +778,7 @@ struct RPWindowsTab: View {
             Button(L("取消"), role: .cancel) { renamingID = nil }
         }
         .onAppear {
-            if r.context == nil, let c = store.conversation(r.id), let p = store.project(c.projectID)?.path { ctx.load(c, path: p) }
+            if r.context == nil, let c = store.conversation(r.id) { ctx.load(c, path: store.workingDirectory(for: c)) }
         }
     }
 
@@ -682,11 +787,11 @@ struct RPWindowsTab: View {
             Button { portsOpen.toggle(); if portsOpen { ports.refresh(force: true) } } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "network").font(.system(size: 9.5 * s))
-                    Text("Ports (\(ports.entries.count))").font(.system(size: 10.5 * s))
+                    Text("Ports (\(ports.entries.count))").font(InterfaceFont.swiftUIFont(size: 10.5 * s))
                 }
                 .padding(.horizontal, 8).padding(.vertical, 2)
-                .background(Capsule().fill(Color.secondary.opacity(0.16)))
-                .foregroundStyle(.secondary)
+                .background(Capsule().fill(Color(nsColor: Theme.secondaryTextColor).opacity(0.16)))
+                .foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
             }
             .buttonStyle(.plain)
             .popover(isPresented: $portsOpen, arrowEdge: .top) { portsList }
@@ -695,7 +800,7 @@ struct RPWindowsTab: View {
                 Button { colabOpen.toggle(); if colabOpen { colab.reload(force: true) } } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "cloud").font(.system(size: 9.5 * s))
-                        Text("Colab (\(colab.machines.count))").font(.system(size: 10.5 * s))
+                        Text("Colab (\(colab.machines.count))").font(InterfaceFont.swiftUIFont(size: 10.5 * s))
                     }
                     .padding(.horizontal, 8).padding(.vertical, 2)
                     .background(Capsule().fill(Color.orange.opacity(0.18)))
@@ -713,17 +818,17 @@ struct RPWindowsTab: View {
     private var portsList: some View {
         VStack(alignment: .leading, spacing: 2) {
             if ports.entries.isEmpty {
-                Text(L("沒有監聽中的連接埠")).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(L("沒有監聽中的連接埠")).font(InterfaceFont.swiftUIFont(size: 11)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(ports.entries) { e in
                         HStack(spacing: 8) {
-                            Text(verbatim: ":\(e.port)").font(.system(size: 11, design: .monospaced)).frame(width: 54, alignment: .leading)
-                            Text(e.name).font(.system(size: 11)).lineLimit(1)
-                            if e.ours { Text("codenv").font(.system(size: 9.5)).padding(.horizontal, 4).background(Capsule().fill(Color.accentColor.opacity(0.2))).foregroundStyle(Color.accentColor) }
+                            Text(verbatim: ":\(e.port)").font(InterfaceFont.swiftUIFont(size: 11, design: .monospaced)).frame(width: 54, alignment: .leading)
+                            Text(e.name).font(InterfaceFont.swiftUIFont(size: 11)).lineLimit(1)
+                            if e.ours { Text("codenv").font(InterfaceFont.swiftUIFont(size: 9.5)).padding(.horizontal, 4).background(Capsule().fill(Color.accentColor.opacity(0.2))).foregroundStyle(Color.accentColor) }
                             Spacer(minLength: 8)
-                            Text(verbatim: "pid \(e.pid)").font(.system(size: 10)).foregroundStyle(.tertiary)
+                            Text(verbatim: "pid \(e.pid)").font(InterfaceFont.swiftUIFont(size: 10)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
                         }
                         .help(e.address)
                     }
@@ -759,12 +864,12 @@ struct RPFilesTab: View {
             RPProjectBar(project: store.rightPanelProject(), refresh: { tree.reload() })
             Divider().opacity(0.5)
             HStack(spacing: 5) {
-                Image(systemName: "magnifyingglass").font(.system(size: 10 * s)).foregroundStyle(.secondary)
+                Image(systemName: "magnifyingglass").font(.system(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
                 TextField(contentMode ? L("搜尋檔案內容") : L("搜尋檔名"), text: $query)
-                    .textFieldStyle(.plain).font(.system(size: 11.5 * s))
+                    .textFieldStyle(.plain).font(InterfaceFont.swiftUIFont(size: 11.5 * s))
                     .onSubmit { run(now: true) }
                 if search.running { ProgressView().controlSize(.mini) }
-                else if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 10 * s)) }.buttonStyle(.plain).foregroundStyle(.tertiary) }
+                else if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 10 * s)) }.buttonStyle(.plain).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)) }
                 Picker("", selection: $contentMode) {
                     Text(L("檔名")).tag(false)
                     Text(L("內容")).tag(true)
@@ -790,14 +895,14 @@ struct RPFilesTab: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if tree.rows.isEmpty {
-                    Text(model.projectPath == nil ? L("沒有目前專案") : L("這個資料夾是空的")).font(.system(size: 11 * s)).foregroundStyle(.tertiary).padding(10)
+                    Text(model.projectPath == nil ? L("沒有目前專案") : L("這個資料夾是空的")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(10)
                 }
                 ForEach(tree.rows) { n in
                     HStack(spacing: 4) {
                         Spacer().frame(width: CGFloat(n.depth) * 11 * s)
                         Image(systemName: n.isDir ? (tree.isExpanded(n) ? "chevron.down" : "chevron.right") : "doc")
-                            .font(.system(size: 8.5 * s)).foregroundStyle(.secondary).frame(width: 10 * s)
-                        Text(n.name).font(.system(size: 11.5 * s)).lineLimit(1).truncationMode(.middle)
+                            .font(.system(size: 8.5 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).frame(width: 10 * s)
+                        Text(n.name).font(InterfaceFont.swiftUIFont(size: 11.5 * s)).lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 10).frame(height: 20 * s)
@@ -816,19 +921,19 @@ struct RPFilesTab: View {
     private var results: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                if !search.note.isEmpty { Text(search.note).font(.system(size: 10 * s)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.top, 4) }
+                if !search.note.isEmpty { Text(search.note).font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.horizontal, 10).padding(.top, 4) }
                 if search.hits.isEmpty && !search.running {
-                    Text(L("沒有符合的")).font(.system(size: 11 * s)).foregroundStyle(.tertiary).padding(10)
+                    Text(L("沒有符合的")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(10)
                 }
                 ForEach(search.hits) { h in
                     VStack(alignment: .leading, spacing: 0) {
                         HStack(spacing: 4) {
-                            Text((h.rel as NSString).lastPathComponent).font(.system(size: 11.5 * s, weight: .medium)).lineLimit(1)
-                            if let l = h.line { Text(verbatim: ":\(l)").font(.system(size: 10 * s)).foregroundStyle(.secondary) }
-                            Text((h.rel as NSString).deletingLastPathComponent).font(.system(size: 10 * s)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
+                            Text((h.rel as NSString).lastPathComponent).font(InterfaceFont.swiftUIFont(size: 11.5 * s, weight: .medium)).lineLimit(1)
+                            if let l = h.line { Text(verbatim: ":\(l)").font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)) }
+                            Text((h.rel as NSString).deletingLastPathComponent).font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).lineLimit(1).truncationMode(.head)
                             Spacer(minLength: 0)
                         }
-                        if let t = h.text { Text(t).font(.system(size: 10.5 * s, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail) }
+                        if let t = h.text { Text(t).font(InterfaceFont.swiftUIFont(size: 10.5 * s, design: .monospaced)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).lineLimit(1).truncationMode(.tail) }
                     }
                     .padding(.horizontal, 10).padding(.vertical, 2.5)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -859,16 +964,23 @@ struct RPGitTab: View {
     }
 
     var body: some View {
+        let displayProject: (name: String, path: String)? = {
+            guard let path = git.focusedRelatedRepoPath else { return store.rightPanelProject() }
+            return (URL(fileURLWithPath: path).lastPathComponent, path)
+        }()
         VStack(spacing: 0) {
-            RPProjectBar(project: store.rightPanelProject(), refresh: { git.refresh() })
+            RPProjectBar(project: displayProject, refresh: { git.refresh() })
             Divider().opacity(0.5)
-            if model.projectPath == nil {
+            if git.isRelatedOverview {
+                relatedOverview
+            } else if model.projectPath == nil {
                 hint(L("沒有目前專案"))
             } else if git.isRepo == false {
                 hint(L("這個資料夾不是 git 專案"))
             } else if git.isRepo == nil {
                 hint(L("讀取中…"))
             } else {
+                if git.focusedRelatedRepoPath != nil { relatedBackLine }
                 branchLine
                 worktrees
                 changeList
@@ -881,14 +993,129 @@ struct RPGitTab: View {
     }
 
     private func hint(_ t: String) -> some View {
-        Text(t).font(.system(size: 11 * s)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 16)
+        Text(t).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).frame(maxWidth: .infinity).padding(.top, 16)
+    }
+
+    private var relatedOverview: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(L("相關的 repo")).font(InterfaceFont.swiftUIFont(size: 11.5 * s, weight: .semibold))
+                Spacer(minLength: 0)
+                Button(action: addRelatedRepo) {
+                    Image(systemName: "plus").font(.system(size: 10 * s, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .help(L("加入額外 repo 資料夾"))
+                Menu {
+                    if store.relatedGitRepos.isEmpty {
+                        Text(L("沒有額外 repo"))
+                    } else {
+                        ForEach(store.relatedGitRepos, id: \.self) { path in
+                            Button(L("移除 \(URL(fileURLWithPath: path).lastPathComponent)")) {
+                                store.removeRelatedGitRepo(path: path)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle").font(.system(size: 11 * s))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help(L("管理額外 repo"))
+                if git.loading { ProgressView().controlSize(.mini) }
+            }
+            .foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
+            .padding(.horizontal, 10).frame(height: 25 * s)
+
+            if git.relatedRepos.isEmpty {
+                hint(git.loading ? L("讀取相關 repo…") : L("沒有找到相關 repo"))
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 3) {
+                        ForEach(git.relatedRepos) { repo in relatedRepoRow(repo) }
+                    }
+                    .padding(.vertical, 3)
+                }
+            }
+        }
+    }
+
+    private func relatedRepoRow(_ repo: GitPanelModel.RelatedRepo) -> some View {
+        Button { git.showRelatedRepo(repo.path) } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(repo.rowText)
+                    .font(InterfaceFont.swiftUIFont(size: 10.5 * s, weight: .semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(repo.worktreeHeaderText)
+                    .font(InterfaceFont.swiftUIFont(size: 9.5 * s, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
+                ForEach(repo.worktrees) { tree in
+                    HStack(spacing: 4) {
+                        Image(systemName: tree.isCurrent ? "circle.fill" : "circle")
+                            .font(.system(size: 5 * s))
+                            .foregroundStyle(tree.isCurrent ? Color.green : Color(nsColor: Theme.secondaryTextColor))
+                        Text(repo.worktreeRowText(tree))
+                            .font(InterfaceFont.swiftUIFont(size: 9 * s))
+                            .lineLimit(1).truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: Theme.secondaryTextColor).opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            ForEach(repo.extraPaths, id: \.self) { path in
+                Button(L("從相關 repo 移除 \(URL(fileURLWithPath: path).lastPathComponent)")) {
+                    store.removeRelatedGitRepo(path: path)
+                }
+            }
+        }
+        .help(repo.path)
+        .accessibilityIdentifier("git-related-repo-\(repo.id)")
+    }
+
+    private var relatedBackLine: some View {
+        HStack {
+            Button { git.showRelatedRepo(nil) } label: {
+                Label {
+                    Text(L("相關 repo")).font(InterfaceFont.swiftUIFont(size: 10.5 * s, weight: .semibold))
+                } icon: {
+                    Image(systemName: "chevron.left").font(.system(size: 10.5 * s, weight: .semibold))
+                }
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            if git.loading { ProgressView().controlSize(.mini) }
+        }
+        .foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
+        .padding(.horizontal, 10).frame(height: 22 * s)
+    }
+
+    private func addRelatedRepo() {
+        let panel = NSOpenPanel()
+        panel.title = L("加入額外 repo")
+        panel.prompt = L("加入")
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            guard response == .OK, let path = panel.url?.path else { return }
+            DispatchQueue.main.async {
+                store.addRelatedGitRepo(path: path)
+            }
+        }
     }
 
     private var branchLine: some View {
         HStack(spacing: 5) {
-            Image(systemName: "arrow.triangle.branch").font(.system(size: 10 * s)).foregroundStyle(.secondary)
-            Text(git.branch).font(.system(size: 11.5 * s, weight: .semibold)).lineLimit(1).truncationMode(.middle)
-            Text(git.changes.isEmpty ? L("乾淨") : L("\(git.changes.count) 項變更")).font(.system(size: 10 * s)).foregroundStyle(.secondary)
+            Image(systemName: "arrow.triangle.branch").font(.system(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
+            Text(git.branch).font(InterfaceFont.swiftUIFont(size: 11.5 * s, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+            Text(git.changes.isEmpty ? L("乾淨") : L("\(git.changes.count) 項變更")).font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
             Spacer()
             if git.loading { ProgressView().controlSize(.mini) }
         }
@@ -901,18 +1128,18 @@ struct RPGitTab: View {
             Button { wtOpen = !open } label: {
                 HStack(spacing: 4) {
                     Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 8 * s, weight: .semibold))
-                    Text("Worktree (\(git.worktrees.count))").font(.system(size: 10.5 * s, weight: .semibold))
+                    Text("Worktree (\(git.worktrees.count))").font(InterfaceFont.swiftUIFont(size: 10.5 * s, weight: .semibold))
                     Spacer()
                 }
-                .foregroundStyle(.secondary).padding(.horizontal, 10).frame(height: 20 * s).contentShape(Rectangle())
+                .foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.horizontal, 10).frame(height: 20 * s).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             if open {
                 ForEach(git.worktrees) { t in
                     HStack(spacing: 5) {
-                        Image(systemName: t.isCurrent ? "circle.fill" : "circle").font(.system(size: 6 * s)).foregroundStyle(t.isCurrent ? Color.green : Color.secondary)
-                        Text(t.branch).font(.system(size: 11 * s, weight: t.isCurrent ? .semibold : .regular)).lineLimit(1)
-                        Text(RPData.abbreviate(t.path)).font(.system(size: 10 * s)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
+                        Image(systemName: t.isCurrent ? "circle.fill" : "circle").font(.system(size: 6 * s)).foregroundStyle(t.isCurrent ? Color.green : Color(nsColor: Theme.secondaryTextColor))
+                        Text(t.branch).font(InterfaceFont.swiftUIFont(size: 11 * s, weight: t.isCurrent ? .semibold : .regular)).lineLimit(1)
+                        Text(RPData.abbreviate(t.path)).font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).lineLimit(1).truncationMode(.head)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 18).frame(height: 18 * s)
@@ -938,13 +1165,13 @@ struct RPGitTab: View {
     @ViewBuilder private func section(_ title: String, _ kind: GitPanelModel.Kind) -> some View {
         let items = git.changes.filter { $0.kind == kind }
         if !items.isEmpty {
-            Text("\(title) (\(items.count))").font(.system(size: 10.5 * s, weight: .semibold)).foregroundStyle(.secondary)
+            Text("\(title) (\(items.count))").font(InterfaceFont.swiftUIFont(size: 10.5 * s, weight: .semibold)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
                 .padding(.horizontal, 10).padding(.top, 5).padding(.bottom, 1)
             ForEach(items) { c in
                 HStack(spacing: 6) {
-                    Text(c.code).font(.system(size: 10.5 * s, weight: .bold, design: .monospaced)).foregroundStyle(color(c.code)).frame(width: 10 * s)
-                    Text((c.path as NSString).lastPathComponent).font(.system(size: 11.5 * s)).lineLimit(1)
-                    Text((c.path as NSString).deletingLastPathComponent).font(.system(size: 10 * s)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
+                    Text(c.code).font(InterfaceFont.swiftUIFont(size: 10.5 * s, weight: .bold, design: .monospaced)).foregroundStyle(color(c.code)).frame(width: 10 * s)
+                    Text((c.path as NSString).lastPathComponent).font(InterfaceFont.swiftUIFont(size: 11.5 * s)).lineLimit(1)
+                    Text((c.path as NSString).deletingLastPathComponent).font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).lineLimit(1).truncationMode(.head)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 10).frame(height: 19 * s)
@@ -969,17 +1196,17 @@ struct RPGitTab: View {
         let lines = Array(git.diff.split(separator: "\n", omittingEmptySubsequences: false).prefix(3000))
         return VStack(spacing: 0) {
             HStack {
-                Text(git.selected?.path ?? "").font(.system(size: 10.5 * s, weight: .semibold)).lineLimit(1).truncationMode(.head)
+                Text(git.selected?.path ?? "").font(InterfaceFont.swiftUIFont(size: 10.5 * s, weight: .semibold)).lineLimit(1).truncationMode(.head)
                 Spacer()
-                Button { git.selected = nil } label: { Image(systemName: "xmark").font(.system(size: 9 * s)) }.buttonStyle(.plain).foregroundStyle(.secondary)
+                Button { git.selected = nil } label: { Image(systemName: "xmark").font(.system(size: 9 * s)) }.buttonStyle(.plain).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
             }
             .padding(.horizontal, 10).frame(height: 20 * s)
-            if !git.diffNote.isEmpty { Text(git.diffNote).font(.system(size: 10.5 * s)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 4) }
+            if !git.diffNote.isEmpty { Text(git.diffNote).font(InterfaceFont.swiftUIFont(size: 10.5 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).padding(.horizontal, 10).padding(.top, 4) }
             ScrollView([.vertical, .horizontal]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, l in
                         let t = String(l)
-                        Text(t.isEmpty ? " " : t).font(.system(size: 10.5 * s, design: .monospaced)).fixedSize()
+                        Text(t.isEmpty ? " " : t).font(InterfaceFont.swiftUIFont(size: 10.5 * s, design: .monospaced)).fixedSize()
                             .foregroundStyle(lineColor(t))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(lineBackground(t))
@@ -1028,11 +1255,11 @@ struct RPHistoryTab: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 5) {
-                Image(systemName: "magnifyingglass").font(.system(size: 10 * s)).foregroundStyle(.secondary)
-                TextField(L("搜尋這個總指揮的所有對話"), text: $query).textFieldStyle(.plain).font(.system(size: 11.5 * s))
+                Image(systemName: "magnifyingglass").font(.system(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
+                TextField(L("搜尋這個總指揮的所有對話"), text: $query).textFieldStyle(.plain).font(InterfaceFont.swiftUIFont(size: 11.5 * s))
                     .onSubmit { start() }
                 if history.running {
-                    Button(L("取消")) { history.stop() }.buttonStyle(.plain).font(.system(size: 10.5 * s)).foregroundStyle(Color.accentColor)
+                    Button(L("取消")) { history.stop() }.buttonStyle(.plain).font(InterfaceFont.swiftUIFont(size: 10.5 * s)).foregroundStyle(Color.accentColor)
                 } else {
                     RPSmallButton(title: L("搜尋")) { start() }
                 }
@@ -1041,7 +1268,7 @@ struct RPHistoryTab: View {
             Divider().opacity(0.5)
             HStack(spacing: 5) {
                 if history.running { ProgressView().controlSize(.mini) }
-                Text(status).font(.system(size: 10 * s)).foregroundStyle(.tertiary)
+                Text(status).font(InterfaceFont.swiftUIFont(size: 10 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor))
                 Spacer()
             }
             .padding(.horizontal, 10).frame(height: 18 * s)
@@ -1050,10 +1277,10 @@ struct RPHistoryTab: View {
                     ForEach(history.hits) { h in
                         VStack(alignment: .leading, spacing: 1) {
                             HStack(spacing: 5) {
-                                Text(h.title).font(.system(size: 11.5 * s, weight: .semibold)).lineLimit(1)
+                                Text(h.title).font(InterfaceFont.swiftUIFont(size: 11.5 * s, weight: .semibold)).lineLimit(1)
                                 Spacer(minLength: 2)
                             }
-                            Text("\(h.role == "user" ? "› " : "‹ ")\(h.snippet)").font(.system(size: 10.5 * s)).foregroundStyle(.secondary).lineLimit(2)
+                            Text("\(h.role == "user" ? "› " : "‹ ")\(h.snippet)").font(InterfaceFont.swiftUIFont(size: 10.5 * s)).foregroundStyle(Color(nsColor: Theme.secondaryTextColor)).lineLimit(2)
                         }
                         .padding(.horizontal, 10).padding(.vertical, 3)
                         .background(RPRowHighlight(flash: flashHit == h.id, hover: hoverHit == h.id))

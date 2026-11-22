@@ -1,0 +1,36 @@
+[
+  {
+    "active": true,
+    "plan": "free",
+    "user": "basic@example.test",
+    "alias": "free1",
+    "windows": [
+      { "name": "30 days", "remaining": 100, "resetsAt": "2026-12-10T00:00:00Z" }
+    ]
+  },
+  {
+    "active": false,
+    "plan": "plus",
+    "user": "plus@example.test",
+    "windows": [
+      { "name": "5 hours", "remaining": 88, "resetsAt": "2026-11-10T18:00:00Z" },
+      { "name": "7 days", "remaining": 6, "resetsAt": "2026-11-15T00:00:00Z" }
+    ]
+  },
+  {
+    "active": false,
+    "plan": "free",
+    "user": "free.two@example.test",
+    "windows": [
+      { "name": "30 days", "remaining": 43, "resetsAt": "2026-12-10T00:00:00Z" }
+    ]
+  },
+  {
+    "active": false,
+    "plan": "free",
+    "user": "free.three@example.test",
+    "windows": [
+      { "name": "30 days", "remaining": 22, "resetsAt": "2026-12-10T00:00:00Z" }
+    ]
+  }
+]

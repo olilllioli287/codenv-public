@@ -1,6 +1,17 @@
 [
   {
-    "id": "C86",
+    "id": "C128",
+    "name": "考卷歷史自動標記不穩與慢速題目",
+    "runner": "logic.mjs",
+    "files": [
+      "scripts/exam/run.mjs",
+      "scripts/exam/report.mjs",
+      "scripts/exam/logic.mjs",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C127",
     "name": "工具往返與長回答串流／歷史重載",
     "runner": "logic.mjs",
     "files": [
@@ -171,7 +182,6 @@
     "fixture": "fixtures/magpie-accounts.json",
     "files": [
       "Sources/Workbench/Usage.swift",
-      "Sources/Workbench/AgyMagpie.swift",
       "scripts/exam/logic.mjs",
       "scripts/exam/scenarios.js"
     ]
@@ -233,7 +243,6 @@
     "id": "C72",
     "name": "F12 用量面板開關與焦點保留",
     "runner": "native.sh",
-    "pending": true,
     "files": [
       "Sources/Workbench/TestHarness.swift",
       "Sources/Workbench/Usage.swift",
@@ -267,6 +276,4337 @@
     "files": [
       "scripts/codenv-todo",
       "scripts/exam/todo.py"
+    ]
+  },
+  {
+    "id": "C87",
+    "name": "權限模式提示依 Claude、Codex、agy 實際參數區分",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/CodexBridge.swift",
+      "Sources/Workbench/AgyBridge.swift",
+      "Sources/Workbench/ChatPane.swift",
+      "Resources/i18n/en.json",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C88",
+    "name": "OpenDisplay 不算外接螢幕、實體螢幕仍算",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C89",
+    "name": "總指揮清單拖曳排序並存入 state.json",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/LayoutEdit.swift",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C90",
+    "name": "亮色低刺激與 F6 關聯圖滿版置中",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/Theme.swift",
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/EmptyPane.swift",
+      "Sources/Workbench/WindowHost.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/GraphPanel.swift",
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C91",
+    "name": "右欄關聯圖切換總指揮後視角安全且裁切",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/RightPanelView.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/WindowHost.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/Theme.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C92",
+    "name": "封存釋放聊天室名稱、交接保留位置並等確認、孤兒封存拒絕 team 成員",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/CommanderTeam.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh"
+    ]
+  },
+  {
+    "id": "C93",
+    "name": "codenv-todo handoff／finish／archive orphan 指令流程與說明",
+    "runner": "todo.py",
+    "files": [
+      "scripts/codenv-todo",
+      "scripts/exam/todo.py"
+    ]
+  },
+  {
+    "id": "C100",
+    "name": "分頁標題跟隨目前聊天室名稱",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/WindowHost.swift",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C101",
+    "name": "不同引擎的處理提示顯示各自名稱",
+    "runner": "logic.mjs",
+    "files": [
+      "Resources/chat/chat.js",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C102",
+    "name": "進度列依任務數增高且完整顯示",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/PetTimers.swift",
+      "Sources/Workbench/WindowHost.swift",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C103",
+    "name": "PetTimers 按桌寵歷史與 EMA 估算剩餘時間",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/PetTimers.swift",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C104",
+    "name": "聊天室閒置時仍列出背景子程序",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/Activity.swift",
+      "Sources/Workbench/RightPanelView.swift",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C105",
+    "name": "Argon 新舊 Magpie 名稱映射至每週最低額度",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "scripts/exam/dev/fixtures-magpie-real-1109.json",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C106",
+    "name": "Codex 多帳號用量、OpenRouter／Groq 額度卡片與持久快取",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/ExtraKeyPools.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/KeyVault.swift",
+      "scripts/exam/dev/fixtures/extra-pools/openrouter-free.json",
+      "scripts/exam/dev/fixtures/extra-pools/openrouter-paid.json",
+      "scripts/exam/dev/fixtures/extra-pools/groq-headers.json",
+      "scripts/exam/dev/fixtures/extra-pools/key-denied.json",
+      "scripts/exam/dev/fixtures/extra-pools/key-missing.json",
+      "scripts/exam/dev/fixtures/codex-magpie-accounts.json",
+      "scripts/exam/dev/fixtures/codex-magpie-free.json",
+      "scripts/exam/dev/fixtures/codex-app-server.json",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C107",
+    "name": "agy Claude 總池 5 小時與每週用量",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "scripts/exam/dev/fixtures-magpie-real-1109.json",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C108",
+    "name": "闔蓋等待各引擎回合與背景子程序完成",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Activity.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ],
+    "description": "依 §11.2 改驗舊設定遷移／舊撐住路徑不可進入；掛鉤待施工，pending 不算通過。"
+  },
+  {
+    "id": "C110",
+    "name": "總指揮新聊天室權限依設定且不影響使用者聊天室",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/CommanderTeam.swift",
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/codenv-todo",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C115",
+    "name": "只能刪除空區且隱藏空區節點",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/Areas.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "scripts/codenv-todo",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C116",
+    "name": "關聯圖版面即時調整並按總指揮保存",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/Layout.swift",
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/RightPanelView.swift",
+      "Sources/Workbench/GraphPanel.swift",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C117",
+    "name": "測試實例一律隔離正式鑰匙圈 service",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C118",
+    "name": "Codex 忙碌標題使用實際引擎名稱",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/ChatPane.swift",
+      "Resources/chat/chat.js",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C119",
+    "name": "闔蓋通知略過總指揮 team 成員",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C120",
+    "name": "總指揮停止、先停再送與卡住通知重置",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/CommanderStuck.swift",
+      "Sources/Workbench/CommanderTeam.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/RightPanelView.swift",
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/BrowserServer.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/codenv-todo",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C124",
+    "name": "區長權限、區內派工與封存區清理",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/Groups.swift",
+      "Sources/Workbench/Areas.swift",
+      "Sources/Workbench/CommanderTeam.swift",
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/CommanderStuck.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/Reconnect.swift",
+      "Sources/Workbench/main.swift",
+      "scripts/codenv-todo",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C125",
+    "name": "非 Claude 新聊天室依 --area 歸區",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/CommanderTeam.swift",
+      "Sources/Workbench/BrowserServer.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/main.swift",
+      "scripts/codenv-todo",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C126",
+    "name": "非 Claude 引擎換思考程度時說明生效時間",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/ChatPane.swift",
+      "Resources/i18n/en.json",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C121",
+    "name": "底部用量列顯示 week／5h／argon 短標籤與 30d 退路",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Resources/i18n/en.json",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "A23",
+    "name": "壓縮快照只配對本聊天室、遮蔽金鑰並保住背景任務與待辦",
+    "runner": "todo.py",
+    "files": [
+      "scripts/compact-guard.py",
+      "scripts/exam/todo.py"
+    ]
+  },
+  {
+    "id": "C122",
+    "name": "壓縮防失憶：Claude 啟動參數帶 --settings 且 JSON 只含 PreCompact 與 SessionStart(compact)",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/Workspace.swift",
+      "Sources/Workbench/CLITools.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "build.sh",
+      "release.sh",
+      "scripts/compact-guard.py",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C135",
+    "name": "Claude 共用記憶保護只套用在子聊天室且可關閉",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/Workspace.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh"
+    ]
+  },
+  {
+    "id": "C129",
+    "name": "子聊天室系統提示使用 memory-drafts 路徑",
+    "runner": "logic.mjs",
+    "files": [
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/Workspace.swift",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C133",
+    "name": "外接螢幕閃現後重新闔蓋恢復撐住",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh"
+    ],
+    "description": "依 §11.2 改驗舊設定遷移／舊撐住路徑不可進入；掛鉤待施工，pending 不算通過。"
+  },
+  {
+    "id": "C134",
+    "name": "agy 中斷錯誤可見且總指揮 send --wait 不會誤報成功",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/AgyBridge.swift",
+      "Sources/Workbench/AgyNet.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/CommanderStuck.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/BrowserServer.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C130",
+    "name": "本機模型截斷工具呼叫不執行",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/LocalBridge.swift",
+      "Sources/Workbench/main.swift",
+      "Resources/chat/chat.js",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C131",
+    "name": "Agy 與本機模型錯誤分類退避重試",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/RetryPolicy.swift",
+      "Sources/Workbench/AgyBridge.swift",
+      "Sources/Workbench/LocalBridge.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Resources/chat/chat.js",
+      "Sources/Workbench/main.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C132",
+    "name": "本機工具回合間插話與 Agy 排隊提示",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/LocalBridge.swift",
+      "Sources/Workbench/AgyBridge.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Resources/chat/chat.js",
+      "Sources/Workbench/main.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C136",
+    "name": "關聯圖穩定：同區新增 15 個聊天室不重疊、全在可視範圍、切回不炸開",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C137",
+    "name": "關聯圖工作分配方向、階段、滑過資訊卡與區長標示",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/Groups.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C140",
+    "name": "--test-screen：所有視窗第一次顯示前就在 iPad，從不和主螢幕重疊",
+    "runner": "native.sh",
+    "serial": true,
+    "files": [
+      "Sources/Workbench/TestScreen.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/main.swift",
+      "scripts/exam/screen-watch.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C141",
+    "name": "用量面板瀑布流與 Codex 免費額度池自適應",
+    "runner": "native.sh",
+    "description": "完整頁 frame 次序為 cc → Gemini（agy）→ Codex → Copilot，且不再有獨立 pool:claudeAgy frame；驗證 3／5 個免費帳號與 3→2 欄瀑布流。usage-full-layout probe 只輸出 frame／尺寸資料，沒有卡片文字行，因此不驗 Gemini 卡內 Claude／GPT（agy）小標文字。",
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/ModelPopover.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C142",
+    "name": "免費池用量卡依鑰匙圈存在狀態並讀取共用用量檔",
+    "runner": "native.sh",
+    "serial": true,
+    "files": [
+      "Sources/Workbench/ExtraKeyPools.swift",
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/dev/cases.json",
+      "scripts/exam/native.sh",
+      "scripts/exam/logic.mjs"
+    ]
+  },
+  {
+    "id": "C150",
+    "name": "總指揮 send --wait 忙碌聊天室排隊與逾時計時",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/agy-queue-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C151",
+    "name": "agy 一般錯誤保留排隊訊息且不重啟",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/AgyBridge.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/agy-queue-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C152",
+    "name": "agy 重試等待期間插話仍依序處理",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/AgyBridge.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/agy-queue-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C153",
+    "name": "子聊天室錯誤通知不外洩金鑰",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/CommanderStuck.swift",
+      "Sources/Workbench/AgyBridge.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C154",
+    "name": "關聯圖狀態變更保留手動視角並避免節點大幅跳動",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/archive_readme_privacy.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C155",
+    "name": "關聯圖區長併入區中心節點並可還原",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/Groups.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C156",
+    "name": "agy 用量卡平均額度並逐帳號顯示窗口與回補時間",
+    "description": "每次執行以同一個 fixtureNow 動態產生同日、明天與更遠日期的相對 resetAt；以該時刻逐列比對 summary 與每個帳號的精確回補文字，不依賴測試當下時刻。另以純函式邊界自測涵蓋 00:00、04:00、18:00、23:59。",
+    "runner": "native.sh",
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/c156-reset-time.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C157",
+    "name": "測試實例沒有假 agy 時不啟動正式用量查詢",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 360000,
+    "files": [
+      "Sources/Workbench/AgyBridge.swift",
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C170",
+    "name": "Git 分頁列出相關 repo、分組 worktree 並保留單 repo 檢視",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/git-related-fixture.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C171",
+    "name": "封存 README 預設本機優先並允許 Hydrogen fallback，關閉可停用",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "Sources/Workbench/Archive.swift",
+      "Sources/Workbench/ArchiveReadme.swift",
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/archive_readme_privacy.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C172",
+    "name": "區長收到完成通知並限制施工聊天室回報範圍",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/CommanderStuck.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/commander-flow-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C173",
+    "name": "send --steer 依引擎支援度不中斷插話或排隊",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/CodexBridge.swift",
+      "Sources/Workbench/LocalBridge.swift",
+      "Sources/Workbench/CopilotBridge.swift",
+      "Sources/Workbench/AppleBridge.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/commander-flow-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C174",
+    "name": "卡住派工分階段處理、區長中斷權限與執行中指令保護",
+    "runner": "native.sh",
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/CommanderStuck.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/Activity.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C175",
+    "name": "看板審查預設、Git觸發排除、ERROR與退回交付",
+    "description": "退回送達只驗 status 回報的收件人與內容，不宣稱實際送達。使用者驗收只驗不進 reviewing、未送審。",
+    "runner": "review-probe.py",
+    "timeout": 120000,
+    "files": [
+      "scripts/codenv-todo",
+      "scripts/exam/review-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C176",
+    "name": "派工 worktree 建立、重用與不合併預檢",
+    "description": "隔離 repo 驗證衝突檔、乾淨可合併、未提交修改、既有 worktree 重用及既有 Claude 拒絕保護；main、HEAD、主 worktree 與 transcript 均不得改變。只做 merge-check，不執行合併。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/CommanderWorktree.swift",
+      "Sources/Workbench/BrowserServer.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/codenv-todo",
+      "scripts/exam/native.sh",
+      "scripts/exam/commander-worktree-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C177",
+    "name": "主視窗內浮動終端機視窗數、位置與 frame 保護",
+    "description": "以 --float-view-probe 驗證浮動 view 不新增 NSWindow、位置讀回、最大化／還原及主視窗縮小後可視範圍；以暫時 NSArgumentDomain 注入舊 floatingTerminal.normalFrame 資料確認啟動不崩潰。要求 probe 有獨立驗證放開滑鼠才存的時序欄位；缺少該證據即判失敗。不考拖曳效能量測或使用者驗收。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/FloatingTerminal.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/float-view-probe.py",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C178",
+    "name": "封存時過濾成對與未成對 private 標籤",
+    "description": "用 archive-readme-probe 的假聊天室同時驗證 modelInput 與 README 都只含略過標記、不含私人段落；未成對標籤自開頭至訊息結尾視為私人；原始紀錄不變。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/rc0700g-probe.py",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C179",
+    "name": "封存摘要依 Claude、Codex、agy 引擎選路由",
+    "description": "Codex 預期使用 -m group/codex-free；agy 與 Claude 的 Hydrogen 路由預期使用 gemini-4-hydrogen-low；關閉 archiveSummaryUseAgy 後不呼叫 agy 並仍產生 README。全程只用假程式。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/rc0700g-probe.py",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C180",
+    "name": "免費池鑰匙讀取只走假 security 並遮蔽值",
+    "description": "--usage-keychain-probe 必須明確帶 --security-bin 指向本題假腳本；驗證 codenv-test- 前綴、假值讀取、5 秒逾時視為未設定、SecItemCopyMatching 計數為 0、輸出不含值。測試完全不存取任何真鑰匙圈或執行真 security。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/rc0700g-probe.py",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C181",
+    "name": "結束確認清單依引擎顯示工作中名稱",
+    "description": "以 --quit-summary-probe 建立一個工作中的 Claude 與一個工作中的假 Codex 聊天室，驗證結束確認清單分別包含『Claude 回答中』與『Codex 回答中』；不啟動真 Claude／Codex CLI。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/rc0700g-probe.py",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C182",
+    "name": "Codex 免費池 alias 排序與信箱遮罩",
+    "description": "依 probe free-row 驗證 alias free1 至 free5 順序、無 alias 帳號只顯示 example.test 遮罩信箱，完整信箱不可出現在輸出；不呼叫 magpie。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/rc0700g-probe.py",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C183",
+    "name": "KeyGuard 排除 darkreader 雜湊、學習弱特徵並保護強規則",
+    "description": "用 KeyGuard probe 驗證 darkreader 的 32 位十六進位弱雜湊不警告；同一 data-hash 前文特徵兩次按『不是金鑰』各成功 allow／寫 false-positive 紀錄後，第三次弱命中被抑制並另記一筆，刪除學習後恢復警告。sk-、AIza、gsk_、nvapi-、AKIA、JWT 在一般文字、darkreader meta、已學弱特徵、精確 allow、強規則 notAKey 與混合附件都須警告。學習檔只在暫存 state-dir 且不含命中原文；不讀寫鑰匙圈。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/keyguard-0700j-probe.py",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C184",
+    "name": "07-21 本機模型預設、假 HF 快取退路與封存摘要路由",
+    "description": "只用假的 HF 快取驗 Bolt-E4B 優先、Qwen3.5-4B fallback、空快取的 Hydrogen／queued 路由；selection probe 不啟動 MLX 或 agy，清楚驗證 mlxServerStarted=false 與假 agy 零呼叫。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/local-model-0700m-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C185",
+    "name": "07-16／07-17 關聯圖派工收箭頭與長區名標籤",
+    "description": "以 graph-op 的 dispatch-fixture、state、dispatch-fixture:old、long-label-fixture 與 probe 驗證總指揮／區長派工箭頭生命週期、錯誤與逾 24 小時收掉，以及長區名標籤框和省略號。全程使用隔離 state-dir 與假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/graph-0700i-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C186",
+    "name": "07-22 引擎回報失敗誤報：中途 error、stop、真失敗",
+    "description": "terminal-turn-probe 三情境：(a) 中途 error 後完成不通知失敗；(b) stop 通知「已停止」不通知失敗；(c) 真錯誤結束只通知失敗一次。隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700n-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C187",
+    "name": "07-24 開闔蓋通知去重",
+    "description": "lid-notice-dedupe-probe：兩聊天室各連續兩次開蓋／闔蓋（間隔 <1 秒）都只收到一則，windowSeconds=5。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700n-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C188",
+    "name": "07-26「!」指令完成後自動交給模型",
+    "description": "假 Claude 送 `! echo hi; exit 3`：只一則含 hi 與結束碼 3 的 user 訊息、一次回覆；超長輸出頭尾保留並附完整輸出存檔路徑。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700n-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C190",
+    "name": "07-23 bypassPermissions 的 Codex 聊天室改工作區外檔不跳核准、預設權限照舊會問",
+    "description": "以 --codex-outside-edit-probe 驗 bypass：thread／turn 兩層 never＋完全存取、核准卡 0、外部檔寫入；預設權限：untrusted＋workspace-write、核准卡 1、外部檔未寫入。全程隔離 state-dir、假 agy、假 codex。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/codex-0700p-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C191",
+    "name": "07-23 codenv-todo new 對 codex 聊天室：沒給 --dir 提醒、給 --dir 則 cwd 就是它",
+    "description": "在測試實例建總指揮後，用 codenv-todo new --engine codex 各建兩個聊天室（有／無 --dir），驗輸出提醒、team 顯示的專案路徑，以及假 app-server 實際收到的 thread/start cwd。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/codex-0700p-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C192",
+    "name": "07-25 stop 對已封存且工作中的 Codex 聊天室：程序結束、仍封存",
+    "description": "以 --commander-stop-archived-probe 驗封存後 stop 成功、程序（含獨立檢查 pid）已結束、狀態待命、仍封存；idleAfterStop 最多輪詢 5 秒。假 app-server 收到 turn/interrupt 會回 interrupted 並結束。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/codex-0700p-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C193",
+    "name": "07-25 stop 對已封存且不理 interrupt 的卡住程序：仍要停掉",
+    "description": "同 C192，但假 app-server 完全不回應 turn/interrupt（對應原 bug 回報『最後只能 SIGTERM』）；stop 後輪詢最多 10 秒，程序消失即通過、10 秒仍活著才失敗；stopOK 與仍封存必須成立。「10 秒」是出題員依一般 TERM→KILL 升級習慣訂的，規格沒給數字，待副把手／codenv 確認。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/codex-0700p-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C194",
+    "name": "07-28（a）回合結束後背景工作仍在跑：只有「完成」＋「背景工作 1 件」",
+    "description": "假引擎 BG-A：回合立刻結束，背景工作 1 件、背景子代理在回合結束後仍吐事件；用 --chat-js 讀 DOM，驗證全程沒有「正在處理」、顯示背景工作 1 件淡色行、清單清空後淡色行消失。全程隔離 state-dir 與假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/bg-typing-0700u-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C195",
+    "name": "07-28（b）背景工作完成叫醒新回合：新的處理中與新回覆，結束後消失",
+    "description": "假引擎 BG-B：回合結束後背景工作完成並叫醒新一輪；用 --chat-js 讀 DOM，驗證叫醒前無「正在處理」、叫醒後出現處理中與新回覆區塊、新回合結束後處理中消失且不再出現。全程隔離 state-dir 與假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/bg-typing-0700u-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C198",
+    "name": "07-31 index 有無關檔 → 出版停下並列檔名",
+    "description": "暫存 clone 預先 git add 無關檔（新檔與既有檔）後跑 release.sh（CHECK_ONLY 與完整流程）：必須停下、列出檔名、不改版本／不 commit／不打 tag／不 push，且停在編譯與考卷之前。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/release-safety-0700v-probe.py",
+      "scripts/exam/dev/cases.json",
+      "release.sh"
+    ]
+  },
+  {
+    "id": "C199",
+    "name": "07-31 乾淨 index 且在 main → 出版檢查通過",
+    "description": "暫存 clone 在 main、index 乾淨或只有 Info.plist 時 CHECK_ONLY 通過且無任何改動；工作區未 add 的修改不擋（推論）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/release-safety-0700v-probe.py",
+      "scripts/exam/dev/cases.json",
+      "release.sh"
+    ]
+  },
+  {
+    "id": "C200",
+    "name": "07-31 非 main 分支 → 出版停下",
+    "description": "feature 分支、名稱含 main 的分支、detached HEAD 皆停下，不 commit／不打 tag／不 push；回到 main 通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/release-safety-0700v-probe.py",
+      "scripts/exam/dev/cases.json",
+      "release.sh"
+    ]
+  },
+  {
+    "id": "C201",
+    "name": "07-31 版本 commit 只含 Info.plist、CodenvSourceDir 不是暫存副本",
+    "description": "暫存 clone（替身 build／exam、假 gh／hdiutil）跑完整 release：版本 commit 只含 Info.plist，工作區其他修改不被帶入；出版用 build 的 CODENV_SOURCE_DIR 為空或正式原始碼路徑，不是 /tmp/codenv-release.*。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/release-safety-0700v-probe.py",
+      "scripts/exam/dev/cases.json",
+      "release.sh"
+    ]
+  },
+  {
+    "id": "C202",
+    "name": "07-31 tag 在考卷通過之後",
+    "description": "替身考卷失敗 → 無 tag、無 push、無 DMG；修好重跑同版本成功且考卷執行當下 tag 不存在；另以靜態檢查 release.sh 的指令順序（C204）補強。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/release-safety-0700v-probe.py",
+      "scripts/exam/dev/cases.json",
+      "release.sh"
+    ]
+  },
+  {
+    "id": "C203",
+    "name": "07-31 離線模式 SKIP_BUILD 前後 HEAD／版本／tag 不變",
+    "description": "CODENV_RELEASE_SKIP_BUILD=1（及別名 TEST_ONLY，推論）前後 HEAD、Info.plist 版本、tag、origin、index、工作區、worktree 數都不變；考卷失敗時同樣不變。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/release-safety-0700v-probe.py",
+      "scripts/exam/dev/cases.json",
+      "release.sh"
+    ]
+  },
+  {
+    "id": "C204",
+    "name": "07-31 release.sh 指令順序靜態檢查",
+    "description": "tag 指令在考卷之後、git commit 皆帶 --only Info.plist、沒有 git add -A；動態版本見 C201／C202。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 60000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/release-safety-0700v-probe.py",
+      "scripts/exam/dev/cases.json",
+      "release.sh"
+    ]
+  },
+  {
+    "id": "C205",
+    "name": "07-31 build.sh 的 CODENV_SOURCE_DIR 介面",
+    "description": "真的用 build.sh 編兩次（CODENV_SOURCE_DIR 設空字串、設路徑），檢查 App 的 CodenvSourceDir 為空／該路徑且不是 /tmp 路徑。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 900000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/release-safety-0700v-probe.py",
+      "scripts/exam/dev/cases.json",
+      "release.sh",
+      "build.sh"
+    ]
+  },
+  {
+    "id": "C212",
+    "name": "07-19 強金鑰在六種前後文與已學特徵後仍警告",
+    "description": "以 KeyGuard probe 驗證 sk-、sk-proj-、AIza、gsk_、nvapi-、AKIA、JWT、私鑰各自放進『key: 加句點』、data-hash／integrity 屬性值、darkreader 與一般 meta content、長弱字串緊接等前後文，在學習前與學到 data-hash=／integrity= 後都須警告（強規則不被較長弱規則候選吃掉）；弱規則對照組被抑制；probe 輸出與學習檔不含強金鑰原文。合成資料、隔離 state-dir、不碰鑰匙圈。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700s-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C213",
+    "name": "07-19 學習特徵白名單與舊檔過濾",
+    "description": "以 seedLearningLines 寫入舊式 key=／secret=／token=／foo= 與合法 integrity=／data-hash= 學習行：載入後非白名單特徵不採用、對應弱規則仍警告，合法特徵採用並抑制；十六進位 secret=<hex> 仍警告；已學特徵全在 meta name／integrity／data-hash 內。含一條標推論的現場 key= 按兩次不是金鑰仍不抑制。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700s-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C214",
+    "name": "07-19 不是金鑰學習紀錄不存前後 4 碼原文",
+    "description": "兩次『不是金鑰』（命中值頭尾 4 碼為辨識標記）後，學習檔與 probe 輸出不得含命中值前 4 碼、後 4 碼或中段原文，自報不含原文；紀錄有寫且只在暫存 state-dir。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700s-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C215",
+    "name": "07-8 浮動終端機拖曳／縮放中被收起、逾時保險與 shell 結束後狀態恢復",
+    "description": "以 --float-term drag-begin／resize-begin 搭配 hide 與 --dump-float 驗證 interacting、reportedDragging、watchdogArmed 恢復為 false、再 show 無殘留、滑鼠沒按著超過 2 秒由逾時保險結束（2 秒內不提前結束）、全程 NSApp.windows 不增加；第二實例在拖曳中結束測試實例自己的 shell 子程序，狀態同樣恢復。不模擬滑鼠。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700s-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C216",
+    "name": "07-19（推論）meta name 特徵可學習且不吃掉強金鑰",
+    "description": "對 <meta name=csrf-token content=64碼高熵> 按兩次『不是金鑰』，推論應學到 meta name=<名稱> 特徵、第三個同名弱命中不警告；同特徵下 content 內 sk- 仍警告。推論題：規格 07-19(c) 以 meta name=darkreader 為特徵例子，未明寫任意 meta 名稱。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700s-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C217",
+    "name": "07-14 用量金鑰：啟動不主動讀、security 呼叫形狀與逾時",
+    "description": "以 --security-bin 假腳本驗證：不開用量面板閒置 15 秒假 security 零呼叫；用量金鑰探針的每次呼叫都精確為 find-generic-password -s <codenv-test-*> -w、secItemCopyMatchingCalls=0、5 秒逾時當未設定、不印出值。不執行真 security、不碰鑰匙圈。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700s-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C218",
+    "name": "07-3 沒有可審查 diff 時明確提示並記備註",
+    "description": "暫存 git repo／非 git 資料夾／分支已 commit 無基準／main 無變更四種情境；沒 diff 不得悄悄放行（須有提示與「未送審」備註），worktree 分支 commit 後仍送審。",
+    "runner": "board-handoff-0700r-probe.py",
+    "timeout": 120000,
+    "files": [
+      "scripts/codenv-todo",
+      "scripts/exam/board-handoff-0700r-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C219",
+    "name": "07-3 reviewing 超過 35 分鐘自動收回 doing",
+    "description": "偽造 reviewStartedAt：40／37 分鐘前被收回且不計退回次數，33／5 分鐘維持；goal ls 與 step 指令都會掃；收回後可重新送審。35 分鐘數值為施工方結果檔所述（推論）。",
+    "runner": "board-handoff-0700r-probe.py",
+    "timeout": 120000,
+    "files": [
+      "scripts/codenv-todo",
+      "scripts/exam/board-handoff-0700r-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C220",
+    "name": "07-3 使用者放行後 rejectCount 歸零",
+    "description": "退回 4 次 blocked 後改回進行中／待做，次數歸零、needsUser 解除，再退回一次從 1 起算；一般手動卡住不被歸零（推論）。",
+    "runner": "board-handoff-0700r-probe.py",
+    "timeout": 120000,
+    "files": [
+      "scripts/codenv-todo",
+      "scripts/exam/board-handoff-0700r-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C221",
+    "name": "07-3 審查 ERROR 連續 3 次升級給使用者",
+    "description": "ERROR 不計退回次數，連續第 3 次 blocked＋「要使用者：」且進 next 收件清單；REJECT 讓連續計數歸零；放行後重新計算。規格未寫，依施工方結果檔（推論）。",
+    "runner": "board-handoff-0700r-probe.py",
+    "timeout": 180000,
+    "files": [
+      "scripts/codenv-todo",
+      "scripts/exam/board-handoff-0700r-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C222",
+    "name": "handoff-prep 同日連續交接不卡死且檔名不同",
+    "description": "同一聊天室連續交接 6 次（假 agy、暫存 state）：每次 40 秒內結束、6 個不同檔、內容不互相覆蓋。",
+    "runner": "board-handoff-0700r-probe.py",
+    "timeout": 240000,
+    "files": [
+      "scripts/handoff-prep",
+      "scripts/exam/board-handoff-0700r-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C223",
+    "name": "handoff-prep 的 codex 帶 --skip-git-repo-check 且不在 git repo 執行",
+    "description": "假 codex 記錄參數與工作目錄：有 --skip-git-repo-check、group/codex-free（07-10）、不叫 agy、工作目錄不在任何 git repo 內。",
+    "runner": "board-handoff-0700r-probe.py",
+    "timeout": 120000,
+    "files": [
+      "scripts/handoff-prep",
+      "scripts/exam/board-handoff-0700r-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C224",
+    "name": "handoff-prep 送摘要模型前遮罩金鑰、信箱、電話",
+    "description": "11 種假金鑰／電話／信箱不得出現在送給假 agy 的輸入；恰 40 碼 git SHA 與一般中文保留。",
+    "runner": "board-handoff-0700r-probe.py",
+    "timeout": 120000,
+    "files": [
+      "scripts/handoff-prep",
+      "scripts/exam/board-handoff-0700r-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C225",
+    "name": "07-9 handoff-prep 的 <private> 段落略過",
+    "description": "成對與不成對 private 標籤不得送模型，換成略過標記，公開文字保留；不成對只吃到該則訊息結尾。",
+    "runner": "board-handoff-0700r-probe.py",
+    "timeout": 120000,
+    "files": [
+      "scripts/handoff-prep",
+      "scripts/exam/board-handoff-0700r-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C226",
+    "name": "07-29 只跑過「!」的新對話關格子／重開後不被當空草稿刪",
+    "description": "bang-sweep-probe close：新對話只跑一次 ! echo hi → sweepDrafts 後對話、bang 紀錄都還在；重開後仍在；對照組空草稿會被清（推論）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700aa-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C227",
+    "name": "07-29 壞掉的 bang 檔不刪",
+    "description": "bang-sweep-probe corrupt-close：bang 檔改壞後 close → unreadable=true、對話與壞檔都還在、內容仍是 {not json；重開後同樣。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700aa-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C228",
+    "name": "07-30 遮罩過的 jsonl 能確認未帶 uuid 的明文 outbox 紀錄",
+    "description": "outbox-probe seed-key：reconcile 後 outboxIDs=[]、輸入框空、outbox/<id>.json 不存在、outbox 資料夾無假金鑰明文；重開同樣。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700aa-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C229",
+    "name": "07-30「仍要送出」送達後不留明文、重開不塞回",
+    "description": "--keyguard-auto sendanyway ＋假 Claude：送達後 outbox 無明文；重開後輸入框空、outboxIDs=[]。假 security、codenv-test- 前綴。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700aa-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C230",
+    "name": "07-30 outbox 明文存活上限",
+    "description": "假引擎不回應：TTL 前保留明文（推論）；--outbox-ttl 2 後 recover → outbox 無假金鑰明文、遮罩版紀錄仍在（推論）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700aa-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C231",
+    "name": "07-30 --outbox-selftest 單元層",
+    "description": "--outbox-selftest 結束碼 0（含遮罩比對、確認後刪檔、TTL 前後的檢查）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700aa-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C236",
+    "name": "07-34 codenv-todo 暫存檔改 mkstemp：不用 mktemp、agy 被叫起來時 log 已存在且 0600",
+    "description": "靜態：scripts/codenv-todo 沒有 tempfile.mktemp(；行為：fetch_agy_usage 交給 agy 的 --log-file 在 agy 啟動當下已存在、是自己的一般檔、權限 0600，用完清掉。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700ab-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C237",
+    "name": "07-34 聊天室 Claude 的 --settings 檔不是 /tmp 共用固定檔",
+    "description": "假 claude 記下 --settings 參數：路徑不在 /tmp、/var/tmp 第一層；（推論）檔與所在資料夾是自己的、群組與其他人不能寫。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700ab-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C256",
+    "name": "07-35 Codex provider 不符：自動開新 thread 並帶交接",
+    "description": "--codex-recovery-probe 的 providerMismatch：舊 thread 備份、新 thread 存入、交接含最近對話與工作資料夾、聊天室提示。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700x-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C257",
+    "name": "07-36 一般接回失敗：不悄悄開新 thread、不覆寫對照",
+    "description": "ordinaryResumeFailure：保留舊對照、不另開 thread、明確提示失敗；並與 provider 不符情境區分。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700x-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C258",
+    "name": "07-36 暫時性接回失敗：只重試一次、不覆寫",
+    "description": "temporaryResumeFailure：重試一次、保留舊對照、不另開 thread。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700x-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C259",
+    "name": "07-39 重啟引擎：舊程序與子孫先結束才啟動新程序",
+    "description": "--process-tree-restart-probe 四旗標皆 true，並獨立查舊 root 已不存在、無 ppid=1 孤兒。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700x-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C260",
+    "name": "07-35/36 探針穩定性：重跑兩次輸出一致",
+    "description": "codex-recovery 探針連跑兩次輸出相同、三情境各自為布林欄位。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700x-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C266",
+    "name": "07-38 沙盒看板：小幅刪除（不超過 N 筆）仍可寫入",
+    "description": "N=5 為推論；不能誤擋正常刪除。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/scoped-board-0700y-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C267",
+    "name": "07-38 沙盒看板：寫入空看板（清空）必須被拒",
+    "description": "規格『不可清空看板』；被拒後磁碟上的 collab.json 仍有內容。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/scoped-board-0700y-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C268",
+    "name": "07-38 沙盒看板：一次刪超過 N 筆要拒絕",
+    "description": "N 規格沒給，施工取 5，為推論。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/scoped-board-0700y-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C269",
+    "name": "07-38 沙盒看板：元素變少不換 .bak，較完整備份不被覆蓋",
+    "description": "規格『元素變少不換 .bak』。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/scoped-board-0700y-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C270",
+    "name": "07-38 沙盒看板：.bak 保留最近 5 份",
+    "description": "規格『.bak 改成保留多份（例如最近 5 份）』；.bak～.bak.4 共五份、無 .bak.5（推論）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/scoped-board-0700y-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C246",
+    "name": "07-37 send 客戶端逾時：exit 1、附「訊息可能已送達，不要重送」；連不上不附",
+    "description": "假慢伺服器（8 秒）＋CODENV_SEND_CLIENT_TIMEOUT=2：exit 1、約 2 秒放棄、stderr 兩行含 codenv-todo last 提示、不印已送出；時限內回覆印已送出；socket 不存在或沒有 token／socket 檔時不附不要重送。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 60000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700ac-probe.py",
+      "scripts/exam/dev/cases.json",
+      "scripts/codenv-todo"
+    ]
+  },
+  {
+    "id": "C247",
+    "name": "07-37 send 預設客戶端逾時 45→90 秒",
+    "description": "不設環境變數、假伺服器 50 秒才回：exit 0、印已送出、約 50 秒、伺服器只收到一次請求（舊 45 秒會逾時失敗）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700ac-probe.py",
+      "scripts/exam/dev/cases.json",
+      "scripts/codenv-todo"
+    ]
+  },
+  {
+    "id": "C248",
+    "name": "07-41 Copilot／agy 的 auto 顯示成「全都不問」",
+    "description": "以 --dump-permission 驗四引擎×五模式文字：agy／copilot 的 auto 為「全都不問」、claude／codex 仍「自動」、其他模式不出現全都不問、bypass 維持「全部不問」、確認視窗句子含「選了會放行所有指令，也會放行寫入專案外的檔案」。隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700ac-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C249",
+    "name": "07-41 codenv-todo perm_display 把 agy／copilot 的 auto 顯示成全都不問",
+    "description": "直接載入 scripts/codenv-todo 呼叫 perm_display：agy／copilot＋auto 含全都不問、所有指令、專案外；claude／codex 與其他模式原樣回傳。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 60000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700ac-probe.py",
+      "scripts/exam/dev/cases.json",
+      "scripts/codenv-todo"
+    ]
+  },
+  {
+    "id": "C250",
+    "name": "07-40 BrowserServer 換行只掃新讀位元組",
+    "description": "對測試實例 browser socket：整塊與 3 位元組小塊結果一致、2 MB 請求分小塊仍可處理、無換行連灌 6 MB 時 App CPU 增加 < 3 秒、之後正常請求仍有回覆。隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0700ac-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C280",
+    "name": "11-13 介面字型預設值（依 11/13 更改：香菜碼等寬）",
+    "description": "--dump-interface-font 無儲存值：interfaceFont=CilantroCodeMono-Regular、resolvedAvailable=true、effectiveFamily 含 Cilantro、chatFont=interface。依 11/13 更改。隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-font-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C281",
+    "name": "11-13 介面字型空白＝系統字型",
+    "description": "偏好 interfaceFont 設空白：effectiveFamily=system。 隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-font-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C282",
+    "name": "11-13 介面字型不存在名稱回落系統",
+    "description": "偏好 interfaceFont 設不存在名稱：resolvedAvailable=false、effectiveFamily=system、實例不崩、仍有輸出。 隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-font-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C283",
+    "name": "11-13 舊 chatFont 值保持",
+    "description": "偏好 chatFont=terminal／system 各一次：輸出 chatFont 仍原值、不被預設 interface 覆寫；interfaceFont 仍為預設 CilantroCodeMono-Regular。 隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-font-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C284",
+    "name": "11-13 終端機字型不受介面字型影響",
+    "description": "--dump-theme 在預設、介面字型空白、不存在名稱三種下輸出一致，且不含 Cilantro。 隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-font-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C295",
+    "name": "11-13 介面字型舊預設 NiYu 遷移",
+    "description": "依 11/13 更改：-interfaceFont NiYu-Regular 啟動 → interfaceFont=CilantroCodeMono-Regular；-interfaceFont Menlo-Regular 不被改；空白仍＝系統字型。隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-font-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C285",
+    "name": "11-13 區長監督中斷沒生效（Claude）：自動停止旗標不殘留",
+    "description": "Claude 施工聊天室卡住、監督器送 interrupt 但引擎忽略；該輪約 50 秒後自然結束，總指揮要照常收到「完成」通知（不被當自動停止吞掉）。依 07規格 00.07.01 第 1 項 (b)；「不限 Codex」為推論。隔離 state-dir、假 Claude、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 270000,
+    "files": [
+      "Sources/Workbench/CommanderStuck.swift",
+      "Sources/Workbench/CommanderEngine.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C286",
+    "name": "11-13 區長監督中斷沒生效（Codex）：自動停止旗標逾時清掉",
+    "description": "假 Codex app-server 收到 turn/interrupt 只回應不停；自然完成後總指揮要照常收到「完成」通知。依 07規格 00.07.01 第 1 項 (b)。觸發 (a)（pane 取不到）無法從外部製造，見結果檔探針缺口。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 270000,
+    "files": [
+      "Sources/Workbench/CommanderStuck.swift",
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/CodexBridge.swift",
+      "scripts/exam/rc0702-fake-codex.py",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C287",
+    "name": "11-13 區長 stop 未判定卡住時被拒絕",
+    "description": "區內區長對工作中、未過卡住門檻的施工聊天室下 codenv-todo stop：拒絕（退出非零、有訊息）、對方沒收到 interrupt、仍在工作。依 07規格 00.07.01 第 2 項。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C288",
+    "name": "11-13 區長 stop 已判定卡住時放行",
+    "description": "同區施工聊天室被判定「可能卡住」後，區長 stop 放行（退出 0）且對方收到 interrupt，發生在監督器自己中斷之前。依 07規格 00.07.01 第 2 項。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/CommanderStuck.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C289",
+    "name": "11-13 Claude --steer 不中斷目前這輪",
+    "description": "施工聊天室在版面上、工作中被 steer 補充：沒有 interrupt／send_now、這輪自然完成、補充內容之後送達、只通知一次、回覆為排隊語意。依 07規格 00.07.01 第 3 項。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 200000,
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C290",
+    "name": "11-13 [Request interrupted by user] 不當出錯通知",
+    "description": "假 Claude 吐 [Request interrupted by user] 的 is_error result：總指揮不收到「出錯」通知。依 07規格 00.07.01 第 4 項（派工紀錄是否被誤清無探針可讀，列缺口）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C291",
+    "name": "11-13 同一輪多筆 steer 派工只通知一次",
+    "description": "一輪中先派工再兩筆 steer 補充：該派工者只收一則完成通知。依 07規格 00.07.01 第 5 項。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C292",
+    "name": "11-13 出錯摘要不沿用舊結論",
+    "description": "先一輪成功（摘要含回答）、再一輪出錯且沒有回答：出錯通知摘要不含舊結論。依 07規格 00.07.01 第 6 項。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/CommanderEngine.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C293",
+    "name": "11-13 設定頁卡住分鐘標籤不含「(p.」字面（靜態）",
+    "description": "靜態檢查測試包執行檔字串表與 i18n 資源沒有未插值的「(p.欄位名)」字面。依 07規格 00.07.01 第 7 項；設定頁畫面文字無探針可讀（缺口）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 60000,
+    "files": [
+      "Sources/Workbench/SettingsPages.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C294",
+    "name": "11-13 輕推只對非 Claude：Claude 卡住不收「還在嗎」",
+    "description": "Claude 施工聊天室卡住過了輕推與中斷門檻，沒收到輕推訊息（規格 07-2(1)「只對非 Claude 引擎」）。copilot／agy／apple 略過輕推是否刻意：無探針（缺口），依 00.07.01 第 8 項只做靜態／略過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/CommanderStuck.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0701-fake-claude.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C296",
+    "name": "11-13 期限已過後才到的 result 不能被吞（Codex，時序敏感）",
+    "description": "假 Codex 不理 interrupt，收到後 15.05～15.9 秒才自然完成（6 個聊天室密集取樣，落在自動停止旗標 15 秒期限剛過、監督器 tick 不一定跑過的窗口）；總指揮仍要收到完成通知。依 07規格 00.07.01 第 1 項。推論／時序敏感；Claude 版因監督器每 10 秒重送 interrupt（期限重疊）做不到，列探針缺口。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "Sources/Workbench/CommanderStuck.swift",
+      "Sources/Workbench/CommanderEngine.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0702-commander-probe.py",
+      "scripts/exam/rc0702-fake-codex.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C297",
+    "name": "11-13 總指揮正在跑聚合：下層工作中出現並標名字",
+    "description": "--dump-running-aggregate：總指揮下層工作中 → aggregated 含 [聊天室名字]、項目有 chat／kind／label、count 含聚合項。（rc-0704 C；狀態用 --graph-op 覆寫） 隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0704-agg-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C298",
+    "name": "11-13 總指揮正在跑聚合：閒置不出現",
+    "description": "下層轉 idle／sleep 後 aggregated 不含它，全閒置時 aggregated 空、count 0。 隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0704-agg-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C299",
+    "name": "11-13 設定字型選單：--dump-font-list 欄位與清單含香菜碼、逆雨",
+    "description": "--dump-font-list 輸出 interfaceCount／terminalCount／containsCilantro／containsNiYu／currentSelectionShown；預設目前值顯示。依 rc0705規格 §1。隔離 state-dir、假 agy。 另驗 systemOptionPresent、terminalAllMonospaced 為 true。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/FontSelectionPicker.swift",
+      "Sources/Workbench/Settings.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0705-font-menu-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C300",
+    "name": "11-13 設定字型選單：目前值沒裝或空白仍顯示",
+    "description": "-interfaceFont 設成沒裝的名稱、或空白（系統字型）時 currentSelectionShown=true，清單仍含香菜碼與逆雨，終端機清單不變。依 rc0705規格 §1。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/FontSelectionPicker.swift",
+      "Sources/Workbench/Settings.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0705-font-menu-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C301",
+    "name": "11-13 輸入框垂直置中：香菜碼／系統字型／更紗黑體",
+    "description": "--dump-input-metrics 三種字型下單行文字、placeholder、游標上下留白差 ≤1pt 且在框內；換字型 lineHeight 不同。Sarasa 找不到標 SKIP。依 rc0705規格 §2。 另以 container* 基準欄位驗（差 ≤2pt）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/FontSelectionPicker.swift",
+      "Sources/Workbench/Settings.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0705-font-menu-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C302",
+    "name": "11-13 輸入框多行增高與上限（真驗）",
+    "description": "--dump-input-metrics --input-lines N（1、3、30、60）：lineCount=N、boxHeight 單調增、3 行約多 2 行高、30 行起 capped=true 且不再增。依 rc0705規格 §3。隔離 state-dir、假 agy。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/FontSelectionPicker.swift",
+      "Sources/Workbench/Settings.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0705-font-menu-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C303",
+    "name": "11-13 字型偏好值格式不變（PostScript 名稱）",
+    "description": "--dump-interface-font 以 PostScript 名稱覆寫後原樣回讀、沒裝名稱不被改寫、預設為 PostScript 格式；選單選取寫入偏好值無探針，標缺口。依 rc0705規格 §1。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/FontSelectionPicker.swift",
+      "Sources/Workbench/Settings.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0705-font-menu-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C304",
+    "name": "11-13 輸入框附圖狀態垂直置中",
+    "description": "--dump-input-metrics 加 --input-attach-image：香菜碼／系統字型／更紗黑體，有附圖與沒附圖在可見容器（container* 欄位，並以 frame 重算）內單行文字／placeholder／游標上下留白差 ≤2pt；附圖後容器變高。使用者原始場景（文字貼下緣、上方空一行高）。依 rc0705規格 §3。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/FontSelectionPicker.swift",
+      "Sources/Workbench/Settings.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0705-font-menu-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C305",
+    "name": "11-14 進度句：最後一個工具呼叫",
+    "description": "jsonl 最後是 tool_use（Read file_path／Bash command／Edit file_path）→ kind=tool，line 含工具名與關鍵參數、不含較早的工具；tool_use 後接 tool_result 仍取該 tool_use。子代理檔名／taskID 配對與右欄顯示無探針，標缺口。依 rc0706規格 §行為 1。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/RunningActivityProgress.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0706-progress-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C306",
+    "name": "11-14 進度句：輸出檔最後一行與祕密遮罩",
+    "description": "純文字輸出檔 → kind=output、line 是最後一行（略過結尾空行）；Bearer／token=／password=／key=／sk- 於 output 與 tool(Bash) 兩路原值都不出現在 JSON，普通字保留。依 rc0706規格 §行為 3。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/RunningActivityProgress.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0706-progress-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C307",
+    "name": "11-14 進度句：長行截短與只讀檔尾",
+    "description": "長行與超長 Bash 指令 ≤ 80 字；> 64KB 純文字與 jsonl 取結尾、不含檔頭標記、探針 < 20 秒；單行 70KB 後接最後一行。依 rc0706規格 §行為 2。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/RunningActivityProgress.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0706-progress-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C308",
+    "name": "11-14 進度句：壞輸入不當掉",
+    "description": "不存在／空檔／亂碼／壞 jsonl／純空白行／資料夾 → 退出碼 0、不報錯，空與不存在與空白 kind=none。依 rc0706規格 §行為 6。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/RunningActivityProgress.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0706-progress-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C309",
+    "name": "11-14 進度句：5 分鐘 stale",
+    "description": "mtime 10 分鐘前 stale=true（staleMinutes 約 10）；剛寫與 3 分鐘前 stale=false；輸出檔 6 分鐘前 stale=true；純時間計算。畫面字樣與設定開關預設關閉標缺口。依 rc0706規格 §行為 8。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/RunningActivityProgress.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0706-progress-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C310",
+    "name": "11-14 進度句：不改動輸入檔",
+    "description": "探針前後輸入檔 hash／大小／mtime 相同、祕密原文仍在檔內、資料夾無新檔；不寫共用檔標缺口。依 rc0706規格 §行為 10。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/RunningActivityProgress.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0706-progress-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C311",
+    "name": "11-14 進度句：路徑白名單與 --progress-allow-root",
+    "description": "夾具在白名單外且沒給 --progress-allow-root 回 none；給別的目錄仍 none；給夾具目錄才讀得到；放行目錄內 symlink 指到外面不跟隨。沒 --state-dir 時旗標不生效標缺口（讀碼）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/RunningActivityProgress.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/rc0706-progress-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C312",
+    "name": "闔蓋多格中斷、佇列回報與醒著保持",
+    "description": "SimLidEnv 合成 Claude／Codex／agy／Copilot、等待權限、idle 背景工作與一名 team 成員；保留中斷、佇列／send --wait 回報、Codex turnPending／starting／steering UUID 去重、nextMessageStarted=false、PID 群組隔離及 closeWindowSends 為空。依 §3.2／§3.4，close→14 秒內 open 必須保持 awakeClosed：預擋成功、開蓋前 sleepNow 為空、只在 open 解除；開蓋後一般已終止前景格各續送一次，team 成員不各自續送而由總指揮收含排隊原文的一則彙總。修前立即 sleepNow 會使 awakeClosed 斷言紅；紅燈建議：恢復舊的 close 後睡眠。多格續送／彙總以 C386／C400 覆蓋。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C313",
+    "name": "本機模型例外與舊設定遷移",
+    "description": "依 §11.2：本機模型例外仍保留；只帶舊 -lidKeepWorking YES 時遷移成 lidKeepWorking=false、lidInterruptOnClose=true，舊撐住／舊 stop-resume 路徑不進入。修前舊模式仍可進入時紅。掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C314",
+    "name": "插電外接與低電量仍闔蓋中斷",
+    "description": "插電＋外接情境仍需中斷、預擋並在 30 分鐘前開蓋時保持醒著且自動繼續；未插電 18% 情境仍中斷、解除預擋並在開蓋前睡眠，睡過後只通知、不續送。以 §3.2–3.5 取代兩情境一律 close+10 秒睡眠：修前插電外接會過早 sleepNow 而紅；紅燈建議：恢復中斷後立即睡眠。精確低電量門檻與 30 分鐘外接睡眠另由 C383／C394 驗證。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C315",
+    "name": "team 闔蓋中斷彙總與總指揮缺席回退",
+    "description": "依 §11.1，總指揮 idle 時兩位 team 成員不各自續送，總指揮只收到一則含兩位成員與排隊原文的續送彙總；總指揮缺席或封存時維持每位成員各收一則通知且不自動續送。修前舊通知路徑會讓 resumeSends／notifications 的新契約不符而紅；紅燈建議：恢復逐成員續送或多送一則舊通知。彙總及不可用回退分別由 C400／C401 覆蓋；本題保留雙成員與通知回退的整合路徑。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C316",
+    "name": "開蓋續送與睡過通知、封存排除",
+    "description": "正常開蓋 2.5 秒尚無續送、3.5 秒後一般聊天室恰一次以 source=闔蓋繼續 的自動訊息，保留排隊原文及 outbox 讀取失敗警語；依 §3.3、§9.8 不要求繼續訊息列背景指令。已封存聊天室不收通知／續送。低電量觸發 App sleepNow、jump=12 後開蓋須恰一則 late=false 的『codenv 已結束以下聊天室的模型程序』通知且不續送；close-unobserved 仍無 terminate／sleepNow 並 late=true；兩輪情境第一輪續送、第二輪漏觀睡過通知，同刻事件依參數順序。修前沒有正常續送、會在闔蓋後立即 sleepNow；紅燈建議：恢復一般開蓋通知或取消 auto-resume。消息內容／封存篩選另由 C386／C387／C388／C397／C402 覆蓋。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C317",
+    "name": "快速重闔、不可終止程序與無工作情境",
+    "description": "保留 3 秒內重闔取消續送、空 sessions 預擋成功／失敗分支及只闔蓋不送訊息；killable=true ignoreTerm 仍須在 closeAt+10～11.5 秒送 SIGKILL 並回收，開蓋續送；killable=false 同一期限仍須回報訊號未送達、輸出晚於 closeAt+12 秒且程序仍存活，不得續送該未終止格。該未終止且未睡過聊天室的開蓋提示屬規格缺口、待決，目前保留不送舊通知的暫定斷言，不視為最終契約。兩種有工作情境在 30 分鐘前開蓋時都不得 sleepNow，僅開蓋才解除預擋。修前舊流程在強殺後立即解除預擋／sleepNow，會使 awakeClosed 與開蓋時解除斷言紅；紅燈建議：恢復 close 後 10 秒時立即 sleepNow。無工作回歸分支由 C381／C395 覆蓋。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C318",
+    "name": "舊闔蓋設定遷移與選項移除",
+    "description": "依 §11.2：舊 KeepWorking true 遷移至新模式、設定頁移除 lidKeepWorking／lidExternalIdleSleep／lidResumeNotifyEnabled 舊選項；新預設及明確 lidInterruptOnClose=false 的遷移結果需正確。修前仍能選舊模式或看到舊選項時紅。掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C319",
+    "name": "沒有闔蓋事件的顯示狀態變更不觸發中斷",
+    "description": "沒有 close 事件時以 display=0、screenoff、idlesleep 驗沒有 terminate、通知或 sleepNow（screenoff／idlesleep 須由 nonLidSleepEvents 記錄）。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C321",
+    "name": "輸入框注音 baselineOffset：跨行、刪回與 corrupt 自我修正",
+    "description": "隔離 zhuyin-baseline probe 驗單行、多行、組字跨行、unmark、刪回單行與延後修復。綠燈：單行 visualLineCount=1 且 runs offset 為 null/0；多行 visualLineCount=2、inputBaselineOffset 非零且每個 run 都相同；組字 mark 跨至少 2 個視覺行時 inputBaselineOffset 與所有 runs 都為 null/0；一般 mark→unmark 結束組字，不要求 EventLog。組字中 corrupt 對 UTF-16 range [4,2] 注入 offset=13，corrupt 快照須保持 hasMarkedText=true、baselineMismatchInjected=true、awaitingUnmark=true，並由 intentionallyCorruptSnapshots 精確標記；rawAllSnapshotsUniform=false，但排除該筆後 allRunsUniform=true。緊接 unmark 後，compositionRepair 須有 repairWasNeeded=true、wasComposing=true、afterRunsMatchInputBaseline=true，afterOffsets 全等於 inputBaselineOffset；EventLog 檔案存在且在隔離 state-dir，eventLogWritten=true、eventLogTextFree=true、eventLogContainsText=false，且讀回項目為「輸入框」類別自我修正，僅含段數、offset、行數、wasComposing=true，不含文字。unmark 後所有 runs 統一成 centered inputBaselineOffset；刪回單行後 runs 回 null/0。c24d594 基線在此組字中 corrupt→unmark 情境必須為紅。斷言不輸出或比對輸入文字；輸入、輸出、EventLog 與 state-dir 均限每次新建的暫存資料，無正式資料或模型請求。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/zhuyin-baseline-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C340",
+    "name": "考卷結束清除本輪測試偏好 plist",
+    "description": "以暫存假 Preferences 驗證兩種精確命名的新 plist 清除、起點前檔案與其他名稱保留、符號連結不跟刪、拒絕把 Preferences 當 session 目錄，以及結束數量超過基準時印錯誤並回傳失敗。不啟動 App、不碰正式 Preferences。",
+    "runner": "prefs-sweep-selftest.py",
+    "timeout": 30000,
+    "files": [
+      "scripts/exam.sh",
+      "scripts/exam/prefs-sweep",
+      "scripts/exam/prefs-sweep-selftest.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C341",
+    "name": "長輪詢但沒有睡眠不誤報闔蓋補送通知",
+    "description": "Claude 工作中、蓋子開啟，執行 0.5:jumpnosleep=30；notifications 為空且 notice 不存在，codenv-lid.log 恰有一行以「輪詢間隔 X 秒但系統沒睡過」開頭的診斷日誌，不依賴括號內補充文字。紅燈做法：在 main 3bf7ca6 複本用 0.5:jump=30 模擬長間隔但沒有真實睡眠證據；舊版只看輪詢間隔，會誤送通知。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/main.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C342",
+    "name": "真實睡眠證據仍送闔蓋補送通知",
+    "description": "Claude 工作中、蓋子開啟，執行 0.5:jump=30；睡眠證據改變且間隔超過 wakeGap 時，仍恰送一則含『闔蓋時來不及完成中斷』的補送通知。紅燈說明：這是防止修法永久抑制通知的反向回歸護欄；main 3bf7ca6 基底預期原本會通過，無法在未修改基底上做紅燈，若錯誤修法把所有長間隔都抑制則本題會紅。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/main.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C343",
+    "name": "連續四次無睡眠長間隔不通知且日誌不洗版",
+    "description": "Claude 工作中、蓋子開啟，連續四次執行 jumpnosleep=12；四次合計 48 秒，小於 logEvery 的 60 秒節流週期，因此同一節流週期最多一行以「輪詢間隔 X 秒但系統沒睡過」開頭的診斷日誌；通知與 notice 均不存在，不依賴括號內補充文字。紅燈做法：在 main 3bf7ca6 複本將四次 jumpnosleep=12 換成四次 jump=12（舊基底沒有 jumpnosleep，jump 只撥時間、無真實睡眠證據）；舊版以長輪詢間隔誤判，至少會產生補送通知。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/main.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C344",
+    "name": "外接螢幕闔蓋無睡眠證據不套醒來寬限",
+    "description": "外接螢幕仍連接、闔蓋後執行 jumpnosleep=30；日誌恰有一行以「輪詢間隔 X 秒但系統沒睡過」開頭的診斷，但不得出現「剛從睡眠醒來，外接螢幕給」寬限，不依賴括號內補充文字。紅燈做法：在 main 3bf7ca6 複本以 jump=30 模擬長輪詢且無系統睡眠證據；舊版只看間隔，會誤走外接螢幕醒來寬限。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/main.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C346",
+    "name": "牆鐘向前校時不誤報闔蓋補送通知",
+    "description": "Claude 工作中且蓋子開啟，執行 0.5:clockfwd=30（只把牆鐘往前撥，兩個單調時鐘不動）；不得送「闔蓋時來不及完成中斷」通知，codenv-lid.log 不得出現「剛從睡眠醒來」。基底複本應失敗：舊版用牆鐘間隔，clockfwd 會誤送、clockback 會漏送。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/main.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C347",
+    "name": "睡眠後牆鐘回撥仍送恰一則補送通知",
+    "description": "Claude 工作中且蓋子開啟，於同一時間點依參數順序執行 0.5:jump=20（睡眠證據改變、牆鐘及含睡眠單調時鐘前進）與 0.5:clockback=30（只將牆鐘往回撥）；仍須恰送一則「闔蓋時來不及完成中斷」補送通知。基底複本應失敗：舊版用牆鐘間隔，clockfwd 會誤送、clockback 會漏送。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/main.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-interrupt-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C348",
+    "name": "Codex／agy 模型選單、強度清單與預設值",
+    "description": "驗 Codex 十個模型 id／顯示名的順序、各自 levels 與預設強度；驗 agy 新增 gemini-pro-orchestrator-g1-pro／Orchestrator (Argon) 與 gpt-oss-120b-medium／GPT-OSS 120B、兩者 levels 空且拉桿隱藏、七項中仍有五項既有選擇；並驗 Claude 拉桿不顯示未由該模型宣告的 ultra。舊版紅燈預期：兩個新增 agy id／顯示名缺席。此題 pending，待 TestHarness 掛鉤交付或確認符合契約；規格未列五個既有 agy 模型的精確 id／顯示名，故只驗仍有五個既有項目，不猜值。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/model-selection-0710-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C349",
+    "name": "模型選單 id 與 Codex／agy 實際送出 id 一致",
+    "description": "驗十個 Codex 選單 id 各自出現在 turn/start 的 model，支援的 high／ultra 原值送出；Luna 遇到舊存 ultra 不送 effort；兩個新 agy 模型啟動參數 --model 必須與所選 id 完全相同、不生成 high／low 變體；保留 Hydrogen high＋effort low → gemini-4-hydrogen-low。舊版紅燈預期：新增 agy 選項無法選取並送出指定 id。此題 pending，待 TestHarness 掛鉤交付或確認符合契約。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/model-selection-0710-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C350",
+    "name": "新模型 CLI 拒絕不支援的 effort",
+    "description": "使用 CLI 驗 Codex gpt-6-luna + ultra，以及兩個新 agy 模型各自傳 high／low：模型先被辨識，無效 effort 必須非零拒絕、不建聊天室且不啟動引擎。舊版紅燈預期：新增 agy id／能力資料未完整，不能在辨識新模型後證明 effort 被拒；此題 pending，待 TestHarness 掛鉤交付或確認符合契約。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/model-selection-0710-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C320",
+    "name": "按 / 不跳回輸入框：六種情境同步編輯旗標",
+    "description": "一支 slash-focus probe 分六組斷言。綠：removal.result=pass、before=true、after=false、removalClearedState/activeFieldSlashJumped/slashJumped/responderIsInput/firstCharPreserved=true、firstChar=x；appBlur.result=pass、before=true、after=false；pageReload.result=pass、before=true、after=false、reloadCompleted/reloadClearedState/slashJumped/firstCharPreserved=true、firstChar=x；chatSwitch.result=pass、before=true、afterSwitchAway=false、頁面仍編輯時 expectedAfterReturn/afterReturn/synchronizedAfterReturn=true、secondChatCreated/otherChatShown/originalChatRestored/switchAwayCompleted/switchBackCompleted=true；blurThenMutation.result=pass、before=true、documentHasFocusAfterBlur=false、mutationInserted=true、webEditingAfterMutation=false、slashJumped/responderIsInput/firstCharPreserved=true、firstChar=x；readonlyInput.result=pass、readOnlyFieldFocused=true、jsExpectedEditing/webEditingAfterReadOnlyFocus=false。舊行為紅：removal.after=true、removalClearedState/slashJumped/firstCharPreserved=false；appBlur.after=true；pageReload.after=true、slashJumped/firstCharPreserved=false；chatSwitch 頁面仍編輯時 expectedAfterReturn=true，但 afterReturn=false、synchronizedAfterReturn=false；blurThenMutation.webEditingAfterMutation=true、slashJumped/firstCharPreserved=false；readonlyInput.jsExpectedEditing/webEditingAfterReadOnlyFocus=true；受影響情境 result=fail。掛鉤只定義 readonlyInput，沒有獨立 disabled 欄位輸入／輸出欄位，因此 disabled 行為列為缺口不猜。聊天室草稿只留在每次新建的可丟棄 state-dir。探針不合成真實 / 鍵盤事件，事件監視器與輸入法仍需人工驗收。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Resources/chat/chat.js",
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/slash-focus-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C345",
+    "name": "按 / 不跳回輸入框：重載後接受新頁編輯回報（docId）",
+    "description": "docId 設計：探針情境先累積舊頁編輯回報（目標序號 >10）再重載同一聊天室。依派工指定的 pageReloadResync.webEditingAfterNewPageFocus=true、slashJumped=false、responderPreserved=true 驗證新頁回報被接受且焦點與輸入保留。舊行為紅燈步驟：在 d2ef312 基底複本只套用考題後跑 C345，預期舊序號門檻拒收新頁回報，webEditingAfterNewPageFocus=false、slashJumped=true，題目失敗。掛鉤文件目前未列新舊 docId／舊序號輸出欄位，無法直接斷言 ID 不同或舊序號大於 10；此欄位缺口已記錄於考題驗證輸出與結果檔。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Resources/chat/chat.js",
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/slash-focus-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C330",
+    "name": "0ca6d1 引用鍵 DOM、SVG、ARIA 與計算樣式",
+    "description": "使用隔離網頁題驗 assistant footer 複製鍵→引用鍵→完成狀態 DOM 順序；assistant 與使用者泡泡均為 button、aria-label/title=引用、初始 aria-pressed 正確，SVG viewBox=0 0 16 16、aria-hidden=true、fill:none、stroke-width=1.4、15×15px，且不含純文字 ❞；點擊後 aria-pressed、quoted 與引用 tray 增刪同步；計算樣式按鈕至少 32px、border 0、未引用背景透明、已引用文字 accent 且背景 accent-soft；驗 assistant 的 turn:hover／focus-within／quoted 顯示、鍵盤 focus-visible outline，及使用者泡泡預設 opacity 與 turn hover 復原。582c0f7 基線必紅：舊引用鍵是純文字 ❞，完成狀態前沒有 SVG，SVG 與 DOM 順序斷言必失敗。只用合成訊息，網頁題須明確設 EXAM_BROWSER=1 才執行。",
+    "runner": "browser.mjs",
+    "timeout": 90000,
+    "files": [
+      "Resources/chat/chat.js",
+      "Resources/chat/chat.css",
+      "Resources/chat/test.html",
+      "scripts/exam/browser.mjs",
+      "scripts/exam/scenarios.js",
+      "scripts/exam/run.mjs",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C351",
+    "name": "使用者換模型提示恰一次、同模型與還原不提示",
+    "description": "依追加規格 1–5 驗 Codex 同引擎換模型、跨引擎轉 Codex、agy／Copilot 閒置與忙碌換模型均恰一則「下一則訊息起改用 X（會重開）」；三引擎同模型與載入還原均零提示。修前預期 agy／Copilot 換模型缺提示，或還原誤發提示而紅；未實跑。掛鉤待交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/model-selection-0710-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C360",
+    "name": "休眠未完成燈號：中斷記錄標記與琥珀環",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C361",
+    "name": "休眠未完成燈號：使用者選取清除並存檔",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C362",
+    "name": "休眠未完成燈號：重新工作清除並存檔",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C363",
+    "name": "休眠未完成燈號：退出重開仍保留旗標",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C364",
+    "name": "休眠未完成燈號：長間隔無睡眠不誤標",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C365",
+    "name": "休眠未完成燈號：總指揮聚合子旗標與清除",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C366",
+    "name": "休眠未完成燈號：舊存檔缺欄位仍可讀",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C367",
+    "name": "休眠未完成燈號：關閉主動中斷不亮",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C368",
+    "name": "休眠未完成燈號：三處清單環與右側標示共存",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C369",
+    "name": "休眠未完成燈號：總指揮自己標記與優先序封存排除",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C370",
+    "name": "休眠未完成燈號：仍工作與僅背景記錄不設旗標",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C371",
+    "name": "休眠未完成燈號：啟動選取不清與同列點選清除",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C372",
+    "name": "休眠未完成燈號：彙總代收只標組員並過濾無效記錄",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C373",
+    "name": "休眠未完成燈號：Codable 往返與封存清除",
+    "description": "規格 §5／§8，詳 interrupted-indicator-contract.json。修前沒有 interruptedAt 專屬燈號與生命週期，新增功能的正向欄位預期失敗；負向情境是回歸保護，不宣稱基底必紅。掛鉤未交付，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Sidebar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/interrupted-indicator-probe.py",
+      "scripts/exam/interrupted-indicator-contract.json"
+    ]
+  },
+  {
+    "id": "C380",
+    "name": "闔蓋保持醒著：闔蓋中斷後保持醒著、風扇交回系統",
+    "description": "模擬：{\"lid\":[\"close\"],\"sessions\":[\"working-terminable\"],\"external\":false}；斷言：{\"state\":\"awakeClosed\",\"terminatedCount\":1,\"nosleepOn\":true,\"sleepNowCount\":0,\"setFanAutoCount\":1}。修前預期：舊闔蓋中斷流程會在清理後睡眠，沒有 awakeClosed 保持醒著。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C381",
+    "name": "闔蓋保持醒著：闔蓋時沒有工作交回系統睡眠",
+    "description": "模擬：{\"lid\":[\"close\"],\"sessions\":[],\"preheld\":true}；斷言：{\"state\":\"open\",\"nosleepOffCount\":1,\"sleepNowCount\":1}。修前預期：依 §11.3 這是回歸護欄：曾成功預擋、工作在闔蓋前結束時，應解除預擋並 sleepNow；不宣稱基底必紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C382",
+    "name": "闔蓋保持醒著：滿 30 分鐘單調計時後睡眠",
+    "description": "模擬：{\"lid\":[\"close\",\"continuous+1800\"],\"wallClockJumps\":[7200,-3600],\"sessions\":[\"working-terminable\"]}；斷言：{\"sleepNowCount\":1,\"sleptByAwakeClosed\":true,\"sleepNowElapsedSecondsFromAwakeClosedEntry\":1800}。修前預期：舊流程沒有 awakeClosed 的單調 30 分鐘等待；會較早睡，elapsed 時間斷言應紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C383",
+    "name": "闔蓋保持醒著：低於 20% 且未插電立刻睡",
+    "description": "模擬：{\"lid\":[\"close\"],\"sessions\":[\"working-terminable\"],\"battery\":19,\"onAC\":false}；斷言：{\"sleepNowCount\":1,\"sleepReason\":\"lowBattery\",\"sleepNowElapsedSecondsFromAwakeClosedEntry\":0}。修前預期：舊流程沒有規格新增的 awakeClosed 低電量分支；基底紅燈仍需以掛鉤實跑確認。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C384",
+    "name": "闔蓋保持醒著：低電量插電不立即睡",
+    "description": "模擬：{\"lid\":[\"close\"],\"sessions\":[\"working-terminable\"],\"battery\":10,\"onAC\":true}；斷言：{\"sleepNowCount\":0,\"state\":\"awakeClosed\"}。修前預期：舊流程不會保留 awakeClosed 至開蓋；正向 state=awakeClosed 斷言應紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C385",
+    "name": "闔蓋保持醒著：電量 20% 邊界不當低電量",
+    "description": "模擬：{\"lid\":[\"close\"],\"sessions\":[\"working-terminable\"],\"battery\":20,\"onAC\":false}；斷言：{\"sleepNowCount\":0,\"state\":\"awakeClosed\"}。修前預期：舊流程不會保留 awakeClosed 至開蓋；正向 state=awakeClosed 斷言應紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C386",
+    "name": "闔蓋保持醒著：開蓋自動繼續只送被中斷者一次",
+    "description": "模擬：{\"lid\":[\"close\",\"open<1800\"],\"sessions\":[\"terminated-foreground\",\"idle\"],\"queue\":[{\"session\":\"terminated-foreground\",\"text\":\"QUEUE_RESUME_TEXT\",\"image\":false}]}；斷言：{\"resumeById\":{\"terminated-foreground\":1,\"idle\":0},\"noticeById\":{\"terminated-foreground\":0},\"resumeContainsSafetyText\":true,\"resumeContainsOriginalQueueText\":true,\"queuePendingClearedAfterSuccess\":true}。修前預期：舊流程闔蓋後即睡，開蓋走補送通知而非本題要求的短時間自動繼續。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C387",
+    "name": "闔蓋保持醒著：工作中、封存或草稿聊天室略過繼續",
+    "description": "模擬：{\"lid\":[\"close\",\"open<1800\"],\"sessions\":[\"working\",\"archived\",\"draft\"]}；斷言：{\"resumeById\":{\"working\":0,\"archived\":0,\"draft\":0},\"amberById\":{\"draft\":true}}。修前預期：這是工作中／封存／草稿篩選回歸護欄；目前沒有已實跑的基底紅燈證據。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C388",
+    "name": "闔蓋保持醒著：30 分鐘睡過後開蓋只補送通知",
+    "description": "模擬：{\"lid\":[\"close\",\"continuous+1800\",\"open\"],\"sessions\":[\"working-terminable\"]}；斷言：{\"resumeCount\":0,\"noticeCount\":1,\"amberFlag\":true,\"sleepNowCount\":1,\"sleepNowElapsedSecondsFromAwakeClosedEntry\":1800}。修前預期：舊流程不會等滿 30 分鐘才睡；sleepNow 相對 awakeClosed 起點的時間斷言應紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C389",
+    "name": "闔蓋保持醒著：繼續送失敗改走通知並標記",
+    "description": "模擬：{\"lid\":[\"close\",\"open<1800\"],\"sessions\":[\"terminated-pane-send-fails\"]}；斷言：{\"resumeCount\":1,\"resumeSucceeded\":false,\"noticeCount\":1,\"amberFlag\":true}。修前預期：舊流程不會在短時間開蓋時嘗試自動繼續，缺少送失敗轉通知路徑。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C390",
+    "name": "闔蓋保持醒著：同週期 tick 重入及開蓋抖動不重複",
+    "description": "模擬：{\"lid\":[\"close\",\"tick\",\"tick\",\"open\",\"open\"],\"sessions\":[\"terminated-foreground\"]}；斷言：{\"resumeCount\":1,\"recordCount\":1}。修前預期：這是同週期 tick／開蓋抖動去重護欄；目前沒有已實跑的基底紅燈證據。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C391",
+    "name": "闔蓋保持醒著：不同闔蓋週期五秒內各送一次",
+    "description": "模擬：{\"lid\":[\"close\",\"open\",\"close\",\"open\"],\"gapBetweenCycles\":2,\"sessions\":[\"terminated-foreground\"]}；斷言：{\"resumeCount\":2,\"recordsByCycle\":[1,1]}。修前預期：5 秒內不同週期仍要各送一次；舊去重器可能吞掉第二次，需基底單題確認。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C392",
+    "name": "闔蓋保持醒著：遠端連線暫停計時、斷線後重計三十分鐘",
+    "description": "模擬：{\"lid\":[\"close\",\"remote=1\",\"continuous+2400\",\"remote=0\",\"continuous+1799\",\"continuous+1\"],\"sessions\":[\"working-terminable\"],\"remote\":[false,true,true,false,false,false]}；斷言：{\"sleepBeforeDisconnect\":false,\"sleepAfterRestarted30m\":true,\"awakeClosedSinceReset\":true}。修前預期：舊流程沒有遠端暫停與斷線重計 30 分鐘，會在連線期間照常到期。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C393",
+    "name": "闔蓋保持醒著：遠端期間低電量與過熱保護仍睡",
+    "description": "模擬：{\"scenarios\":[{\"id\":\"lowBatteryDuringRemote\",\"lid\":[\"close\",\"remote=1\"],\"sessions\":[\"working-terminable\"],\"battery\":10,\"onAC\":false},{\"id\":\"overheatDuringRemote\",\"lid\":[\"close\",\"remote=1\",\"temperature=95\",\"continuous+60\"],\"sessions\":[\"working-terminable\"],\"battery\":80,\"onAC\":false,\"temperatureSequence\":[95]}]}；斷言：{\"lowBatteryDuringRemote\":{\"sleepNowCount\":1,\"sleepReason\":\"lowBattery\",\"sleepNowElapsedSecondsFromAwakeClosedEntry\":0},\"overheatDuringRemote\":{\"sleepNowCount\":1,\"sleepReason\":\"overheat\",\"sleepNowElapsedSecondsFromAwakeClosedEntry\":60}}。修前預期：遠端不豁免低電量／過熱是安全回歸護欄；兩個獨立子情境的基底紅燈需實跑確認。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C394",
+    "name": "闔蓋保持醒著：外接螢幕闔蓋三十分鐘後睡",
+    "description": "模擬：{\"lid\":[\"close\",\"continuous+1800\"],\"external\":true,\"sessions\":[\"working-terminable\"]}；斷言：{\"terminatedCount\":1,\"sleepNowCount\":1,\"sleepNowElapsedSecondsFromAwakeClosedEntry\":1800}。修前預期：舊流程外接闔蓋會較早睡；本題要求相對 awakeClosed 起點滿 30 分鐘才睡。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C395",
+    "name": "闔蓋保持醒著：沒有工作不進 awakeClosed",
+    "description": "模擬：{\"lid\":[\"close\"],\"sessions\":[]}；斷言：{\"state\":\"systemDefault\",\"nosleepOnCount\":0,\"sleepNowCount\":0}。修前預期：依 §11.3 沒有工作且沒有預擋應交系統處理；這是回歸護欄，不宣稱基底必紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C396",
+    "name": "闔蓋保持醒著：過熱連續六十秒睡眠",
+    "description": "模擬：{\"lid\":[\"close\",\"temperature=95\",\"continuous+60\"],\"sessions\":[\"working-terminable\"],\"temperature\":95}；斷言：{\"sleepNowCount\":1,\"sleepReason\":\"overheat\",\"sleepNowElapsedSecondsFromAwakeClosedEntry\":60}。修前預期：若舊路徑沒有 awakeClosed 內的 95°C 連續 60 秒處理，睡眠原因／時間斷言會紅；需基底確認。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C397",
+    "name": "闔蓋保持醒著：短睡或 DarkWake 後開蓋不自動繼續",
+    "description": "模擬：{\"scenarios\":[{\"id\":\"shortSleep\",\"lid\":[\"close\",\"sleepEvidence<10\",\"open\"],\"sessions\":[\"terminated-foreground\"]},{\"id\":\"darkWake\",\"lid\":[\"close\",\"darkWake\",\"open\"],\"sessions\":[\"terminated-foreground\"]}]}；斷言：{\"shortSleep\":{\"resumeCount\":0,\"noticeCount\":1,\"amberFlag\":true},\"darkWake\":{\"resumeCount\":0,\"noticeCount\":1,\"amberFlag\":true}}。修前預期：這是短睡與 DarkWake 開蓋只通知、不續送的回歸護欄；目前沒有已實跑基底紅燈證據。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C398",
+    "name": "闔蓋保持醒著：十秒 draining 中開蓋等程序清理",
+    "description": "模擬：{\"lid\":[\"close\",\"open@5\",\"terminationCompletes@8\"],\"session\":\"ignoresTerm\"}；斷言：{\"resumeAt\":8,\"resumeBeforeTermination\":false,\"sleepNowCount\":0}。修前預期：舊開蓋路徑可能在終止程序收乾淨前就續送；resumeAt=8 且不早於 termination 是紅燈條件。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C399",
+    "name": "闔蓋保持醒著：開蓋三秒內重闔不混合週期記錄",
+    "description": "模擬：{\"lid\":[\"close(A)\",\"open@1\",\"close@2(B)\",\"open@5\"],\"sessions\":[\"A\",\"B\"],\"queue\":[{\"session\":\"A\",\"text\":\"QUEUE_CYCLE_A\"},{\"session\":\"B\",\"text\":\"QUEUE_CYCLE_B\"}]}；斷言：{\"recordsByCycle\":[{\"A\":1,\"B\":0},{\"A\":0,\"B\":1}],\"resumeById\":{\"A\":1,\"B\":1},\"queueContentPreservedByCycle\":{\"A\":true,\"B\":true}}。修前預期：舊週期合併若混合 A、B 記錄或排隊原文，週期與 queue 保留斷言會紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C400",
+    "name": "闔蓋保持醒著：team 成員彙總一則、總指揮本人合併",
+    "description": "模擬：{\"lid\":[\"close\",\"open\"],\"team\":[\"memberA\",\"memberB\"],\"commander\":\"chief\",\"sessions\":[\"memberA\",\"memberB\",\"chief\"]}；斷言：{\"commanderAggregateCount\":1,\"memberResumeCount\":0,\"commanderSelfResumeSeparateCount\":0,\"memberAmberFlags\":true,\"commanderSelfResumeIncludedInAggregate\":true}。修前預期：舊路徑不符合 §11.1 成員不續送、總指揮彙總一則及本人續送合併的定案。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C401",
+    "name": "闔蓋保持醒著：總指揮封存或無 pane 時成員不各自繼續",
+    "description": "模擬：{\"scenarios\":[{\"id\":\"commanderArchived\",\"lid\":[\"close\",\"open\"],\"commander\":{\"archived\":true,\"paneAvailable\":true},\"team\":[\"memberA\"],\"sessions\":[\"memberA\"],\"queue\":[{\"session\":\"memberA\",\"text\":\"QUEUE_ARCHIVED_COMMANDER_TEXT\"}]},{\"id\":\"commanderNoPane\",\"lid\":[\"close\",\"open\"],\"commander\":{\"archived\":false,\"paneAvailable\":false},\"team\":[\"memberA\"],\"sessions\":[\"memberA\"],\"queue\":[{\"session\":\"memberA\",\"text\":\"QUEUE_NO_PANE_COMMANDER_TEXT\"}]}]}；斷言：{\"commanderArchived\":{\"memberResumeCount\":0,\"memberNoticeCount\":1,\"memberAmberFlag\":true,\"memberNoticeContainsOriginalQueueText\":true,\"queueDeletedOnlyAfterNoticeSuccess\":true},\"commanderNoPane\":{\"memberResumeCount\":0,\"memberNoticeCount\":1,\"memberAmberFlag\":true,\"memberNoticeContainsOriginalQueueText\":true,\"queueDeletedOnlyAfterNoticeSuccess\":true}}。修前預期：舊路徑沒有總指揮封存及無 pane 兩種情況下轉通知、不續送成員的回退行為。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C402",
+    "name": "闔蓋保持醒著：排隊文字與圖片附件跨續送保留原文",
+    "description": "模擬：{\"queue\":[{\"session\":\"terminated-foreground\",\"text\":\"QUEUE_TEST_TEXT\",\"image\":true}],\"sessions\":[\"terminated-foreground\"],\"path\":\"resume-success\",\"outboxReadFails\":true}；斷言：{\"messageContainsOriginal\":true,\"imageMarker\":\"（含圖片附件）\",\"outboxReadFailed\":true,\"resumeWarning\":\"寄件匣讀取失敗，可能有沒送出的訊息\",\"queueContentPreservedInResumeText\":true,\"queuePendingClearedAfterSuccess\":true}。修前預期：舊路徑若漏掉 outboxReadFailed 警語、排隊原文或圖片標記，精確字串斷言會紅。 掛鉤會只保留本題 layout，使這個獨立聊天室不會被預設總指揮視為成員；待隔離 runtime 驗證。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/TestHarnessAwakeRescue.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C403",
+    "name": "闔蓋保持醒著：草稿略過時排隊訊息仍保留",
+    "description": "模擬：{\"queue\":[{\"session\":\"terminated-draft-with-draft\",\"text\":\"QUEUE_DRAFT_TEXT\",\"image\":true}],\"sessions\":[\"terminated-draft-with-draft\"],\"draft\":\"DRAFT_TEST\",\"path\":\"draft-skip\"}；斷言：{\"resumeCount\":0,\"amberFlag\":true,\"queueStillInOutboxOrRescue\":true}。修前預期：舊路徑若草稿略過時清掉寄件匣內容，queuePreserved 會紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C404",
+    "name": "闔蓋保持醒著：送失敗與通知失敗時排隊訊息持久保留",
+    "description": "模擬：{\"queue\":[{\"session\":\"terminated-foreground\",\"text\":\"QUEUE_FAIL_TEXT\",\"image\":true}],\"sessions\":[\"terminated-foreground\"],\"path\":\"resume-and-notice-fail\"}；斷言：{\"rescueRecordPresent\":true,\"queueDeleted\":false,\"queueStillInRescue\":true}。修前預期：舊路徑若續送與通知都失敗仍刪除救援資料，rescueRecordPresent／queueDeleted 斷言會紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C405",
+    "name": "闔蓋保持醒著：已轉 working 略過時排隊訊息不丟",
+    "description": "模擬：{\"queue\":[{\"session\":\"already-working\",\"text\":\"QUEUE_WORKING_TEXT\"}],\"sessions\":[\"already-working\"],\"path\":\"already-working\"}；斷言：{\"resumeCount\":0,\"queueStillInOutbox\":true}。修前預期：舊路徑若對已轉 working 的聊天室清掉排隊原文，queuePreserved 會紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C406",
+    "name": "闔蓋保持醒著：總指揮彙總包含成員排隊訊息與圖片標記",
+    "description": "模擬：{\"queue\":[{\"session\":\"memberA\",\"member\":\"memberA\",\"text\":\"QUEUE_TEAM_TEXT\",\"image\":true}],\"team\":[\"memberA\"],\"sessions\":[\"memberA\"],\"path\":\"commander-aggregate\"}；斷言：{\"aggregateContainsOriginal\":true,\"imageMarker\":\"（含圖片附件）\",\"queuePreserved\":true,\"queuePendingClearedAfterSuccess\":true}。修前預期：舊路徑若總指揮彙總漏成員排隊原文或圖片標記，內容斷言會紅。 fixture 僅保留本題 layout，避免落入測試 state 的預設總指揮；C406 仍由自己的總指揮 layout 與成員 pane 彙總。待隔離 runtime 驗證。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/TestHarnessAwakeRescue.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C407",
+    "name": "闔蓋保持醒著：awakeClosed 寫 rescue 後退出再開 App 補送",
+    "description": "模擬：{\"phases\":[\"prepare-write-rescue\",\"terminate-process\",\"restart-same-state-dir\",\"resume-notice\"],\"queue\":[{\"text\":\"QUEUE_RESTART_TEXT\",\"session\":\"terminated-foreground\"}],\"lid\":[\"close\"],\"sessions\":[\"terminated-foreground\"]}；斷言：{\"rescueSurvivesRestart\":true,\"resumeCount\":0,\"noticeCount\":1,\"noticeContainsOriginalQueueText\":true,\"queueDeletedOnlyAfterNoticeSuccess\":true}。修前預期：舊流程沒有跨 App 程序重開的 rescue 記錄補送通知；本題要求重開後只通知、不自動續送。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C408",
+    "name": "闔蓋保持醒著：中途關閉設定清狀態釋放預擋且不睡",
+    "description": "模擬：{\"lid\":[\"close\",\"setting=off\"],\"sessions\":[\"working-terminable\"],\"queue\":[{\"session\":\"working-terminable\",\"text\":\"QUEUE_SETTING_TEXT\"}]}；斷言：{\"awakeClosedCleared\":true,\"recordsCleared\":true,\"nosleepReleased\":true,\"sleepNowCount\":0,\"queueStillInOutboxOrRescue\":true}。修前預期：舊流程沒有 awakeClosed 期間改設定後清狀態、交回系統且不 sleepNow 的路徑。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C409",
+    "name": "闔蓋保持醒著：本機模型與背景工作不送續訊、不標旗",
+    "description": "模擬：{\"lid\":[\"close\",\"open\"],\"sessions\":[\"local-model\",\"background-only\"]}；斷言：{\"resumeById\":{\"local-model\":0,\"background-only\":0},\"amberById\":{\"local-model\":false,\"background-only\":false}}。修前預期：這是本機模型／背景任務不續送且不標旗標的篩選護欄；目前沒有已實跑基底紅燈證據。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C410",
+    "name": "闔蓋保持醒著：風扇失敗只記錄、電量 nil 不提早睡",
+    "description": "模擬：{\"lid\":[\"close\",\"continuous+1799\"],\"sessions\":[\"working-terminable\"],\"setFanAutoSucceeds\":false,\"battery\":null}；斷言：{\"setFanAutoCount\":1,\"fanFailureLogged\":true,\"sleepNowCount\":0,\"state\":\"awakeClosed\",\"awakeClosedElapsedSeconds\":1799}。修前預期：setFanAuto 失敗不阻塞與 battery=nil fail-safe 是護欄；基底紅燈尚未實跑確認。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C411",
+    "name": "闔蓋保持醒著：小幫手斷線重擋重試、設定切換清理",
+    "description": "模擬：{\"lid\":[\"close\",\"helper=disconnect\",\"continuous+5\",\"helper=ok\",\"setting=off\"],\"sessions\":[\"working-terminable\"]}；斷言：{\"nosleepRetryCount\":1,\"awakeClosedCleared\":true,\"recordsCleared\":true,\"sleepNowCount\":0}。修前預期：舊流程沒有 awakeClosed 期間的小幫手重擋重試與中途改設定清理組合。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C412",
+    "name": "闔蓋保持醒著：sleepNow 失敗只記錄不崩潰不重複呼叫",
+    "description": "模擬：{\"lid\":[\"close\",\"continuous+1800\"],\"sessions\":[\"working-terminable\"],\"sleepNowSucceeds\":false}；斷言：{\"crashed\":false,\"sleepNowCallCount\":1,\"sleepFailureLogged\":true}。修前預期：規格要求 sleepNow 失敗只記錄且不得重複呼叫；基底紅燈需以掛鉤實跑確認。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C413",
+    "name": "闔蓋保持醒著：舊設定遷移並阻止舊撐住路徑",
+    "description": "模擬：{\"legacyPrefs\":{\"lidKeepWorking\":true,\"lidExternalIdleSleep\":true,\"lidResumeNotifyEnabled\":true},\"explicitInterruptClose\":null,\"sessions\":[\"working-terminable\"],\"sequence\":[\"close\"]}；斷言：{\"lidKeepWorking\":false,\"lidInterruptOnClose\":true,\"legacyPathEntered\":false,\"legacySettingsVisible\":false}。修前預期：舊設定遷移後仍可進入 keep-working 舊路徑或設定頁保留舊選項時會紅。 掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/SettingsPages.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C35",
+    "name": "舊闔蓋外接撐住路徑不得進入",
+    "description": "依規格 §11.2，舊 lidKeepWorking／子選項不可再進入；驗遷移結果及舊路徑不執行。修前若舊模式仍可進入則本題失敗。掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C38",
+    "name": "舊外接睡醒寬限路徑不得進入",
+    "description": "依規格 §11.2，舊 lidKeepWorking／子選項不可再進入；驗遷移結果及舊路徑不執行。修前若舊模式仍可進入則本題失敗。掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Prefs.swift",
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C414",
+    "name": "Codex Luna max 直連連線不滯留 Reconnecting",
+    "description": "使用隔離聊天室選 gpt-6-luna／max，送固定無個資提示，等待最多 300 秒；斷言 turn/start、收到回覆、最終 completed、Reconnecting 次數為 0。修前直連路徑未連通時逾時或留在 Reconnecting 而紅。這是唯一需真實 Codex 連線的驗收；目前無 build／可用探針，pending，不宣稱已連通。",
+    "runner": "native.sh",
+    "pending": true,
+    "serial": true,
+    "timeout": 330000,
+    "files": [
+      "Sources/Workbench/CodexBridge.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/awake-closed-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C415",
+    "name": "救援通知刪檔失敗後限制重送次數且只提醒一次",
+    "description": "模擬：{\"maxMessageSendAttempts\":3,\"scenarios\":{\"deleteFailure\":{\"phases\":[\"attempt1\",\"attempt2\",\"attempt3\",\"attempt4\",\"attempt5\"],\"sendSucceeds\":true,\"rescueDeleteSucceeds\":false},\"attemptCounterWriteFailure\":{\"phases\":[\"writeFailure1\",\"writeFailure2\"],\"attemptCountWriteSucceeds\":false}}}；斷言：{\"scenarios\":{\"deleteFailure\":{\"phases\":{\"attempt1\":{\"attemptCountPersistedBeforeSend\":1,\"messageSendCountThisLaunch\":1,\"rescueDeleteSucceeded\":false,\"keeperNotifyCallsThisLaunch\":0},\"attempt2\":{\"attemptCountPersistedBeforeSend\":2,\"messageSendCountThisLaunch\":1,\"rescueDeleteSucceeded\":false,\"keeperNotifyCallsThisLaunch\":0},\"attempt3\":{\"attemptCountPersistedBeforeSend\":3,\"messageSendCountThisLaunch\":1,\"rescueDeleteSucceeded\":false,\"keeperNotifyCallsThisLaunch\":0},\"attempt4\":{\"attemptCountPersistedBeforeSend\":3,\"messageSendCountThisLaunch\":0,\"keeperNotifyCallsThisLaunch\":1},\"attempt5\":{\"attemptCountPersistedBeforeSend\":3,\"messageSendCountThisLaunch\":0,\"keeperNotifyCallsThisLaunch\":0,\"cumulativeKeeperNotifyCalls\":1}},\"cumulative\":{\"messageSendCount\":3,\"keeperNotifyCalls\":1,\"rescueFileExists\":true}},\"attemptCounterWriteFailure\":{\"phases\":{\"writeFailure1\":{\"attemptCountWriteSucceeded\":false,\"messageSendCountThisLaunch\":0,\"keeperNotifyCallsThisLaunch\":1},\"writeFailure2\":{\"attemptCountWriteSucceeded\":false,\"messageSendCountThisLaunch\":0,\"keeperNotifyCallsThisLaunch\":0,\"cumulativeKeeperNotifyCalls\":1}},\"cumulative\":{\"messageSendCount\":0,\"keeperNotifyCalls\":1,\"rescueFileExists\":true}}}}。修前若沒有三次上限，刪檔持續失敗時第 4 次仍會送出，messageSendCountThisLaunch=1 而非 0，必須紅；次數寫入失敗也不得送。C415 掛鉤的測試聊天室使用 runner 注入的隔離假 agy，避免測試模式缺少 --codex-bin 而在 ChatSession.start 前拒絕送出。修復後需重跑隔離 runtime 確認；本輪未跑考卷。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 600000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/TestHarnessAwakeRescue.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-rescue-recovery-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C416",
+    "name": "損壞救援 JSON 依隔離結果限制提醒",
+    "description": "總指揮 22:4x 決定：同一進程內同一原始救援檔依原始檔名＋原因只提醒一次；隔離成功時檔案移走，跨重開整體恰提醒一次；隔離失敗時每次啟動最多提醒一次，跨重開不斷言累計為 1。隔離失敗 scenario 的 scan1 模擬搬移失敗、scan2 模擬資料夾不可寫；每次啟動都對同一原始檔重複觸發兩次損壞讀取，並確認來源檔名相同。為避免 runner 未啟動獨立 phase，sameRecordReminderDedupe 嵌入 quarantineSuccess/scan2：同程序內同一記錄先因 attempts 寫入失敗提醒，reminded 寫回也失敗；再透過隔離 persistence 將同一記錄推至 attempts=3 並重走 exhausted 提醒路徑，notify 總數仍須為 1。紅燈 n：移除 remindedInProcessIDs.formUnion 後第二路徑會再通知，總數變 2。保持不自動補送與錯誤隔離記錄；本次契約修改尚未 runtime 驗證。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/TestHarnessAwakeRescue.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-rescue-recovery-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C417",
+    "name": "救援記錄重置邊界與提醒去重",
+    "description": "C417 覆蓋四個合約情境：newMessageReset（耗盡且已提醒的同聊天室記錄 upsert 新的非空訊息 ID 後，attempts=0/reminded=false，前三次重開補送新訊息，之後只再提醒一次；重複舊 ID 不重置）；emptyIDUpsertNoReset（空 ID 項目增加時 attempts=3/reminded=true 必須維持原值，只有新增原本不存在的非空 ID 才重置）；inProcessReminderDedupe（同進程以 (recordID, reason) 去重，相同鍵只提醒一次、不同記錄或原因各自提醒）；sameSourceCorruptionDedupe（同一原始救援檔在同一進程內損壞、隔離後再次寫壞並隔離，兩次 .bad 路徑不同但只提醒一次，去重依原始檔名＋原因）。紅燈：空 ID 數量若觸發重置，attempts/reminded 斷言失敗；若去重鍵改用每次不同的 .bad 完整路徑，提醒數會是 2 而非 1。掛鉤待施工，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 900000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-rescue-recovery-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C418",
+    "name": "開蓋三秒內重闔且同聊天室新工作時保留第一輪排隊訊息",
+    "description": "資料保全不變量：0.5 秒 close、2 秒 open、3 秒同聊天室新工作、4.5 秒 reclose、6 秒 open；第二次 close 時 M1 仍須可由 rescue/outbox 恢復。完整循環中 M1 的 ID、原文與圖片標記在所有自動送出中各恰好一次，救援 entry 清空且 outbox 不含 M1。M2 在第二次 close 後才加入；它不得遺失，完整循環結束時可仍在 outbox 或已被自動送出。normalSingleCycleCleanup 驗單輪 M1 恰一次、rescue 清空、重啟不重送。outbox 可含其他自動送出 ID，不要求為空。修前第二輪遞送會刪除整筆 rescue、令 M1 計數為 0；重複送 M1 或殘留 M1 也失敗。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 900000,
+    "files": [
+      "Sources/Workbench/LidKeeper.swift",
+      "Sources/Workbench/LidWiring.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/TestHarnessAwakeRescue.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/lid-rescue-recovery-probe.py",
+      "scripts/exam/awake-closed-contract.json",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C450",
+    "name": "視窗透明度診斷完整且唯讀",
+    "description": "依 spec-7db8d8-b.md 與 WindowDiag 測試契約：alpha=1 離屏視窗 anomalies 空且 fieldsComplete=true；alpha=0.5 含 alpha-低；兩行 lineLength>0；視窗三組 readOnly 前後值相同；observer 安裝成功、換螢幕後 EventLog 至少三行、低 alpha 後異常標記至少一行；不輸出視窗標題／聊天文字；旗標不存在或未輸出 JSON 時應失敗。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/WindowDiag.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/window-diag-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C451",
+    "name": "視窗明確異常值復原且記錄前後狀態",
+    "description": "依 spec-7db8d8-restore.md、task-7db8d8-d-codex2.md 第 2 點及「契約補充」：正常視窗不動且 skip 理由為『無可復原異常』；三種 0.5 異常復原、記前後值及 afterSnapshotLines≥1；alpha=0 隱藏窗不動；rateLimit 總復原 3 次、第 4 次以『頻率上限』略過且 fourthRestored=[]；暫態自行恢復不復原；notVisible／miniaturized 使用固定 skip 理由，miniaturized=null 記為未驗。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/WindowDiagRestore.swift",
+      "Sources/Workbench/WindowDiag.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/window-diag-restore-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C452",
+    "name": "視窗診斷多視窗、穩定復原與隱私契約",
+    "description": "依 spec-7db8d8-r1fix.md 與 task-7db8d8-e-codex2.md 第 3 點：兩個視窗各自持續記錄且序號不同；色域輸出限白名單；內容 view alpha=0.5 被標記並同步復原為 1；動畫變動時不復原並記錄數值仍在變動，穩定低 alpha 恰復原一次；只有不可復原異常時無復原行或『復原前』快照；不得輸出視窗標題或聊天文字。探針尚在施工，保持 pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/WindowDiag.swift",
+      "Sources/Workbench/WindowDiagRestore.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/window-diag-r1-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C460",
+    "name": "關聯圖 idle 不重畫且低 CPU",
+    "description": "idle 20 秒：canAnimate=true、drawCountDelta=0、timerRunning=false、有效負載下 avgCpuPercent<10。基線紅燈：drawCountDelta=25，故 drawCountDelta 斷言失敗；基線 CPU 約 3.8% 不用作紅燈依據。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/TestHarnessIdleBench.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/idle-bench-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C461",
+    "name": "關聯圖 waiting 不持續重畫",
+    "description": "waiting 20 秒：canAnimate=true、drawCountDelta=0、timerRunning=false、有效負載下 avgCpuPercent<10。基線紅燈：drawCountDelta=25，故 drawCountDelta 斷言失敗；基線 CPU 約 3.6% 不用作紅燈依據。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/TestHarnessIdleBench.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/idle-bench-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C462",
+    "name": "工作中光圈保留且關聯圖降頻",
+    "description": "working 20 秒：canAnimate=true、timerRunning=true、drawCountDelta>0、drawsPerSecond<=20、dirtyRectAreaRatio<0.3、有效負載下 avgCpuPercent<10。基線紅燈：CPU 約 26.5%、約 60.3 draws/s、dirty ratio=1。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 150000,
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/TestHarnessIdleBench.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/idle-bench-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C463",
+    "name": "閒置與工作資料變更均觸發重畫",
+    "description": "idle、working、waiting 三情境的 change 階段各要求 changeDrawCountDelta>=1，canAnimate=true；確保狀態變更沒有被閒置最佳化吞掉。基線此相容性檢查預期通過，不是修法紅燈。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 240000,
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/TestHarnessIdleBench.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/idle-bench-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C464",
+    "name": "工作中一分鐘平均 CPU 低於門檻",
+    "description": "working 60 秒正式版：canAnimate=true，loadavg 1 分鐘有效時 avgCpuPercent<10；loadavg>=3.5 時只把 CPU 斷言記為量測無效，不算通過或失敗。基線紅燈：平均 CPU 約 26.6%。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/ChatGraph.swift",
+      "Sources/Workbench/TestHarnessIdleBench.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/idle-bench-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C470",
+    "name": "空草稿自動清理不跳刪除確認窗",
+    "description": "需要原生測試 App，dev 一般組別。以直接子行程執行 sweep-drafts-probe，使用隔離 state-dir／claude-home；探針不呼叫任何外部引擎。輸出必須位於 state-dir 內。驗收：自動清理確認窗恰 0 次、空草稿刪除且刪除數恰 1、有紀錄草稿保留；手動刪除仍確認恰 1 次並移除。修前基線應紅：confirmDialogRequests=1、emptyDraftDeleted=false、sweepDraftsDeletedCount=0。nonEmptyDraftCleared 僅有欄位與布林型別斷言，派工契約未指定真值。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/sweep-drafts-probe.py",
+      "C470",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Drafts.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/sweep-drafts-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C471",
+    "name": "目標不自動附使用者驗收且完成狀態同步",
+    "description": "一般 dev CLI 題，所有資料使用暫存 CODENV_COLLAB_FILE。goal add 兩步不得自動插入使用者驗收；只有最後一步完成才標 done 並寫 doneAt，done 目標不出現在 goal ls；done 後 step add 插最後且清 doneAt／回 active；步驟改待做或退回時 done 目標回 active；0 步目標保持 active；舊目標既有「使用者驗收@你」保留且不因前一步完成而錯誤標 done。修前用 main:scripts/codenv-todo 執行同一探針，舊自動驗收步驟會使兩步完成後仍未 done，且 0 步／重新開啟規則若不符即紅。",
+    "runner": "goal-no-user-acceptance-probe.py",
+    "timeout": 60000,
+    "files": [
+      "scripts/codenv-todo",
+      "scripts/exam/goal-no-user-acceptance-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C472",
+    "name": "看板新目標不附驗收且不把驗收列入待你處理",
+    "description": "需要原生測試 App，dev 一般組。以暫存 state-dir／collab.json、--usage-fake 與假 agy 執行 --collab-act addgoal／--collab-dump：UI 新目標恰有兩個指定步驟、沒有使用者驗收，waitingOnYou=0 且 inbox=0；舊目標的使用者驗收步驟仍原樣存在且為 todo，可由使用者勾選，但 waitingOnYou=0 且 inbox=0；另一舊目標的「決定：…@你」維持 waitingOnYou=1、inbox=1。修前基線會在 UI addGoal 自動附使用者驗收，或把舊驗收列入待處理而紅；決定步驟不得被一併排除。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/CollabBoard.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C473",
+    "name": "build.sh 防覆蓋正式 App 的純邏輯探針",
+    "description": "執行 build-guard-probe；只有 probe exit 0、輸出至少 30 行「斷言通過」、沒有任何含「失敗」的行且輸出非空才通過。修前紅燈：以基底 HEAD:build.sh 的暫存副本執行同一 probe；原版不支援 BUILD_GUARD_DRYRUN，預期失敗。純邏輯，不需 EXAM_APP。",
+    "runner": "build-guard-probe.sh",
+    "timeout": 90000,
+    "args": [
+      "/bin/bash",
+      "-c",
+      "output=\"$(bash scripts/exam/build-guard-probe.sh 2>&1)\"; probe_status=$?; printf '%s\\n' \"$output\"; passed=\"$(printf '%s\\n' \"$output\" | grep -c '斷言通過' || true)\"; failed=\"$(printf '%s\\n' \"$output\" | grep -c '失敗' || true)\"; if [ \"$probe_status\" -ne 0 ] || [ \"$passed\" -lt 30 ] || [ \"$failed\" -ne 0 ] || [ -z \"$output\" ]; then echo \"C473 驗證失敗：probe_exit=$probe_status 通過行=$passed 失敗行=$failed 空輸出=$([ -z \"$output\" ] && echo 是 || echo 否)\" >&2; exit 1; fi"
+    ],
+    "files": [
+      "build.sh",
+      "scripts/exam/build-guard-probe.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C474",
+    "name": "Codex 撞額度後狀態清理與停止鈕可復原",
+    "description": "以測試 App 的 --codex-limit-probe 驗收：statusAfterLimit=idle、errorNoticeVisible=true、uiStopWithoutActiveTurnClearsWorking=true、stopWithoutProcessClearsWorking=true；scenarioA.sessionStatus=idle、inputBarBusy=false、noNewMessageSent=true；bridgeChecks 九項逐欄全 true。缺欄位、JSON 缺失／無效或逾時均失敗。修前基線預期 statusAfterLimit=working、errorNoticeVisible=false、兩種 stop 清理欄位=false；scenarioA sessionStatus=working、inputBarBusy=true；新六項 bridgeChecks 缺欄位，皆判失敗。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/codex-limit-probe.py",
+      "C474",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/CodexBridge.swift",
+      "Sources/Workbench/ChatSession.swift",
+      "Sources/Workbench/CommanderEngine.swift",
+      "Sources/Workbench/TerminalTurnOutcome.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/codex-limit-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C419",
+    "name": "G1：大附件掃描不中斷主執行緒",
+    "description": "執行時呼叫 keyguard-async-fixtures.py 產生 20 MiB 單行合成 HTML（多個 meta／hex／高熵／非 ASCII／無效 UTF-8）與 5 MiB 假 PDF。綠燈：mainRunLoop 最大無回應 <500 ms、掃描完成 ≤10,000 ms；不得跳過大檔或只掃前段後照常送。紅燈：未修改 07.11 同路徑預期主執行緒卡住（規格預期至少數秒）。TestHarness 掛鉤 TODO：等 result-e74b99-codex.md 對齊參數／輸出；目前 pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C420",
+    "name": "G2：大檔前 8 MiB 金鑰命中與結果對拍",
+    "description": "執行時產生 20 MiB 單行合成 HTML，於前 8 MiB 內依序含 sk-＋40 位英數、key 前文＋hex 弱候選、高熵候選，前置非 ASCII。綠燈：攔截範圍與 kind 不變，對未修改 07.11 同一份固定輸入的完整 findings 欄位逐筆相同；同時 mainRunLoop 最大無回應 <500 ms、掃描 ≤10,000 ms。紅燈：未修改版走同步掃描，預期大輸入造成 ≥500 ms 卡頓；range/kind 對拍失敗也必紅。假憑證每次執行隨機產生且不印出。掛鉤 TODO；pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C421",
+    "name": "G3：8 MiB 後金鑰、雙確認順序與送出決策",
+    "description": "G3 分兩類合成附件：只有 8 MiB 後假強金鑰時，僅出現 askBigFiles；取消不送且附件保留，選「照樣送出」才送。另一份同檔在前 8 MiB 與 8 MiB 後各有隨機假強金鑰，依序出現 askFiles(truncated=true)、askBigFiles；分開覆蓋取消／照樣送出分支。前 8 MiB 放密集合成 meta／hex 以保留未修改版紅燈：舊同步掃描同一附件時 mainRunLoop 預期卡頓 ≥500 ms；綠燈所有路徑 <500 ms 且未掃部分不得默默放行。掛鉤 TODO；pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C422",
+    "name": "G4：完整 KeyScan findings 與 redact 對拍",
+    "description": "建立 ≤1 MiB 執行時合成語料（現有 KeyGuard/KeyScan 考卷語料＋長行／hex／多 meta／重疊命中／CRLF、CR、U+0085、U+2028、U+2029／全形與零寬 meta／NFKC 變長字元／無效 UTF-8 的 U+FFFD），並預先注入非空 allowHashes、learnedFeatureCounts。綠燈：同一語料先由未修改 07.11 產生 findings／redact golden，新版逐筆 Equatable 全欄位完全相同（range、text、clean、kind、service、strong、low、excluded、allowlisted、learnedSuppressed、feature、learnedCount），onLearnedSuppression 觸發次數也相同。Hook TODO：需能回傳完整 findings、redact 與 callback 次數；pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C423",
+    "name": "G6：掃描中重複送出、取消保留與重試",
+    "description": "同一聊天室同時觸發送出鍵／Enter／⌘Enter／⌃Enter；綠燈為只啟動一次掃描、最多一筆送出。取消掃描後送出數為 0、文字與附件原樣保留；再次送出可完成。busy 時按掃描中按鈕只取消掃描、不呼叫 stopFromInput。紅燈依舊版同步流程無掃描中鎖定／取消語意，重入或取消契約至少一項不符。Hook TODO；pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C424",
+    "name": "G6：掃描世代作廢、入口鎖定與錯誤可見",
+    "description": "掃描中關閉／切換聊天室，整次作廢、不送、不彈窗且草稿保留；私有 pasteboard 的圖片貼上在掃描中與輸入鎖定時均拒絕且提示可見；drop／file picker／移除附件等入口不得繞過掃描；另一視窗並行 KeyScan.scan 不閃退；背景失敗與取消提示在非 ! 模式可見；取消不寫 false-positive learning 檔。每個子情境都需獨立輸出結果，不能以合併總旗標代替。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C425",
+    "name": "G7：附件未掃到時專用確認與使用者決策",
+    "description": "執行時建立 chmod 000 檔、目錄、.app／.rtfd 套件、symlink、FIFO。綠燈：每種未掃到都出專用「這個附件沒有檢查金鑰」確認，不可重用「只檢查了前 8 MB」；取消不送且保留附件，確認照樣送出才送。FIFO 不得阻塞。紅燈：未修改版對讀不到檔／目錄等會靜默回 nil 放行，缺少專用確認。Hook TODO；pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C426",
+    "name": "G8：超門檻貼上大文字仍非同步掃描",
+    "description": "執行時產生 20 MiB 單行貼上文字，含隨機假 sk-＋40 位英數。綠燈：mainRunLoop 最大無回應 <500 ms；命中仍攔截且 range 對應輸入框原文，內容版本相符才寫回；取消不送並保留原文。紅燈：未修改版大段貼上沿同步 KeyScan 路徑，預期卡頓 ≥500 ms。Hook TODO；pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C427",
+    "name": "G9：掃描中附件非同步回呼改內容必作廢",
+    "description": "掃描期間由合成掛鉤模擬 NSFilePromiseReceiver／ImageEditor 回呼改 files／attachments，讓 contentVersion 改變。綠燈：整筆掃描作廢、不送，文字與附件保留並顯示規格提示；不得把未掃內容混入本次送出。紅燈：沒有版本檢查時可能送出掃描快照以外的內容。Hook TODO；pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C428",
+    "name": "G10：確認視窗內內容變更於送出前作廢",
+    "description": "在 askFiles 與「附件沒有檢查金鑰」視窗各開啟期間模擬回呼更改內容，另在真實檔案確認 modal 開啟時切換聊天室並選照樣送出。綠燈：前兩種回呼在返回後作廢；切室情境返回後不送、原草稿保留。紅燈：只在背景掃描結束時檢查版本或切室世代的舊流程會在 modal 期間變更後仍送出。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C429",
+    "name": "G11：背景檔案掃描對無權限、symlink、FIFO fail-closed",
+    "description": "執行時建立 chmod 000、symlink、FIFO；由背景掃描核心處理。綠燈：三者均回明確 unscanned（不是 clean），並進入專用確認；FIFO 只做不阻塞的型態判斷，不開啟讀取。紅燈：未修改版把讀檔失敗／symlink／特殊檔案當作 nil 乾淨結果，直接放行。Hook TODO；pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C430",
+    "name": "G12：redact 與 allow／learning 全域狀態併發安全",
+    "description": "依規格 v4.1 決定：至少兩個背景執行緒同時反覆呼叫 KeyScan.redact；主執行緒以同步壓力迴圈各執行 allow、reloadLearning、removeLearnedFeature 1,000 次。所有執行緒須完成、不閃退；建議另以 Thread Sanitizer 執行且無資料競爭。輸入為 keyguard-async-fixtures.py 執行時生成的假資料，不印出／保存假憑證原文。舊的未鎖共用狀態預期在 Thread Sanitizer 下有競爭風險或發生閃退；本項規格未要求確定性紅燈。TestHarness 掛鉤 TODO；pending，不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-fixtures.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C431",
+    "name": "小草稿同步存檔並可還原",
+    "description": "依 11/20 02:0x e74b99b 決定：使用小於 1 MiB 的合成草稿；存檔模式為 synchronous、持久化在返回前完成，重開後內容相同。修前基線沿用 07.11 同步草稿行為，這題是回歸保護，不宣稱基線會紅。TestHarness 掛鉤／參數待施工-codex 提供；pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/Drafts.swift",
+      "Sources/Workbench/DraftPersistence.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/draft-lifecycle-fixtures.py",
+      "scripts/exam/e74b99-exam-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C432",
+    "name": "大草稿背景存檔未完成時結束 App 仍保全",
+    "description": "依 11/20 02:0x e74b99b 決定：使用至少 1 MiB 的合成草稿，背景寫入尚未完成時請求 applicationTermination；結束不可取消。分時點驗收：prepare 輸出是在結束後、下次啟動讀回前取得，檢查遮罩快照已寫入、路徑隔離、內容不含假金鑰原文；inspect 輸出是在下次啟動讀回後取得，只檢查未完成草稿提示，不要求復原檔在讀回後仍存在。掛鉤依 native.sh 的 prepare／inspect 兩階段執行；驗證器分別讀取兩份輸出。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/Drafts.swift",
+      "Sources/Workbench/DraftPersistence.swift",
+      "Sources/Workbench/main.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/draft-lifecycle-fixtures.py",
+      "scripts/exam/e74b99-exam-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C433",
+    "name": "大草稿背景存檔未完成時關格仍保全",
+    "description": "依 11/20 02:0x e74b99b 決定：使用至少 1 MiB 的合成草稿，背景寫入尚未完成時關閉聊天室格；關格不可取消。分時點驗收：prepare 輸出是在關格後、下次啟動讀回前取得，檢查遮罩快照已寫入、路徑隔離、內容不含假金鑰原文；inspect 輸出是在下次啟動讀回後取得，只檢查未完成草稿提示，不要求復原檔在讀回後仍存在。掛鉤依 native.sh 的 prepare／inspect 兩階段執行；驗證器分別讀取兩份輸出。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/Drafts.swift",
+      "Sources/Workbench/DraftPersistence.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/draft-lifecycle-fixtures.py",
+      "scripts/exam/e74b99-exam-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C434",
+    "name": "大草稿交接最多等待兩秒且逾時保留來源",
+    "description": "依 11/20 02:0x e74b99b 決定：大草稿交接在期限內完成時同步等待不超過 2 秒並成功，目的草稿內容吻合；模擬逾時時亦須在 2 秒內回報失敗且來源草稿未變。掛鉤待施工-codex 提供，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/DraftPersistence.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/draft-lifecycle-fixtures.py",
+      "scripts/exam/e74b99-exam-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C435",
+    "name": "一般草稿交接保留圖片與檔案卡片",
+    "description": "一般草稿交接前後，來源與目的兩邊都必須各有圖片及檔案卡片；不額外要求跨聊天室 ID 相同。掛鉤補齊並移除 pending 後，先做修前紅燈：以 /private/tmp/claude-<uid>/e74b99/r8/codenv-test-e74b99-r8-final9-20261119.app 設為 EXAM_APP，使用新隔離 state-dir 與合成圖片／檔案卡片執行 C435，預期至少一側缺附件而失敗；目前掛鉤待施工-codex 提供，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/ChatPane.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/draft-lifecycle-fixtures.py",
+      "scripts/exam/e74b99-exam-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C436",
+    "name": "KeyScan.redact 與 allow／learning 狀態操作併行不閃退",
+    "description": "依規格 v4.1 G12：多個工作執行緒同時呼叫 KeyScan.redact；主執行緒執行 1,000 輪，每輪各呼叫 KeyGuard.allow、reloadLearning、removeLearnedFeature 一次。斷言所有操作完成、redact 與狀態操作確有重疊、各操作呼叫數均為 1,000，且程序未閃退。修前若共享狀態仍未同步，Thread Sanitizer 應可抓到競爭；未跑舊版紅燈，普通非 TSan 執行的競態可能非決定性。TestHarness 掛鉤待施工-codex 定義，pending 不算通過。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 300000,
+    "files": [
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/e74b99-exam-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C437",
+    "name": "儲存金鑰替換占位符後先停下確認",
+    "description": "以隔離的合成強金鑰走 ChatInputBar 非同步送出與 KeyGuard 儲存決策。綠燈：隔離儲存入口呼叫一次、輸入文字已換成占位符且不含原始命中、本輪 onSend 呼叫數為 0；須由使用者再次按送出才會送。修前紅燈：替換後同一輪仍呼叫 onSend。輸出不得包含金鑰原文，且不寫入正式鑰匙圈。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/ChatInputBar.swift",
+      "Sources/Workbench/KeyGuard.swift",
+      "Sources/Workbench/KeyVault.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/keyguard-async-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C438",
+    "name": "大草稿圖片清理限制在本聊天室命名空間",
+    "description": "在隔離 --state-dir 內建立 primary／recovery JSON、各一個合法舊圖與 drafts 目錄外標記檔；損壞舊 JSON 引用含路徑穿越的檔名後走 LargeDraftFileWriter 正式清理。綠燈：外部標記檔仍存在，合法且不再引用的本聊天室舊圖正常清掉。所有 fixture 均在 state-dir 內，不碰任何正式檔案。修前紅燈：primary 舊 JSON 可藉 ../ 刪除 drafts 外檔案。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 180000,
+    "files": [
+      "Sources/Workbench/LargeDraftWriter.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/native.sh",
+      "scripts/exam/e74b99-exam-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C475",
+    "name": "collab 備份與審查把關 CLI 契約",
+    "description": "純 CLI，一般 dev 組，所有 collab／Git fixture 均在 /private/tmp。G6：空字串與純空白 key 對 goal rm、goal edit 各回碼 2、明確報空鍵且 collab 位元組不變；合法 ID 前綴可編輯、完整標題可刪除。G2：假 git diff 非零時步驟不 done、維持 doing 且 errorCount 增加；REJECT 不更新 reviewBase，之後再次完成仍送原差異審查。G1：目前 2 筆目標 goal rm 後 8 筆 .bak 位元組與數量均保留。修前紅燈使用 git show main:scripts/codenv-todo 暫存副本。",
+    "runner": "g126-examiner.py",
+    "timeout": 120000,
+    "files": [
+      "scripts/codenv-todo",
+      "scripts/exam/g126-examiner.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C476",
+    "name": "collab 備份輪替保留完整 .bak",
+    "description": "需要原生測試 App，探針輸出 report.json 必須位於該次 --state-dir 內。預期 initialCurrentElementCount=5、initialBackupElementCount=6、currentElementCount=7、backupElementCount=6、fullBackupPreserved=true；各欄逐一比對。修前基線沒有 collab-backup-rotation-probe 掛鉤，僅由測試版驗修後綠燈。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/g126-examiner.py",
+      "C476",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/CollabBoard.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/g126-examiner.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C490",
+    "name": "交接子程序逾時與殘留群組清理",
+    "description": "以測試 App 的 --handoff-timeout-group-probe <state-dir>/handoff.json 驗收：termRespondingChild 須 timedOut=true、returnedWithinTwoSeconds=true；termIgnoringChild 須 timedOut=true、returnedWithinTwoSeconds=true；termExitWithDetachedTermIgnoringSibling 須 timedOut=true、returnedWithinTwoSeconds=true、elapsedSeconds>=0.45、childPidRecorded=true、residualProcessKilled=true、status=0；normalExitCleansResidualBackgroundChild 須 timedOut=false、status=0、stdout=\"ok\"、returnedWithinTwoSeconds=true、childPidRecorded=true、residualProcessKilled=true。全部逐欄檢查，缺欄位、JSON 缺失／無效、非 0 結束碼或逾時一律失敗。修前基線預期：沒有 --handoff-timeout-group-probe 掛鉤或缺少對應欄位的舊版 App 會因逾時／缺欄位而失敗。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/g45-probe.py",
+      "C490",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Handoff.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/g45-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C491",
+    "name": "state.json 還原保護：另存失敗與兩檔皆壞等",
+    "description": "以測試 App 的 --store-recovery-guard-probe <state-dir>/store.json 驗收：asideFailure 須 protected、loadFailed、primaryUnchanged、backupUnchanged 全 true；unreadableFileSetAsideFailure 須 returnedFalse=true、sourceUnchanged=true；emptyPrimaryBadBackup 須 protected、loadFailed、backupUnchanged、primaryStillEmpty 全 true 且 saveResults=[false,false]；missingPrimaryBadBackup 須 protected、loadFailed、backupUnchanged、primaryStillMissing 全 true 且 saveResults=[false,false]；bothPrimaryAndBackupCorrupt 須 protected=true、loadFailed=true、primaryUnchanged=true、backupUnchanged=true、saveResults=[false,false]、asideCopyCreated=true、stateFileLogCount=1、loggedMissingOrEmpty=false、loggedUnreadable=true。全部逐欄檢查，缺欄位、JSON 缺失／無效、非 0 結束碼或逾時一律失敗。修前基線預期：沒有 --store-recovery-guard-probe 掛鉤或缺少對應欄位的舊版 App 會因逾時／缺欄位而失敗。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/g45-probe.py",
+      "C491",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Store.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/g45-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C492",
+    "name": "正在跑模型徽章辨識（agyp／deepseek／qwen／groq／gemfree）與模型面板分頁數不變",
+    "description": "純邏輯考卷（編譯執行真實 Swift 程式碼，不開 App）：驗證 SessionActivity.externalModel 與 ModelBadge.info 支援 agyp（含 gemini-4-neon-xhigh 與 -xhigh 思考強度）、dspublic（含 -m deepseek-flash）、dsfree、dsh-safe、qwenapi（含 -m qwen4-max）、groqfree、gemfree、管線後段第一個詞（echo x | dspublic --public），且 grep agyp 之類不誤認；驗證 ModelTab.popoverCases 與 ModelPanelModel.tabs 維持 5 個分頁不變（排除 deepseek／qwen／groq），且所有 ModelTab 圖示 SVG 皆可載入。",
+    "runner": "model-badge-probe.sh",
+    "files": [
+      "Sources/Workbench/Activity.swift",
+      "Sources/Workbench/ModelPopover.swift",
+      "Sources/Workbench/ProcessScan.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Resources/icons/deepseek.svg",
+      "Resources/icons/qwen.svg",
+      "Resources/icons/groq.svg",
+      "Resources/icons/ATTRIBUTION.md",
+      "Tests/WorkbenchTests/ModelBadgeTests.swift",
+      "scripts/exam/model-badge-probe.sh",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C493",
+    "name": "codenv 額度／背景工具測試旗標交叉與舊考卷零變更",
+    "description": "以 --usage-card-dump／--agy-background-probe 與假 agy-swap 記錄檔驗收。額度查詢與背景工具（next）各以「都沒給／只 --agy-swap-bin／只 --agy-usage-test／兩個都給」跑一次（共 8 個測試實例，各自假 HOME 與暫存 state-dir）：額度路徑只在兩者都給時走 agy-swap（mode=swap、status→run→status、run 帶 --test-dir／--agy-bin／--an-file、an-file 結束已刪、只呼叫 status／run、快取寫在 <state-dir>/agy-swap/state）；其餘三組 agy-swap 呼叫 0 次、mode=legacy、假 agy 被直接叫 /usage、dump 與「都沒給」結構相同。背景工具只看 --agy-swap-bin（只給它或兩個都給 → mode=swap 且經 run；其餘 → 直接啟動、agy-swap 呼叫 0 次）。假 HOME 內放哨兵 usage-alpha.json（99/98/97），斷言 dump 不出現哨兵數字且檔案不變；正式 ~/.local/state/agy-swap/usage-*.json 前後 stat 相同。修前基線預期：舊版 App 沒有 --usage-card-dump／--agy-background-probe 掛鉤與 --agy-swap-bin 行為，不輸出 dump／結果檔，探針逾時、全部缺檔斷言 FAIL。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "C493",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/AgySwapClient.swift",
+      "Sources/Workbench/AgySwapUsageCache.swift",
+      "Sources/Workbench/NextGuess.swift",
+      "Sources/Workbench/SprintCheck.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "scripts/exam/dev/cases.agyswap-codenv.json"
+    ]
+  },
+  {
+    "id": "C494",
+    "name": "換帳號模式額度查詢與背景工具經 agy-swap run、帳號數不足時零變更、next-cancel 只對 run 送 TERM",
+    "description": "以假 agy-swap／假 agy 記錄檔、--usage-card-dump、--agy-background-probe 驗收。≥2 帳號：額度查詢（status→run→status）、NextGuess（next）、SprintCheck（sprint）都經 run，run 必帶 --test-dir <state-dir>/agy-swap、--agy-bin、--an-file（檔名含 UUID、0600、結束後已刪）、環境只有 HOME／PATH／LANG，只呼叫 status／run，假 agy 只由 run 啟動；NextGuess 原參數在 -- 之後。帳號數 0／1 與 agy-swap 檔案不存在：額度、next、sprint 全部不呼叫 run、假 agy 直接啟動（0／1 帳號額度只有恰一次 status --json；檔案不存在則 0 呼叫）。next-cancel：run 不理 TERM（假 agy 也不理）→ 只對 run 送恰一次 SIGTERM、假 agy 沒直接收到訊號、--agy-swap-kill-grace 2 秒後群組 SIGKILL、run 與假 agy 無殘留、run 自成行程群組、codenv 自己存活；run 轉發 TERM 的對照組 143、不需 SIGKILL。修前基線預期：舊版沒有 --agy-swap-bin／--agy-swap-kill-grace／--agy-background-probe／--usage-card-dump，無 dump／結果檔、假 agy-swap 零呼叫，斷言 FAIL；背景工具舊版直接啟動假 agy 不經 run。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "C494",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/AgySwapClient.swift",
+      "Sources/Workbench/AgySwapUsageCache.swift",
+      "Sources/Workbench/NextGuess.swift",
+      "Sources/Workbench/SprintCheck.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "scripts/exam/dev/cases.agyswap-codenv.json"
+    ]
+  },
+  {
+    "id": "C495",
+    "name": "額度查詢遇 status 異常／run 卡住／快取寫入條件／143／137 判讀",
+    "description": "以假 agy-swap（可注入 status 狀態、逐次覆寫、sleep、不理 TERM）、--usage-card-dump 與 <state-dir>/agy-swap/state/usage-alpha.json 驗收（預放 30 分鐘前舊快取）。status 狀態矩陣：switching／recovery_pending／accounts_error／逾時（假 status 睡 30 秒、--agy-swap-status-timeout 3）／斷網（--agy-offline）→ 不呼叫 run、不退回直接跑假 agy、舊快取位元組不變且額度卡顯示舊快取；對照組正常→ 快取更新。run 卡住（--agy-swap-run-timeout 5）：只對 run 送一次 TERM，run 不理則 --agy-swap-kill-grace 2 秒後群組 SIGKILL，無殘留行程、an-file 已刪、舊快取不變；同時啟用假 Codex，run／status 卡住期間 agyLoading=true、mainLoading=false 且 otherSourcesShown 含 codex、收完後兩個 loading 都 false。快取不覆蓋：gen 不符、live_matches≠A、an-file unknown、run 非 0、輸出為空、讀完 status switching／recovery_pending、A 不在 accounts、A 非法帳號名（含路徑穿越）。假 agy 自己被 SIGTERM／SIGKILL（143／137）而 codenv 沒送過 TERM → 不當成功、不覆蓋快取。修前基線預期：舊版沒有 --agy-swap-bin／--agy-usage-test／縮短旗標與 dump，額度路徑不經 agy-swap，無 dump、假 agy-swap 零呼叫，斷言 FAIL。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "C495",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/AgySwapClient.swift",
+      "Sources/Workbench/AgySwapUsageCache.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "scripts/exam/dev/cases.agyswap-codenv.json"
+    ]
+  },
+  {
+    "id": "C496",
+    "name": "多帳號額度卡顯示矩陣（0／1／2／3／5 帳號、快取、失效、切換）",
+    "description": "以 --usage-card-dump 驗收（預放 <state-dir>/agy-swap/state/usage-<帳號>.json，檔案 mtime 一律設成 90 分鐘前、與 JSON read_at 刻意不同）。0／1 帳號：mode=legacy、fullPage.accounts 只有現用一個，dump 結構與文字（忽略 HH:mm 與 updatedAt）與沒給任何新旗標的基準實例相同、無「另有 N 個帳號」。2／3／5 帳號：mode=swap、依帳號名排序；現用 live；非現用 cached＋「N 分鐘前」（以 read_at 計，不是 mtime；<1 分鐘與未來時間「剛剛」、3 小時顯示小時）；沒快取與損毀快取「還沒讀過」；invalid 帳號即使有舊快取只顯示「登入失效」且舊百分比完全不出現；verify_failures=1 不標失效；現用沒資料但別的帳號有快取仍顯示；單輪內切換（status 第二次回報 active 改為 bravo、gen 變）後新現用沒即時資料不顯示前一帳號數字且不寫舊帳號快取。panelText／glanceText 只含現用帳號名與其三個數字加「另有 N 個帳號」。修前基線預期：舊版 dump 的 mode 恆為 legacy、fullPage.accounts 只有一個、不讀快取、沒有 swap 顯示，≥2 帳號各項斷言 FAIL；若無 dump 掛鉤則全部缺檔 FAIL。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "C496",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/AgySwapClient.swift",
+      "Sources/Workbench/AgySwapUsageCache.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "scripts/exam/dev/cases.agyswap-codenv.json"
+    ]
+  },
+  {
+    "id": "C497",
+    "name": "≥2 帳號隱藏 agy2 且不再啟動 docker",
+    "description": "以 --usage-card-dump 的 agy2Visible 與假 docker 記錄檔驗收（假 docker 放在 PATH 前端並以 CODENV_TEST_DOCKER_BIN 指定）。基準（沒給新旗標）須 agy2Visible=true 且假 docker 被呼叫。agy-swap 檔案不存在、0 帳號、1 帳號：agy2Visible 與基準一致（true）、假 docker 呼叫 ≥1、mode=legacy、無 run。2、3 帳號：mode=swap、agy2Visible=false、假 docker 呼叫記錄為 0、額度仍恰一次 run。修前基線預期：舊版無 dump 掛鉤與 agy-swap 路徑，≥2 帳號情境 agy2Visible 仍為 true 且假 docker 被呼叫，斷言 FAIL。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "C497",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/AgySwapClient.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/agyswap-codenv-probe.py",
+      "scripts/exam/dev/cases.agyswap-codenv.json"
+    ]
+  },
+  {
+    "id": "C498",
+    "name": "側欄收合／展開時分頁列第一個分頁不跳動",
+    "description": "以測試 App 的 --tabbar-collapse-probe \"<模式>:<結果檔>\" 在 f3 與 menu 兩種模式各跑一次，逐項判定：1) collapse／expand 每筆 trace 的 firstTabX 與 max(barX+8,80) 差 ≤1pt；2) 收合 firstTabX 單調不增、展開單調不減（不回彈）；3) 相鄰兩筆 firstTabX 位移 ≤ barX 位移＋4pt；4) collapsedFirstTabX ≥ trafficLightsMaxX+8 且＝80(±1)；5) expandedAfterFirstTabX＝expandedFirstTabX(±0.5)；6) collapse、expand 各至少 5 筆（不足即失敗並印筆數）。另在探針內用舊公式（pad＝barX<40?80:8）離線算同一組 barX 序列，須至少一格與 max(barX+8,80) 差 >30，證明考卷抓得到舊 bug。靜態檢查：PrefixKeys.swift（F3）與 main.swift（選單）皆呼叫同一個 MainWindow.toggleSidebar（印行號）；WindowHost.swift 沒有新增收合按鈕、sideButton 相關行與基準版逐字相同。缺檔、JSON 無效、逾時、0 項斷言、非 0 結束碼一律失敗。修前基線預期：舊版無 --tabbar-collapse-probe 掛鉤，會缺檔失敗。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/tabbar-collapse-probe.py",
+      "C498",
+      "."
+    ],
+    "serial": true,
+    "timeout": 90000,
+    "files": [
+      "Sources/Workbench/WindowHost.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Sources/Workbench/MainWindow.swift",
+      "scripts/exam/tabbar-collapse-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C499",
+    "name": "F12 額度面板 DeepSeek／Qwen 額外卡、隔離與補刷新",
+    "description": "以 --usage-panel-open、--usage-panel-dump、--deepseek-base-url、CODENV_EXTRA_KEY_FAKE、CODENV_USAGE_FAKE_DELAY 與獨立 127.0.0.1 隨機埠假 HTTP 伺服器驗收 F12 第 1 輪（共 25 個獨立測試實例，各自暫存 state-dir，不碰正式資料）。S1 DeepSeek 正常：假伺服器回傳雙幣別（CNY 字串金額、USD 數字金額），斷言 extra:DeepSeek 卡片顯示「餘額 12.34 CNY（儲值 10.00＋贈送 2.34）」、「餘額 5.50 USD（儲值 3.25＋贈送 2.25）」與來源「DeepSeek 官方 API」，伺服器恰收 1 次 GET /user/balance 且 Authorization 為 Bearer sk-fake-exam-token-001，遞迴掃描整個 state-dir 所有檔案位元組、dump 與 app.log 皆找不到金鑰。S2 DeepSeek 失敗（7 實例）：HTTP 401、500、302（不跟隨重導向）、壞 JSON、is_available:false、balance_infos 空、12 秒延遲（測 8 秒逾時，啟動至 dump ≤ 14.5 秒且收請求後 6.5～11.5 秒結算），斷言訊息分別為「查不到餘額」或「帳戶餘額不足，無法呼叫」、絕不顯示 0 當餘額、各情境恰 1 次請求不重試轟炸、金鑰不洩漏。S3 金鑰狀態（4 實例）：missing 無卡且 0 請求；denied／failed／pending 各顯示契約指定鑰匙圈訊息且 0 請求。S4 Qwen 帳本（8 實例）：正常顯示「已花 1.35／10.00 USD（本機上限，非帳戶餘額）」「3 次呼叫」；missing 無卡；unreadable／壞 JSON／cap_usd=0／spent_usd<0／calls 非陣列皆顯示「查不到帳本」；spent>cap 照實顯示不報錯；calls 內獨特標記字串不出現在 dump 與 state-dir。S5 測試隔離（4 實例＋全程 stat）：未給假資料與 base-url 時無 DeepSeek／Qwen 卡且假伺服器 0 請求；不合法 --deepseek-base-url（含路徑與 query 的 localhost、http://0.0.0.0:1、https://api.deepseek.com）視為未提供，假伺服器 0 請求並回退讀假 response 不連網；探針前後 stat 正式 ~/.local/state/qwenapi/ledger.json 的 mtime 與大小不變（不存在則略過）。S6 E 補刷新（1 實例獨立先跑）：設 CODENV_USAGE_FAKE_DELAY=5 讓主查詢慢 5 秒，開面板 4 秒內寫出 dump 且 extraLoaded=true、已含 DeepSeek 與 Qwen 卡。S7 dump 結構：全部 25 份 dump 皆為合法 JSON、含 cards（每筆具 pool:/extra: 前綴 key、title、lines 且 DeepSeek／Qwen 鍵名對應正確）、extraLoaded=true、合法 UTC ISO8601 extraLoadedAt、order 與幾何欄位型別合法。修前基線預期：舊版 App 無 --usage-panel-open／--usage-panel-dump／--deepseek-base-url 旗標與 DeepSeek／Qwen 額外卡支援，不會寫出 dump 檔亦不呼叫假伺服器，全部 25 個情境逾時缺檔，S1～S7 核心斷言全數 FAIL、結束碼為 1。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/f12-extra-cards-probe.py",
+      "C499",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/ExtraKeyPools.swift",
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/f12-extra-cards-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C500",
+    "name": "F12 額度面板四欄幾何、卡片重排與順序持久化",
+    "description": "以 --usage-panel-open、--usage-panel-dump、--usage-panel-screen、--usage-panel-parent-size、--usage-panel-ui-scale、--usage-panel-move、--test-screen ipad --test-hidden 與離線 CODENV_EXTRA_KEY_FAKE 驗收 F12 第 2 輪（共 11 個獨立暫存 state-dir、18 次實例啟動，4 執行緒並行，總耗時 ≤ 110 秒，不連外網、不碰正式資料）。G 四欄幾何（4 實例）：(a) 螢幕 1512×945、父 1512×982、uiScale 1.15 → columns=4、panelScale=1.15、panelFrame.w≈1481.2；(b) 螢幕 1512×945、窄父 900×700、uiScale 1.0 → columns=4、panelScale=1.0、panelFrame.w≈1288.0；(c) 窄螢幕 1280×800、父 1280×800、uiScale 1.15 → columns=3、panelScale=1.15（不縮）、panelFrame.w≈1122.4；(d) 左側 Dock 可見 1432×945+80、父 1432×945、uiScale 1.15 → columns=4、panelScale∈[1.0,1.15) 且 |panelScale−1408/1288|<0.01、panelFrame.w≈1408.0、screenVisibleFrame.x 相對 (a) 右移 80pt；四組皆驗證 panelFrame 完全落在 screenVisibleFrame 內（x、y、x+w、y+h）且 0 < panelFrame.h ≤ screenVisibleFrame.h。O 順序與持久化（7 組 state-dir、14 次啟動）：O.1 同 state-dir 首次不帶 move 記錄預設基準（主卡 pool:* 在前、額外卡 extra:* 在後，含 pool:cc、extra:DeepSeek、extra:Qwen）；O.2 帶 --usage-panel-move extra:Qwen:pool:cc 驗證 extra:Qwen 移至 pool:cc 原位、pool:cc 緊跟其後、餘卡相對順序不變；O.3 同 state-dir 不帶 move 重開保留 O.2 順序；O.4 拿掉 Qwen 後 order 不含 extra:Qwen 且餘卡順序不變，放回 Qwen 後回到 O.2 位置，另加 3 步情境驗證隱藏 Qwen 期間重排其他卡（寫回）仍保留 Qwen 原槽位；O.5 一次多筆移動（extra:Qwen:pool:cc,pool:cc:extra:DeepSeek）依序執行、相鄰兩張以 after 插入（00.07.21 起為插入語意，舊 A:B 格式等同 before）產生變化非無動，以及來源等於目標／來源不存在／目標不存在三種無效移動皆維持預設順序；O.6 等 A 完成 O.2 移動後再以全新 state-dir B 啟動驗證彼此獨立；O.7 正式偏好設定隔離：探針前後唯讀 `defaults read com.local.aiworkbench usageCardOrder`，值前後相同（測試的重排只寫進隔離 suite；不看 plist 的 mtime，因為使用者正在用的 codenv 本身會寫偏好檔）。S dump 結構：18 份 dump 皆為合法 JSON，order 非 null 且與 cards.map(key) 完全一致無重複，columns(1..4)、panelScale、panelFrame、screenVisibleFrame、extraLoaded/extraLoadedAt 皆非 null 且型別正確。P 時機：每次啟動輪詢至 dump 首次出現立即讀取即為最終版（含移動後順序），且間隔 1 秒再讀一次內容完全相同。修前基線預期：舊版 App（無 r1/r2 測試旗標）不寫出任何 dump，各啟動依 14 秒逾時乾淨收尾（不卡住，總耗時約 70 秒 ≤ 110 秒）且 G/O/S/P 全數 FAIL、結束碼 1；僅有 r1 尚無 r2 時，G(a) 在 1512/1.15 下因父視窗×0.95 掉成 3 欄、G(b) 在窄父 900 下掉成 2 欄、G(d) 不會微縮掉成 3 欄，且忽略 --usage-panel-move 與順序持久化，核心斷言全數 FAIL、結束碼 1。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/f12-panel-layout-probe.py",
+      "C500",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/UsagePanelGeometry.swift",
+      "Sources/Workbench/UsageCardOrder.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/f12-panel-layout-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C501",
+    "name": "F12 agy 非現用帳號容器讀取與三帳號合計列",
+    "description": "以 --usage-card-dump 與假 docker（CODENV_DOCKER_PATH）／假 agy-swap／假 agy（各自獨立 state-dir 與假 HOME，帳號一律 alpha／beta／gamma、容器 agy2／agy3）驗收 17 個獨立情境：(a-all-fresh) 三帳號皆可讀，alpha 走 Mac（source=mac, containerStatus=skipped）、beta/gamma 走容器（source=container:agy2/agy3, containerStatus=fresh），數字等於各自假 /usage 表，fullPage.total 標題「三帳號合計」、5 列依 canonical 固定順序排列、0% 納入平均、percent 完全相等、covered==total==3、oldestReadAt==null，磁碟寫出 0600 快取且右側欄／底列不含合計與非現用數字；(a-two-half) 兩帳號驗證 0.5 進位遠離零（32.5→33、33.5→34、22.5→23）、標題「2 帳號合計」、單邊額度 covered==1/2 與空額度不顯示；(b-no-switch) 讀取前後 agy-swap 無切帳號／修改子指令、run 僅現用帳號 1 次（容器只呼叫 status）、active/gen 不變、假 docker 只出現 context inspect／inspect／exec 三種呼叫且容器 stderr 不外洩；(c-down-cached) beta inspect 回 false 且磁碟有 40 分鐘前舊快取 → containerStatus=down、state=cached、ageText 維持「N 分鐘前」、舊快取不被覆寫、合計 covered==3/3 且 oldestReadAt 等於該快取 read_at；(d-down-nocache) beta inspect 回 false 且無快取 → never／「還沒讀過」／down、合計 covered==2/3 且 oldestReadAt==null；(e-active-container) 現用切到有容器的 beta → 不讀 agy2（containerStatus=skipped, source=mac）、仍讀 gamma、alpha 無容器走無 source 舊快取（source=null）；(f-no-map) 設定檔不存在（假 HOME 放誘餌設定檔確認不誤讀）→ containerStatus 全為 null、假 docker 0 次、total 為 null 或僅含現用帳號、既有 dump 鍵不變；(g-accerr/g-timeout) status 回傳 accounts_error 或逾時（.skipRound）→ 假 docker 0 次且不清舊快取；(h-offline/h-switching/h-recovery/h-mismatch) 前置門檻不符 → 假 docker 0 次、containerStatus=skipped；(h-bad-container/h-empty-map) `-` 開頭等非法容器名忽略、其餘合法項目照讀，全非法視為停用（containerStatus 全為 null）；(h-relaunch) 同 state-dir 設 --agy-container-ttl 3600,3600 重開 App 後節流歸零再讀到新數字；(i-no-docker-env 與隔離) 未設 CODENV_DOCKER_PATH 時假 docker 與 PATH 最前面誘餌 docker 皆 0 次，且探針前後正式 ~/.local/state/agy-swap 與正式 agy-container-map.json 只 stat 不讀、內容與 mtime 不變。修前基線預期：舊版（00.07.17）無容器讀取與合計列，dump 缺少 containerCalls／fullPage.total／source／containerStatus 鍵、假 docker 呼叫 0 次、beta／gamma 皆為「還沒讀過」，對應斷言全部 FAIL、結束碼為 1。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/f12-agy-total-probe.py",
+      "C501",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/AgyContainerUsage.swift",
+      "Sources/Workbench/AgySwapClient.swift",
+      "Sources/Workbench/AgySwapUsageCache.swift",
+      "scripts/exam/f12-agy-total-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C502",
+    "name": "視窗消失診斷加強、現場快照、半透明掃描與點 Dock 救援",
+    "description": "依看板 959276 兩輪需求與 contract.md，以獨立 --state-dir 背景測試實例（不碰正式 ~/Library/Logs/codenv）驗證 17 個情境：N1（無 inject 正常啟動 ≥4.5s，無快照／救援／半透明，一般視窗診斷 §4.1 含全部 16 項新欄位且舊欄位 key=/occ=/onscreen= 順序不變、無重複 wsOnscreen=、結尾 cgAll= 未被 400 字截斷）、N2（inject 正常前景不觸發）、A／B1／B2／AB（條件 A、B［含 key+none 與 main+false 且 active=0］、A+B 各自於 ≥1.5s 後恰寫 1 份成對快照，含螢幕／NSApp.windows 全列（≤40、主視窗第一）／環境全螢幕訊號／上層他程式視窗（≤20、無標題欄位），出現後再等 ≥3s 仍僅 1 份）、T1（三段 0.6s 脈衝累計 1.8s 均 <1.5s → 0 快照）、T2（快照寫出後解除再於 60s 冷卻內重觸發 → 仍僅 1 份）、R0／R0_fg（點 Dock 無異常只記 §4.3 診斷、0 救援）、R1～R5（rescue-ok=1/2/3/none 及跳步 space=on,frameout=0：驗每步序、已救回即停、步驟 1 暫加 .moveToActiveSpace(0x2) 與還原回 origBehavior、步驟 2 座標落入 visibleFrame、0.3s 量測間隔、結論假設、冷卻中與進行中略過）、AL1／AL2（半透明掃描含 L:CALayer 路徑與大小寫保留；25 節點截斷為 20 並標截斷=true），及全類別契約正則與無標題隱私檢查。修前基線預期：舊版無 --window-diag-inject／--window-diag-reopen 與新 category，N1 缺新欄位 FAIL，其餘情境因無注入／reopen 與對應 log 行逾時 FAIL。",
+    "runner": "native.sh",
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/WindowDiag.swift",
+      "Sources/Workbench/WindowStuckDetector.swift",
+      "Sources/Workbench/WindowRescuePlanner.swift",
+      "Sources/Workbench/EventLog.swift",
+      "Sources/Workbench/main.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/window-snapshot-rescue-probe.py",
+      "scripts/exam/dev/cases.json"
+    ],
+    "args": [
+      "python3",
+      "scripts/exam/window-snapshot-rescue-probe.py",
+      "C502",
+      "."
+    ]
+  },
+  {
+    "id": "C503",
+    "name": "網頁外掛關閉時 BrowserServer 放行 handoff 與既有非網頁指令並維持擋網頁指令",
+    "description": "以兩個獨立暫存 --state-dir（/private/tmp/claude-<uid>/handoff-web-gate 下）並行啟動隔離測試版 codenv.app（--lang zh、--commander-op 建立 GateChief），不碰正式資料與正式偏好、不啟動 ~/Applications/codenv.app。1) 實驗組（--pref webFeaturesEnabled=0）：4 個 handoff 指令（handoff_info／handoff_create／handoff_send／handoff_finish）以方案 A（假 conv）與方案 B（GateChief 真實 chief UUID＋不存在 target／oldID／newID）各測一次，皆不得回「網頁外掛功能已關閉（設定可打開）」，且須回對應處理器錯誤；ls 維持回 {\"ok\":true,\"panes\":[]}；text／shot／url／export／unknown_cmd 皆回關閉錯誤原文；抽樣 9 個既有非網頁指令（team／wake／send／model／topic／archive／area／sprint／merge_check）以不存在對象發送，皆須回合法 JSON 且不得為關閉錯誤；另經 CLI（codenv-todo handoff，設 CODENV_BROWSER_DIR 與 CODENV_CONVERSATION）驗證方案 A／B 皆 exit 1、stderr 無關閉錯誤且含「不能交接：<處理器錯誤>」；請求前後及停止後比對 state.json 聊天室集合與封存狀態不變。2) 對照組（--pref webFeaturesEnabled=1）：4 個 handoff 指令（方案 A／B）與 CLI 同樣不被擋並回同類錯誤；ls 回空陣列；text／shot／url／export 改回「codenv 現在沒有開著的瀏覽器格子」（證明開關生效）；unknown_cmd 不回關閉錯誤；state.json 不變。3) 全程收尾只停本次啟動且命令列吻合專屬 --state-dir 的 PID，前後 stat 正式 ~/Library/Application Support/codenv/state.json 的 mtime／size 不變；缺檔、JSON 無效、逾時、0 項斷言、非 0 結束碼一律 FAIL。修前基線預期（main 7fc2e33）：實驗組 4 個 handoff 指令在方案 A／B 共 8 次 socket 呼叫與 2 次 CLI codenv-todo handoff 皆回「網頁外掛功能已關閉（設定可打開）」而 FAIL（共 10 項 FAIL），其餘 ls／網頁指令／抽樣非網頁指令與對照組皆 PASS。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/handoff-web-gate-probe.py",
+      "C503",
+      "."
+    ],
+    "serial": true,
+    "timeout": 90000,
+    "files": [
+      "Sources/Workbench/BrowserServer.swift",
+      "Tests/WorkbenchTests/BrowserServerGateTests.swift",
+      "scripts/exam/handoff-web-gate-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C504",
+    "name": "handoff-finish 後新聊天室繼承區長身分",
+    "description": "以獨立暫存 --state-dir 執行測試版 codenv.app（EXAM_APP，禁止指向正式 ~/Applications/codenv.app）的 headless 自測掛鉤 `Contents/MacOS/Workbench --state-dir <暫存> --archive-selftest <out> --handoff-selftest`（覆寫 CODENV_COMPACT_DIR 與 CODENV_POOL_USAGE_FILE，不開視窗、不碰正式資料），驗證交接既有 6 項欄位（handoff_create_ok／handoff_copy_meta／handoff_old_active_before_confirm／handoff_finish_ok／handoff_old_archived／handoff_new_original_name）與新增 3 項區長繼承欄位（handoff_new_in_same_area／handoff_area_lead_transferred／handoff_area_lead_active）皆存在且為 true，自測程序 exit 0，且前後 stat 正式 ~/Library/Application Support/codenv/state.json 不變。舊聊天室不是區長時其他區長欄位不變（以及舊聊天室同時是多區區長一併轉移）：單測已涵蓋（HandoffAreaLeadTests），現行自測掛鉤未暴露此情境，考卷無法驗。修前基線預期（main 1b91158）：輸出缺少 handoff_new_in_same_area、handoff_area_lead_transferred、handoff_area_lead_active 三個欄位，對應 3 項斷言明確回報缺欄 FAIL（exit 1）。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/handoff-area-lead-probe.py",
+      "C504",
+      "."
+    ],
+    "serial": true,
+    "timeout": 45000,
+    "files": [
+      "Sources/Workbench/CommanderTeam.swift",
+      "Tests/WorkbenchTests/HandoffAreaLeadTests.swift",
+      "scripts/exam/handoff-area-lead-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C505",
+    "name": "F12 用量面板調整：拖曳插入、紫色色票與 agy 帳號收合隱藏",
+    "description": "以 --usage-panel-open、--usage-panel-dump、--usage-card-dump、--usage-panel-move（<src>:before:<dst>／<src>:after:<dst>）與既有 --agy-swap-bin／--agy-usage-test 掛鉤驗收 F12 調整第 1～3 項需求（全部使用 /private/tmp/claude-<uid>/f12-adjust 下獨立 state-dir 與假帳號 alpha／beta／gamma，不改 HOME、不碰正式資料、不依賴容器讀取）。①拖曳插入：動態取基線前 4 張 [1,2,3,4]，驗證 1:after:3→2,3,1,4（非互換 3,2,1,4）且同 state-dir 重啟不帶 move 順序保留、1:before:3→2,1,3,4、3:before:1→3,1,2,4、相鄰與自己前後（1:before:2／2:after:1／1:before:1／1:after:1）維持原序、相鄰跨界 1:after:2→2,1,3,4。②purpleFields：驗證包含 resetTime／remainingQuota／balance／spentLimit 四類語意（含 extra:DeepSeek 的 balance 與 extra:Qwen 的 spentLimit），淺深色票皆合法、非灰階且互異，且清單不含任何說明灰字欄位或關鍵字。③帳號區塊：三帳號中 alpha（Mac 即時）與 beta（隔離磁碟快取）有數字故 displayed=true、預設 collapsed=true 且收合時 visibleBucketLabels 為空；gamma 無數字故 displayed=false 且不以「還沒讀過」冒充；agyTotalSummary.accountCount 仍為 3；panel-dump 與 card-dump 一致，同 state-dir 重啟後收合狀態保留。全程前後驗證正式 usageCardOrder、agy-container-map.json 與 ~/.local/state/agy-swap 未被觸碰。修前基線預期：舊版不支援 :before:/:after: 插入語意、dump 缺少 purpleFields／agyAccountSections／agyTotalSummary，三項核心斷言全數 FAIL、結束碼為 1。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/f12-adjust-probe.py",
+      "C505",
+      "."
+    ],
+    "serial": true,
+    "timeout": 120000,
+    "files": [
+      "Sources/Workbench/Usage.swift",
+      "Sources/Workbench/UsageCardOrder.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "scripts/exam/f12-adjust-probe.py",
+      "scripts/exam/dev/cases.json"
+    ]
+  },
+  {
+    "id": "C506",
+    "name": "CodeLab 編輯器有游標時切 App 再切回不被搶到聊天輸入框",
+    "description": "以獨立暫存 --state-dir 啟動隔離背景測試實例（--background -NSAppSleepDisabled YES，不送真鍵盤、不 activate 視窗、不搶焦點），透過 --activation-focus-probe <state-dir 內輸出檔> 依序驗證三情境走與 didResignActive／didBecomeActive 相同路徑並等 0.2 秒後的 firstResponder 與 focusChatInput 回傳值：① codelab（CodeLab 編輯器 WKWebView 有焦點 → 切回後仍在 CodeLab 內、未被搶到聊天輸入框、focusChatInput 回傳 false）；② chatinput（聊天輸入框有焦點 → 切回後仍在聊天輸入框、focusChatInput 回傳 true）；③ rename-field（其他可編輯 NSTextView 有焦點 → 切回後 responder 類別不變且未被搶到聊天輸入框、focusChatInput 回傳 false）。探針前後 stat 正式 state.json 不變且收尾只停本次專屬 --state-dir 程序。修前基線預期（main 1b91158）：無 --activation-focus-probe 掛鉤而無輸出檔逾時 FAIL（exit 1）；若僅還原 MainWindow.swift 的 inCodeLab 防護而保留探針，情境① codelab 會被搶到聊天輸入框（after.inCodeLab=false、after.isChatInput=true、focusChatInputResult=true）而 FAIL。",
+    "runner": "native.sh",
+    "args": [
+      "python3",
+      "scripts/exam/codelab-activation-focus-probe.py",
+      "C506",
+      "."
+    ],
+    "serial": true,
+    "timeout": 60000,
+    "files": [
+      "Sources/Workbench/MainWindow.swift",
+      "Sources/Workbench/TestHarness.swift",
+      "Tests/WorkbenchTests/ActivationFocusTests.swift",
+      "scripts/exam/codelab-activation-focus-probe.py",
+      "scripts/exam/dev/cases.json"
     ]
   }
 ]

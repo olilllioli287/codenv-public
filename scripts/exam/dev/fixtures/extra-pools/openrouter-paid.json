@@ -1,0 +1,8 @@
+{
+  "now": "2026-11-10T07:30:00Z",
+  "openrouter": {
+    "key": "value",
+    "response": {"data": {"is_free_tier": false, "limit": 20.0, "limit_remaining": 15.5, "usage": 4.5,
+      "usage_daily": 0.25, "usage_weekly": 1.75, "usage_monthly": 4.5}}
+  }
+}

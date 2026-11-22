@@ -1,0 +1,6 @@
+# 這些共用考卷檔不作為受影響題的選題依據，避免一次選中幾乎全部題目。
+scripts/exam/dev/cases.json
+scripts/exam/native.sh
+scripts/exam.sh
+scripts/exam/run.mjs
+scripts/exam/common.mjs

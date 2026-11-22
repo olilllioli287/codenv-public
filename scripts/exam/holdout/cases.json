@@ -50,7 +50,8 @@
   {
     "id": "C17",
     "name": "卸載中串流切回不重複",
-    "runner": "native.sh"
+    "runner": "native.sh",
+    "serial": true
   },
   {
     "id": "C18",
@@ -60,7 +61,8 @@
   {
     "id": "C19",
     "name": "大訊息寫入不卡主執行緒",
-    "runner": "native.sh"
+    "runner": "native.sh",
+    "serial": true
   },
   {
     "id": "C20",
@@ -100,7 +102,8 @@
   {
     "id": "C27",
     "name": "看板開著、資料很多時按 F4 一秒內收完、不卡頓",
-    "runner": "native.sh"
+    "runner": "native.sh",
+    "serial": true
   },
   {
     "id": "C28",
@@ -115,7 +118,8 @@
   {
     "id": "C30",
     "name": "更新檢查連到不回應的伺服器會逾時",
-    "runner": "native.sh"
+    "runner": "native.sh",
+    "serial": true
   },
   {
     "id": "C32",
@@ -134,8 +138,10 @@
   },
   {
     "id": "C35",
-    "name": "闔蓋外接螢幕：防抖、上限、虛擬螢幕不算",
-    "runner": "native.sh"
+    "name": "舊闔蓋外接撐住路徑不得進入",
+    "runner": "native.sh",
+    "serial": true,
+    "description": "改驗 §11.2：舊 lidKeepWorking／外接子選項遷移後不再進入撐住、外接閒置或舊睡醒寬限路徑；使用 awake-closed-probe 的 migration scenario。掛鉤待施工，pending 不算通過。"
   },
   {
     "id": "C36",
@@ -145,12 +151,15 @@
   {
     "id": "C37",
     "name": "網頁程序反覆崩潰時重載有次數上限",
-    "runner": "native.sh"
+    "runner": "native.sh",
+    "serial": true
   },
   {
     "id": "C38",
-    "name": "闔蓋外接螢幕：睡醒寬限、重擋失敗放舊連線",
-    "runner": "native.sh"
+    "name": "舊外接睡醒寬限路徑不得進入",
+    "runner": "native.sh",
+    "serial": true,
+    "description": "改驗 §11.2：舊 lidKeepWorking／外接子選項遷移後不再進入撐住、外接閒置或舊睡醒寬限路徑；使用 awake-closed-probe 的 migration scenario。掛鉤待施工，pending 不算通過。"
   },
   {
     "id": "C39",
@@ -160,7 +169,8 @@
   {
     "id": "C40",
     "name": "背景 git 狀態讀對、逾時整群砍",
-    "runner": "native.sh"
+    "runner": "native.sh",
+    "serial": true
   },
   {
     "id": "C41",
@@ -238,11 +248,6 @@
     "runner": "native.sh"
   },
   {
-    "id": "C58",
-    "name": "agy 走 magpie 號池：連得上換模型名＋環境變數、連不上或關掉原樣、看板同規則",
-    "runner": "native.sh"
-  },
-  {
     "id": "C59",
     "name": "magpie 兩個帳號同額度平均，hover 顯示各帳號餘額與重置",
     "runner": "native.sh"
@@ -272,7 +277,7 @@
   },
   {
     "id": "C86",
-    "name": "外接螢幕闔蓋閒置十分鐘後還原風扇並睡眠",
+    "name": "舊外接閒置睡眠路徑不得進入",
     "runner": "native.sh",
     "files": [
       "Sources/Workbench/LidKeeper.swift",
@@ -281,7 +286,8 @@
       "Sources/Workbench/SettingsPages.swift",
       "Sources/Workbench/TestHarness.swift",
       "scripts/exam/native.sh"
-    ]
+    ],
+    "description": "改驗 §11.2：舊 lidKeepWorking／外接子選項遷移後不再進入撐住、外接閒置或舊睡醒寬限路徑；使用 awake-closed-probe 的 migration scenario。掛鉤待施工，pending 不算通過。"
   },
   {
     "id": "K01",

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Darwin
 
 // 右邊用量欄位「目前這段對話」底下：git 分支、這個分頁每一格正在跑的東西（主對話、前景的 Bash、背景的 shell 和子代理）。
 // 指令從 claude 的事件追：tool_use 開始、tool_result 結束；背景的看 background_tasks_changed（每次給完整清單）。
@@ -12,7 +13,8 @@ struct RunningItem: Identifiable, Equatable {
     let background: Bool
     let kind: String          // bash、agent、其他
     var pid: Int32? = nil     // 掃程序掃到的才有：停止時用 pid＋啟動時間（since）確認是同一個程序
-    var tag: String? = nil    // 用的模型（子代理：指定的或「同上」；指令：看得出叫了外部模型才有，例如 Gemini 3.8 Flash、Codex gpt-6-luna、Copilot、本機）
+    var tag: String? = nil    // 用的模型（子代理：指定的或「同上」；指令：看得出叫了外部模型才有，例如 Gemini 4 Hydrogen、Codex gpt-6-luna、Copilot、本機）
+    var progressFilePath: String? = nil // Claude Code 背景指令的輸出檔（只供本機右欄讀尾端）
 }
 
 struct GitInfo: Equatable {
@@ -54,13 +56,13 @@ final class SessionActivity: ObservableObject {
             for f in flags {
                 if let r = text.range(of: #"(?:^|\s)\#(NSRegularExpression.escapedPattern(for: f))(?:\s+|=)(\S+)"#, options: .regularExpression) {
                     let hit = String(text[r]).trimmingCharacters(in: .whitespaces)
-                    let v = hit.dropFirst(f.count).drop { $0 == " " || $0 == "=" }
+                    let v = hit.dropFirst(f.count).drop { $0 == " " || $0 == "\t" || $0 == "=" }
                     return String(v).trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
                 }
             }
             return nil
         }
-        // 一段一段看（; && || | 換行分開）：只認「這一段的第一個詞」真的是 agy／codex／copilot；grep agy、which codex 這種只是提到名字的不算
+        // 一段一段看（; && || | 換行分開）：只認「這一段的第一個詞」真的是已知外部模型 CLI；grep agy、which codex 這種只是提到名字的不算
         let normalized = command.replacingOccurrences(of: "&&", with: ";").replacingOccurrences(of: "||", with: ";")
         // 單一個 & 也是分隔（`agy … & agy … &` 同時開好幾個）：事件那一列只取第一段，其他的交給程序掃描
         for seg in normalized.split(whereSeparator: { ";|\n&".contains($0) }) {
@@ -70,23 +72,54 @@ final class SessionActivity: ObservableObject {
             while let t = tokens.first, (t.contains("=") && !t.hasPrefix("-") && !t.hasPrefix("/")) || ["sudo", "time", "nohup", "exec", "env", "command"].contains(t) { tokens.removeFirst() }
             guard let head = tokens.first.map({ ($0 as NSString).lastPathComponent }) else { continue }
             switch head {
-            case "agy":
+            case "agy", "agyp":
                 if let m = value(after: ["--model", "-m"], in: c) {
-                    // 思考強度在名字尾巴（-low／-medium／-high）：加「・低」「・中」「・高」
-                    let lv = AgyBridge.level(m).map { ["low": "・低", "medium": "・中", "high": "・高"][$0] ?? "" } ?? ""
-                    return AgyBridge.name(m) + lv
+                    // 思考強度在名字尾巴（-low／-medium／-high／-xhigh）：加「・low」「・medium」「・high」「・xhigh」
+                    let lvKey = AgyBridge.level(m) ?? (m.lowercased().hasSuffix("-xhigh") ? "xhigh" : nil)
+                    let lv = lvKey.map { ["low": "・low", "medium": "・medium", "high": "・high", "xhigh": "・xhigh"][$0] ?? "" } ?? ""
+                    let known = AgyBridge.name(m)
+                    if known != m { return known + lv }
+                    // 不在 AgyBridge.models 選單裡的新模型（如 gemini-4-neon-xhigh）：先去強度尾碼，再對齊顯示名稱
+                    let stem = lvKey.flatMap { k in m.lowercased().hasSuffix("-" + k) ? String(m.dropLast(k.count + 1)) : nil } ?? m
+                    let stemKnown = AgyBridge.name(stem)
+                    return (stemKnown != stem ? stemKnown : Self.prettyGeminiModel(stem)) + lv
                 }
                 return "agy"
             case "codex":
                 if let m = value(after: ["--model", "-m"], in: c) { return "Codex " + m }
                 return "Codex"
             case "copilot": return "Copilot"
+            case "dspublic", "dsfree", "dsh-safe":
+                if let m = value(after: ["--model", "-m"], in: c) { return "DeepSeek " + m }
+                return "DeepSeek"
+            case "qwenapi":
+                if let m = value(after: ["--model", "-m"], in: c) { return "Qwen " + m }
+                return "Qwen"
+            case "groqfree":
+                if let m = value(after: ["--model", "-m"], in: c) { return "Groq " + m }
+                return "Groq"
+            case "gemfree":
+                if let m = value(after: ["--model", "-m"], in: c) {
+                    let name = Self.prettyGeminiModel(m)
+                    return name.lowercased().hasPrefix("gemini") ? name : "Gemini " + name
+                }
+                return "Gemini"
             case "python", "python3", "mlx_lm", "mlx_vlm":
                 if c.contains("mlx_vlm") || c.contains("mlx_lm") { return L("本機") }
             default: break
             }
         }
         return nil
+    }
+
+    /// 把不在 AgyBridge.models 清單裡的 gemini-* 代號整理成與 AgyBridge.name 一致的顯示名稱（例如 gemini-4-neon → Gemini 4 Neon）
+    private static func prettyGeminiModel(_ raw: String) -> String {
+        guard raw.lowercased().hasPrefix("gemini-") else { return raw }
+        let parts = raw.split(separator: "-").map { tok -> String in
+            let s = String(tok)
+            return s.contains(where: \.isLetter) ? s.prefix(1).uppercased() + s.dropFirst() : s
+        }
+        return parts.isEmpty ? raw : parts.joined(separator: " ")
     }
 
     /// 子代理指定的模型（Agent 工具的 model：haiku／sonnet／opus 或完整名字）：用跟模型面板同一套名字；沒指定就是「同上」
@@ -101,10 +134,34 @@ final class SessionActivity: ObservableObject {
     func injectFakeForTest(_ id: UUID, count: Int) {
         var list: [RunningItem] = []
         for n in 0..<count {
-            if n == 1 { list.append(RunningItem(id: "fake\(n)", text: "agy -p Argon fixes second round", since: Date().addingTimeInterval(-200), background: true, kind: "bash", pid: 1, tag: "Gemini 4 Argon・高")) }
+            if n == 1 { list.append(RunningItem(id: "fake\(n)", text: "agy -p Argon fixes second round", since: Date().addingTimeInterval(-200), background: true, kind: "bash", pid: 1, tag: "Gemini 4 Argon・high")) }
             else { list.append(RunningItem(id: "fake\(n)", text: "sleep 600 # \(n)", since: Date().addingTimeInterval(-Double(30 + n * 20)), background: true, kind: "bash")) }
         }
         background[id] = list
+    }
+
+    /// 測試用（--state-dir + CODENV_FAKE_RUNNING=badges 才會被呼叫）：塞一組涵蓋各外部模型 CLI 徽章的假列，拍「正在跑」版面用。
+    func injectFakeBadgesForTest(_ id: UUID) {
+        let cmds = [
+            "agyp --model gemini-4-neon-xhigh -p review",
+            "dspublic --public -m deepseek-flash",
+            "qwenapi --public -m qwen4-max",
+            "dsh-safe \"x\"",
+            "groqfree",
+            "gemfree",
+            "echo x | dspublic --public",
+        ]
+        background[id] = cmds.enumerated().map { n, cmd in
+            RunningItem(
+                id: "fake-badge-\(n)",
+                text: cmd,
+                since: Date().addingTimeInterval(-Double(30 + n * 25)),
+                background: true,
+                kind: "bash",
+                pid: 1,
+                tag: Self.externalModel(in: cmd)
+            )
+        }
     }
 
     func running(_ id: UUID) -> [RunningItem] {
@@ -124,11 +181,20 @@ final class SessionActivity: ObservableObject {
         return s
     }
 
+    /// 零配置快速檢查：目前是否有任何前景、背景或掃描到的執行項目（與 `!activeIDs.isEmpty` 等價）
+    var hasAnyActive: Bool {
+        foreground.values.contains { !$0.isEmpty }
+            || background.values.contains { !$0.isEmpty }
+            || scanned.values.contains { !$0.isEmpty }
+    }
+
     // MARK: 掃程序（ProcessScan.swift）：Bash 用 `&` 丟出去的 agy／codex／copilot，事件追不到，靠掃 claude 底下的程序補上
     /// 掃到的項目（背景）
     @Published private(set) var scanned: [UUID: [RunningItem]] = [:]
     /// 每格 claude 的 pid（ChatPane 登記；沒有就不掃）
     private var pidProviders: [UUID: () -> Int32?] = [:]
+    /// Claude 主程序結束後仍保留最後的 PID；背景子程序的 CLAUDE_PID 環境變數仍用它來辨認所屬聊天室。
+    private var lastClaudePIDs: [UUID: Int32] = [:]
     private var scanTimer: Timer?
     private let scanQueue = DispatchQueue(label: "scan-processes", qos: .utility)
     private var scanning = false
@@ -155,7 +221,10 @@ final class SessionActivity: ObservableObject {
     func scanNow() {
         guard !scanning else { return }
         var owners: [Int32: UUID] = [:]
-        for (id, f) in pidProviders { if let p = f() { owners[p] = id } }
+        for (id, f) in pidProviders {
+            if let p = f() { lastClaudePIDs[id] = p }
+            if let p = lastClaudePIDs[id] { owners[p] = id }
+        }
         guard !owners.isEmpty else {
             if !scanned.isEmpty { scanned = [:] }
             return
@@ -287,9 +356,13 @@ final class SessionActivity: ObservableObject {
                     let desc = (t["description"] as? String) ?? type
                     // 背景指令：用事件給的指令（有的話），不然用先前記下的「描述 → 指令」，最後才用描述本身
                     let command = (t["command"] as? String) ?? Self.lookupCommand(desc, in: backgroundCommands[id] ?? [:]) ?? desc
+                    let outputPath = ["output_file", "output_path", "outputFile", "outputPath"]
+                        .compactMap { t[$0] as? String }
+                        .first { Self.isLocalProgressPath($0, project: directory) }
                     return RunningItem(id: tid, text: desc, since: old[tid]?.since ?? Date(), background: true,
                                        kind: type == "local_bash" ? "bash" : (type == "local_agent" ? "agent" : type),
-                                       tag: type == "local_bash" ? Self.externalModel(in: command) : (type == "local_agent" ? old[tid]?.tag ?? agentTags[id]?[desc] ?? L("同上") : nil))
+                                       tag: type == "local_bash" ? Self.externalModel(in: command) : (type == "local_agent" ? old[tid]?.tag ?? agentTags[id]?[desc] ?? L("同上") : nil),
+                                       progressFilePath: outputPath)
                 }
             case "vcs_state_changed":
                 if let directory { refreshGit(directory) }
@@ -297,6 +370,14 @@ final class SessionActivity: ObservableObject {
             }
         default: break
         }
+    }
+
+    /// 引事件提供的輸出路徑只接受本機 Claude 設定、專案或暫存目錄。
+    private static func isLocalProgressPath(_ raw: String, project: String?) -> Bool {
+        ProgressPathPolicy.canonicalAllowedURL(
+            URL(fileURLWithPath: raw),
+            roots: ProgressPathPolicy.roots(project: project.map { URL(fileURLWithPath: $0, isDirectory: true) })
+        ) != nil
     }
 
     /// claude 結束了：它的指令也都沒了
@@ -351,15 +432,110 @@ final class SessionActivity: ObservableObject {
     }
 }
 
+/// 右欄「正在跑」用的單列摘要；不改 SessionActivity 原本各聊天室的清單。
+struct RunningActivityEntry: Identifiable {
+    let id: String
+    let conversationID: UUID
+    let chat: String
+    let kind: String
+    let label: String
+    let progressSource: RunningActivityProgress.Source?
+}
+
+enum RunningActivitySummary {
+    static func visibleChatIDs(_ store: Store) -> [UUID] {
+        (store.currentWindow?.root?.leaves ?? []).filter { store.conversation($0) != nil }
+    }
+
+    /// 目前右欄原本顯示的各格項目。
+    static func ownEntries(store: Store) -> [RunningActivityEntry] {
+        visibleChatIDs(store).compactMap { store.conversation($0) }.flatMap { entries(for: $0, store: store) }
+    }
+
+    /// 總指揮看所有底下聊天室；區長只看自己直屬區的其他聊天室。
+    /// 已在目前視窗由原本的聊天室樹列出的格子不重複加入。
+    static func aggregatedEntries(store: Store) -> [RunningActivityEntry] {
+        guard store.status.values.contains(where: { $0 != .idle }) || SessionActivity.shared.hasAnyActive else { return [] }
+        guard let selected = store.selected else { return [] }
+        let members: [Conversation]
+        if let session = store.commander(of: selected), session.chief == selected {
+            members = store.commanderMembers(session).filter { $0.id != selected }
+        } else if let lead = store.areaLeadContext(caller: selected.uuidString) {
+            members = store.areaLeadMembers(lead).filter { $0.id != selected }
+        } else {
+            return []
+        }
+        let visible = Set(visibleChatIDs(store))
+        return members
+            .filter { Store.isChat($0) && !$0.isBrowser && !$0.isGadget && $0.draft != true && !store.isArchived($0) && !visible.contains($0.id) }
+            .flatMap { entries(for: $0, store: store) }
+    }
+
+    static func activeChatCount(_ ids: [UUID], store: Store) -> Int {
+        ids.filter { (store.status[$0] ?? .idle) != .idle || !SessionActivity.shared.running($0).isEmpty }.count
+    }
+
+    private static func entries(for conversation: Conversation, store: Store) -> [RunningActivityEntry] {
+        var out: [RunningActivityEntry] = []
+        let status = store.status[conversation.id] ?? .idle
+        if status != .idle {
+            out.append(RunningActivityEntry(id: "main-\(conversation.id)", conversationID: conversation.id, chat: conversation.title,
+                                            kind: "main", label: status == .waiting ? L("等你回覆") : L("工作中"), progressSource: nil))
+        }
+        out += SessionActivity.shared.running(conversation.id).map { entry(for: $0, conversation: conversation, store: store) }
+        return out
+    }
+
+    static func entry(for item: RunningItem, conversation: Conversation, store: Store) -> RunningActivityEntry {
+        let label = [item.tag, item.text].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        let projectRoot = URL(fileURLWithPath: store.workingDirectory(for: conversation), isDirectory: true)
+        let allowedRoots = ProgressPathPolicy.roots(project: projectRoot)
+        let source: RunningActivityProgress.Source?
+        if item.background, item.kind == "agent" {
+            let transcript = Store.claudeTranscript(conversation.claudeSession, path: store.workingDirectory(for: conversation))
+            let dir = transcript.deletingPathExtension().appendingPathComponent("subagents", isDirectory: true)
+            source = .agent(directory: dir, taskID: item.id, description: item.text, since: item.since, allowedRoots: allowedRoots)
+        } else if item.background, item.kind == "bash" {
+            let safeID = item.id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") } ? item.id : ""
+            var candidates: [URL] = []
+            if let path = item.progressFilePath { candidates.append(URL(fileURLWithPath: path)) }
+            if !safeID.isEmpty {
+                let transcript = Store.claudeTranscript(conversation.claudeSession, path: store.workingDirectory(for: conversation))
+                let projectSlug = transcript.deletingLastPathComponent().lastPathComponent
+                let tempTasks = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+                    .appendingPathComponent("claude-\(getuid())", isDirectory: true)
+                    .appendingPathComponent(projectSlug, isDirectory: true)
+                    .appendingPathComponent(conversation.claudeSession.uuidString.lowercased(), isDirectory: true)
+                    .appendingPathComponent("tasks", isDirectory: true)
+                candidates.append(tempTasks.appendingPathComponent(safeID + ".output"))
+            }
+            source = candidates.isEmpty ? nil : .outputs(candidates, allowedRoots: allowedRoots)
+        } else {
+            source = nil
+        }
+        return RunningActivityEntry(id: "\(conversation.id)-\(item.id)", conversationID: conversation.id, chat: conversation.title,
+                                    kind: item.kind, label: label, progressSource: source)
+    }
+}
+
 /// 用量欄位裡，上下文下面那幾行
 struct ActivityBlock: View {
     @Environment(\.uiScale) private var s
     @ObservedObject var store: Store
     @ObservedObject var activity = SessionActivity.shared
+    @ObservedObject var progress: RunningActivityProgressModel
+    private let precomputedAggregated: [RunningActivityEntry]?
     private let tick = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
+    init(store: Store, progress: RunningActivityProgressModel = RunningActivityProgressModel(), aggregated: [RunningActivityEntry]? = nil) {
+        self.store = store
+        self.progress = progress
+        self.precomputedAggregated = aggregated
+    }
+
     var body: some View {
-        if let id = store.selected, let c = store.conversation(id), let dir = store.project(c.projectID)?.path {
+        if let id = store.selected, let c = store.conversation(id) {
+            let dir = store.workingDirectory(for: c)
             VStack(alignment: .leading, spacing: 6) {
                 // 資料夾改放在每一格最下面的路徑列（PathBar），這裡不再列
                 if let g = activity.git[dir] ?? nil {
@@ -371,23 +547,40 @@ struct ActivityBlock: View {
                         }
                     }
                     if g.changed > 0 {
-                        Text(L("\(g.changed) 個檔案改過還沒 commit")).font(.system(size: 11 * s)).foregroundStyle(.tertiary)
+                        Text(L("\(g.changed) 個檔案改過還沒 commit")).font(InterfaceFont.swiftUIFont(size: 11 * s)).foregroundStyle(.tertiary)
                     }
                 }
                 // 列這個分頁每一格在跑的，像終端機那樣用樹狀：main（主對話）、shell、agent
-                let ids = (store.currentWindow?.root?.leaves ?? []).filter { store.conversation($0) != nil }
+                let ids = RunningActivitySummary.visibleChatIDs(store)
                 let live = ids.filter { (store.status[$0] ?? .idle) != .idle || !activity.running($0).isEmpty }
-                if !live.isEmpty {
-                    Text(L("正在跑")).font(.system(size: 12 * s)).padding(.top, 4)
+                let aggregated = precomputedAggregated ?? RunningActivitySummary.aggregatedEntries(store: store)
+                if !live.isEmpty || !aggregated.isEmpty {
+                    Text(L("正在跑")).font(InterfaceFont.swiftUIFont(size: 12 * s)).padding(.top, 4)
                     TimelineView(.periodic(from: .now, by: 1)) { ctx in
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(live, id: \.self) { tree($0, now: ctx.date) }
+                            ForEach(Array(aggregated.prefix(12))) { item in
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text("[\(item.chat)] \(item.kind): \(item.label)")
+                                        .lineLimit(2).truncationMode(.tail).help("[\(item.chat)] \(item.kind): \(item.label)")
+                                    if let summary = progress.snapshot(for: item) {
+                                        Text(summary.line).lineLimit(1).truncationMode(.tail).foregroundStyle(.secondary)
+                                        if summary.stale {
+                                            Text(L("\(summary.staleMinutes ?? 5) 分鐘沒新動靜")).lineLimit(1).foregroundStyle(.tertiary)
+                                        }
+                                    }
+                                }
+                                .contentShape(Rectangle()).onTapGesture { store.show(item.conversationID) }
+                            }
+                            if aggregated.count > 12 {
+                                Text(L("還有 \(aggregated.count - 12) 項")).foregroundStyle(.tertiary)
+                            }
                         }
-                        .font(.system(size: 10.5 * s, design: .monospaced))   // 整塊縮 1 點
+                        .font(InterfaceFont.swiftUIFont(size: 10.5 * s, design: .monospaced))   // 整塊縮 1 點
                     }
                 }
             }
-            .font(.system(size: 12 * s))
+            .font(InterfaceFont.swiftUIFont(size: 12 * s))
             .padding(.top, 6)
             .onAppear { paneDirs.forEach(activity.refreshGit) }
             .onChange(of: id) { _, _ in activity.refreshGit(dir) }
@@ -400,7 +593,7 @@ struct ActivityBlock: View {
     private var paneDirs: [String] {
         let ids = store.currentWindow?.root?.leaves ?? []
         var seen = Set<String>()
-        return ids.compactMap { store.conversation($0).flatMap { store.project($0.projectID)?.path } }.filter { seen.insert($0).inserted }
+        return ids.compactMap { store.conversation($0).map { store.workingDirectory(for: $0) } }.filter { seen.insert($0).inserted }
     }
 
     /// 一格：標題（聊天室名字、用的模型、分支），底下 ├─ └─ 列 main、shell、agent。
@@ -414,16 +607,19 @@ struct ActivityBlock: View {
             + activity.running(id).map { it in
                 let oneLine = it.text.replacingOccurrences(of: "\n", with: " ")
                 // 子代理：描述就是名字（第一行）；指令：第一行 shell，內容放第三行
+                let waitingLabel = st == .idle && it.background ? L("等背景任務：\(it.tag ?? oneLine)") : (it.background ? L("背景") : L("執行中"))
                 return (it.id, it.kind == "agent" ? oneLine : (it.kind == "bash" ? "shell" : it.kind),
-                        it.background ? L("背景") : L("執行中"), it.tag, it.kind == "agent" ? nil : oneLine, it.since, it)
+                        waitingLabel, it.tag, it.kind == "agent" ? nil : oneLine, it.since, it)
             }
+        let backgroundCount = items.filter { $0.item?.background == true }.count
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {
                 Text(c?.title ?? "").fontWeight(.semibold).lineLimit(1).truncationMode(.tail)
+                if st == .idle, backgroundCount > 0 { Text(L("等背景任務（\(backgroundCount)）")).font(InterfaceFont.swiftUIFont(size: 9.5 * s)).foregroundStyle(.orange).lineLimit(1) }
                 if let m = activity.modelNames[id], !m.isEmpty {
-                    Text(m).font(.system(size: 9.5 * s)).foregroundStyle(.tertiary).lineLimit(1).fixedSize().layoutPriority(2)
+                    Text(m).font(InterfaceFont.swiftUIFont(size: 9.5 * s)).foregroundStyle(.tertiary).lineLimit(1).fixedSize().layoutPriority(2)
                 }
-                if let dir = c.flatMap({ store.project($0.projectID)?.path }), let g = activity.git[dir] ?? nil {
+                if let dir = c.map({ store.workingDirectory(for: $0) }), let g = activity.git[dir] ?? nil {
                     Text("⎇ " + g.branch).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
                 }
             }
@@ -451,12 +647,20 @@ struct ActivityBlock: View {
                         .lineLimit(1).truncationMode(.tail).layoutPriority(3)
                     Spacer(minLength: 0)
                 }
-                .font(.system(size: 9.5 * s, design: .monospaced)).foregroundStyle(.tertiary).monospacedDigit()
+                .font(InterfaceFont.swiftUIFont(size: 9.5 * s, design: .monospaced)).foregroundStyle(.tertiary).monospacedDigit()
                 .contentShape(Rectangle()).onTapGesture { store.show(id) }
                 if let t = l.text {
-                    Text(pad + t).font(.system(size: 9.5 * s, design: .monospaced)).foregroundStyle(.tertiary)
+                    Text(pad + t).font(InterfaceFont.swiftUIFont(size: 9.5 * s, design: .monospaced)).foregroundStyle(.tertiary)
                         .lineLimit(1).truncationMode(.tail).help(t)
                         .contentShape(Rectangle()).onTapGesture { store.show(id) }
+                }
+                if let item = l.item, let c, let summary = progress.snapshot(for: RunningActivitySummary.entry(for: item, conversation: c, store: store)) {
+                    Text(pad + summary.line).font(InterfaceFont.swiftUIFont(size: 9.5 * s, design: .monospaced)).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.tail).help(summary.line)
+                    if summary.stale {
+                        Text(pad + L("\(summary.staleMinutes ?? 5) 分鐘沒新動靜"))
+                            .font(InterfaceFont.swiftUIFont(size: 9.5 * s, design: .monospaced)).foregroundStyle(.tertiary).lineLimit(1)
+                    }
                 }
                 }
                 .opacity(l.item.map { activity.stopping.contains($0.id) } == true ? 0.35 : 1)
@@ -494,8 +698,10 @@ struct ActivityBlock: View {
 
 
 /// 「正在跑」的模型標籤：廠商圖示（跟上下文欄、用量欄同一套 ModelTab 圖示）＋簡稱，文字裡不寫廠商名字
-/// Gemini 4 Argon → Argon、Gemini 3.8 Flash・高 → 3.8 Flash・高、Codex gpt-6-luna → Luna 6、Claude Opus 5.5（agy 跑的 Claude）→ Claude 圖示＋Opus 5.5、
-/// Copilot → 只有圖示。認不出來的照原字串（去掉廠商前綴），沒有圖示
+/// Gemini 4 Argon → Argon、Gemini 4 Hydrogen・high → Hydrogen・high、Gemini 4 Neon・xhigh → Neon・xhigh、舊的 Gemini 3.8 Flash・high仍保留名稱、
+/// Codex gpt-6-luna → Luna 6、Claude Opus 5.5（agy 跑的 Claude）→ Claude 圖示＋Opus 5.5、
+/// DeepSeek deepseek-flash → Flash、Qwen qwen4-max → Qwen4 Max、
+/// Copilot／DeepSeek／Qwen／Groq／Gemini（無型號）→ 只有圖示。認不出來的照原字串，沒有圖示
 enum ModelBadge {
     static func info(_ tag: String) -> (tab: ModelTab?, text: String) {
         let t = tag.trimmingCharacters(in: .whitespaces)
@@ -504,14 +710,32 @@ enum ModelBadge {
         if lower.hasPrefix("codex") { let r = rest("codex"); return (.chatgpt, r.isEmpty ? "" : gptShort(r)) }
         if lower.hasPrefix("copilot") { return (.copilot, rest("copilot")) }
         if t == L("本機") { return (.local, t) }
+        if lower == "gemfree" { return (.gemini, "") }
         if lower.hasPrefix("gemini") {
             // 只有一個整數版本號又接著名字（4 Argon）：版本號省略；3.8 Flash 這種小數版本保留
-            return (.gemini, rest("gemini").replacingOccurrences(of: #"^\d+\s+(?=\D)"#, with: "", options: .regularExpression))
+            let r = rest("gemini").trimmingCharacters(in: CharacterSet(charactersIn: "- "))
+            return (.gemini, r.replacingOccurrences(of: #"^\d+[\s-]+(?=\D)"#, with: "", options: .regularExpression))
         }
         if lower.hasPrefix("claude") { return (.claude, rest("claude")) }
         if ["opus", "sonnet", "haiku", "fable"].contains(where: { lower.hasPrefix($0) }) { return (.claude, t) }
         if lower.hasPrefix("gpt") { return (.chatgpt, gptShort(t)) }
-        if lower == "agy" { return (.gemini, "agy") }
+        if lower == "agy" || lower == "agyp" { return (.gemini, "agy") }
+        if ["dspublic", "dsfree", "dsh-safe"].contains(lower) { return (.deepseek, "") }
+        if lower.hasPrefix("deepseek") {
+            let r = rest("deepseek").trimmingCharacters(in: CharacterSet(charactersIn: "- "))
+            return (.deepseek, r.isEmpty ? "" : deepseekShort(r))
+        }
+        if lower == "qwenapi" || lower == "qwen" { return (.qwen, "") }
+        if lower.hasPrefix("qwen ") {
+            let r = rest("qwen")
+            return (.qwen, r.isEmpty ? "" : qwenShort(r))
+        }
+        if lower.hasPrefix("qwen") { return (.qwen, qwenShort(t)) }
+        if lower == "groqfree" || lower == "groq" { return (.groq, "") }
+        if lower.hasPrefix("groq ") {
+            let r = rest("groq")
+            return (.groq, r.isEmpty ? "" : groqShort(r))
+        }
         return (nil, t)
     }
     /// gpt-6-luna／GPT-6 Luna → Luna 6：名字在前、版本號在後
@@ -524,12 +748,44 @@ enum ModelBadge {
         let nums = tokens.filter { !$0.contains { $0.isLetter } }
         return (words + nums).joined(separator: " ")
     }
+    /// deepseek-flash → Flash、deepseek-reasoner → Reasoner、deepseek-4-flash → Flash 4（風格同 gptShort）
+    private static func deepseekShort(_ raw: String) -> String {
+        var t = raw.lowercased()
+        if t.hasPrefix("deepseek") { t = String(t.dropFirst("deepseek".count)) }
+        let tokens = t.split(whereSeparator: { "- ".contains($0) }).map(String.init)
+        guard !tokens.isEmpty else { return raw }
+        let words = tokens.filter { $0.contains { $0.isLetter } }.map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        let nums = tokens.filter { !$0.contains { $0.isLetter } }
+        return (words + nums).joined(separator: " ")
+    }
+    /// qwen4-max → Qwen4 Max、qwen3.5-plus → Qwen3.5 Plus、qwen-max → Max
+    private static func qwenShort(_ raw: String) -> String {
+        var s = raw
+        if let slash = s.lastIndex(of: "/") { s = String(s[s.index(after: slash)...]) }
+        let lower = s.lowercased()
+        if lower.hasPrefix("qwen-") || lower.hasPrefix("qwen ") { s = String(s.dropFirst(5)) }
+        let tokens = s.split(whereSeparator: { "- ".contains($0) }).map(String.init)
+        guard !tokens.isEmpty else { return raw }
+        return tokens.map { tok in
+            tok.contains(where: \.isLetter) ? tok.prefix(1).uppercased() + tok.dropFirst() : tok
+        }.joined(separator: " ")
+    }
+    /// llama-3.3-70b → Llama 3.3 70b、openai/gpt-oss-20b → Gpt Oss 20b
+    private static func groqShort(_ raw: String) -> String {
+        var s = raw
+        if let slash = s.lastIndex(of: "/") { s = String(s[s.index(after: slash)...]) }
+        let tokens = s.split(whereSeparator: { "- ".contains($0) }).map(String.init)
+        guard !tokens.isEmpty else { return raw }
+        return tokens.map { tok in
+            tok.contains(where: \.isLetter) ? tok.prefix(1).uppercased() + tok.dropFirst() : tok
+        }.joined(separator: " ")
+    }
 }
 
 struct ModelBadgeView: View {
     let tag: String
     var scale: CGFloat = 1
-    var colored = false       // 單色圖示（OpenAI、Copilot、本機）也上品牌色，不跟著文字變灰
+    var colored = false       // 單色圖示（OpenAI、Copilot、本機、Groq）也上品牌色，不跟著文字變灰
     var body: some View {
         let i = ModelBadge.info(tag)
         Group {
@@ -560,7 +816,8 @@ struct ModelBadgeView: View {
         case .chatgpt: return Color(red: 0.06, green: 0.64, blue: 0.50)
         case .copilot: return Color(red: 0.51, green: 0.40, blue: 0.93)
         case .local: return .orange
-        default: return nil       // Claude、Gemini 的圖本來就有顏色
+        case .groq: return Color(red: 0.96, green: 0.31, blue: 0.21)
+        default: return nil       // Claude、Gemini、DeepSeek、Qwen 的圖本來就有顏色
         }
     }
 }

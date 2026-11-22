@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""Sweep newly modified test preference plists around a command or test session."""
+
+from __future__ import annotations
+
+import json
+import errno
+import os
+import re
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+MARKER_NAME = ".prefs-sweep-start"
+BASELINE_NAME = ".prefs-sweep-baseline.json"
+PATTERNS = (
+    re.compile(r"com\.local\.aiworkbench\.test\.[0-9a-f]{32}\.plist\Z"),
+    re.compile(r"codenv\.lid-interrupt-probe\..+\.plist\Z"),
+)
+USAGE = (
+    "用法：prefs-sweep -- <指令…>\n"
+    "      prefs-sweep begin <暫存 session 目錄>\n"
+    "      prefs-sweep end <暫存 session 目錄>"
+)
+
+
+def preferences_dir() -> Path:
+    configured = os.environ.get("EXAM_PREFS_DIR")
+    raw = Path(configured).expanduser() if configured else Path.home() / "Library" / "Preferences"
+    return raw.resolve(strict=False)
+
+
+def matching_names(root: Path) -> list[str]:
+    if not root.exists():
+        return []
+    if not root.is_dir():
+        raise RuntimeError(f"Preferences 路徑不是資料夾：{root}")
+    return sorted(entry.name for entry in root.iterdir()
+                  if any(pattern.fullmatch(entry.name) for pattern in PATTERNS))
+
+
+def session_paths(session_dir: Path) -> tuple[Path, Path]:
+    return session_dir / MARKER_NAME, session_dir / BASELINE_NAME
+
+
+def is_within(parent: Path, child: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def validate_session_dir(session_dir: Path) -> None:
+    root = preferences_dir()
+    temp_roots = {Path(tempfile.gettempdir()).resolve(strict=False), Path("/tmp").resolve(strict=False)}
+    if not any(is_within(temp_root, session_dir) for temp_root in temp_roots):
+        raise RuntimeError("prefs-sweep 標記與基準必須放在暫存目錄")
+    if is_within(root, session_dir):
+        raise RuntimeError("prefs-sweep 標記與基準不可放在 Preferences 目錄內")
+
+
+def begin(session_dir: Path) -> int:
+    session_dir = session_dir.expanduser().resolve(strict=False)
+    validate_session_dir(session_dir)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    marker_path, manifest_path = session_paths(session_dir)
+    if marker_path.exists() or marker_path.is_symlink() or manifest_path.exists() or manifest_path.is_symlink():
+        print("錯誤：這個 prefs-sweep session 已存在起點資料。", file=sys.stderr)
+        return 2
+
+    root = preferences_dir()
+    marker_path.touch(exist_ok=False)
+    marker_ns = marker_path.stat().st_mtime_ns
+    names = matching_names(root)
+    data = {
+        "preferencesRealpath": str(root),
+        "markerMtimeNs": marker_ns,
+        "startFiles": names,
+        "startCount": len(names),
+    }
+    manifest_path.write_text(json.dumps(data, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    return 0
+
+
+def finish(session_dir: Path) -> int:
+    session_dir = session_dir.expanduser().resolve(strict=False)
+    try:
+        validate_session_dir(session_dir)
+    except RuntimeError as error:
+        print(f"錯誤：prefs-sweep session 路徑不安全：{error}", file=sys.stderr)
+        return 1
+    marker_path, manifest_path = session_paths(session_dir)
+    try:
+        if marker_path.is_symlink() or manifest_path.is_symlink():
+            raise RuntimeError("起點標記與基準檔不可是符號連結")
+        baseline = json.loads(manifest_path.read_text(encoding="utf-8"))
+        root = preferences_dir()
+        expected_root = Path(str(baseline["preferencesRealpath"]))
+        if root != expected_root:
+            raise RuntimeError(f"Preferences 路徑在測試期間改變：{expected_root} → {root}")
+        marker_ns = int(baseline["markerMtimeNs"])
+        if marker_path.stat().st_mtime_ns != marker_ns:
+            raise RuntimeError("起點標記檔在測試期間被改動")
+        start_files = baseline["startFiles"]
+        start_count = int(baseline["startCount"])
+        if (not isinstance(start_files, list) or len(start_files) != start_count
+                or not all(isinstance(name, str) for name in start_files)):
+            raise RuntimeError("起點 plist 清單格式錯誤")
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, RuntimeError) as error:
+        print(f"錯誤：考卷測試偏好 plist 基準讀取失敗：{error}", file=sys.stderr)
+        return 1
+
+    cleanup_errors: list[str] = []
+    try:
+        for name in matching_names(root):
+            target = root / name
+            try:
+                info = target.lstat()
+                if info.st_mtime_ns <= marker_ns or stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                    continue
+                real_target = target.resolve(strict=True)
+                real_parent = target.parent.resolve(strict=True)
+                if real_parent != root or real_target.parent != root:
+                    continue
+                # 直接 unlink plist，不走 defaults delete／removePersistentDomain。
+                target.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                cleanup_errors.append(f"{name}: {error}")
+        end_files = matching_names(root)
+    except (OSError, RuntimeError) as error:
+        print(f"錯誤：無法清掃或重新掃描測試偏好 plist：{error}", file=sys.stderr)
+        return 1
+
+    end_count = len(end_files)
+    print(f"測試偏好 plist：開始 {start_count}、結束 {end_count}")
+    failed = False
+    if end_count > start_count:
+        increase = end_count - start_count
+        added = [name for name in end_files if name not in start_files][:5]
+        sample = "、".join(added) if added else "（無法定位新增名稱）"
+        print(f"錯誤：考卷後測試偏好 plist 增加 {increase} 個：{sample}")
+        failed = True
+    if cleanup_errors:
+        print("錯誤：部分測試偏好 plist 清理失敗：" + "；".join(cleanup_errors[:5]), file=sys.stderr)
+        failed = True
+    return 1 if failed else 0
+
+
+def run_command(command: list[str]) -> int:
+    if not command:
+        print("錯誤：prefs-sweep -- 後面需要指令。\n" + USAGE, file=sys.stderr)
+        return 2
+
+    with tempfile.TemporaryDirectory(prefix="codenv-exam-prefs-sweep-") as raw_session:
+        session_dir = Path(raw_session)
+        try:
+            if begin(session_dir) != 0:
+                return 1
+        except (OSError, RuntimeError) as error:
+            print(f"錯誤：無法建立 prefs-sweep 起點：{error}", file=sys.stderr)
+            return 1
+
+        child: subprocess.Popen[bytes] | None = None
+        received_signal: int | None = None
+        old_handlers: dict[int, object] = {}
+
+        def forward_signal(signum: int, _frame: object) -> None:
+            nonlocal received_signal
+            received_signal = signum
+            if child is not None and child.poll() is None:
+                try:
+                    child.send_signal(signum)
+                except ProcessLookupError:
+                    pass
+
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            old_handlers[signum] = signal.signal(signum, forward_signal)
+
+        command_status = 0
+        try:
+            if received_signal is None:
+                try:
+                    child = subprocess.Popen(command)
+                    code = child.wait()
+                    command_status = code if code >= 0 else 128 - code
+                except OSError as error:
+                    print(f"錯誤：無法執行指令：{error}", file=sys.stderr)
+                    command_status = 127 if error.errno == errno.ENOENT else 126
+        finally:
+            try:
+                cleanup_status = finish(session_dir)
+            finally:
+                for signum, old_handler in old_handlers.items():
+                    signal.signal(signum, old_handler)
+
+        if received_signal is not None:
+            return 128 + received_signal
+        if command_status != 0:
+            return command_status
+        return cleanup_status
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) >= 2 and argv[1] == "--":
+        return run_command(argv[2:])
+    if len(argv) == 3 and argv[1] == "begin":
+        try:
+            return begin(Path(argv[2]))
+        except (OSError, RuntimeError) as error:
+            print(f"錯誤：無法建立 prefs-sweep 起點：{error}", file=sys.stderr)
+            return 1
+    if len(argv) == 3 and argv[1] == "end":
+        try:
+            return finish(Path(argv[2]))
+        except (OSError, RuntimeError) as error:
+            print(f"錯誤：prefs-sweep 結束清掃失敗：{error}", file=sys.stderr)
+            return 1
+    print(USAGE, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

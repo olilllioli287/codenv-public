@@ -1,0 +1,11 @@
+[
+  {
+    "active": true,
+    "plan": "free",
+    "user": "free@example.test",
+    "alias": "free1",
+    "windows": [
+      { "name": "30 days", "remaining": 67, "resetsAt": "2026-12-10T00:00:00Z" }
+    ]
+  }
+]

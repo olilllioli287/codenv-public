@@ -115,6 +115,11 @@ private final class WeakHandler: NSObject, WKScriptMessageHandler {
 
 /// 聊天介面的一格：上面是對話內容（網頁畫面 Resources/chat），下面是原生輸入框
 final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
+    /// CodeLab 左側純點擊只在 App 活躍且所在視窗為 key 時交接輸入焦點；探針可注入隔離狀態。
+    static var allowPlainClickFocus: (Bool, Bool) -> Bool = { appActive, keyWindow in appActive && keyWindow }
+    /// --lid-interrupt-sessions 測試期間觀察聊天室送訊息呼叫；正式流程不設定此回呼。
+    static var lidInterruptSendObserver: ((UUID, String, String?, Bool) -> Void)?
+
     let session: ChatSession
     private var web: DropWebView?
     var hasWeb: Bool { web != nil }
@@ -151,6 +156,8 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     /// 背景替這段對話跑的模型（nil＝沒有）：右側欄「使用中」用
     var onBackgroundModel: ((String?) -> Void)?
     var onStatus: ((ChatStatus) -> Void)?
+    /// 指派訊息實際回送與該輪結果，交由 Workspace 的總指揮派工追蹤器處理。
+    var onCommanderDispatchEvent: ((String, [String: Any]) -> Void)?
     /// 第一次送出時給標題用
     var onFirstMessage: ((String) -> Void)?
     /// 要求變成目前這格（拖放進來時：之後切回 App 的游標也放在這格）
@@ -180,10 +187,32 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     private var quotes: [MessageQuote] = []
 
     private var draftPersistence: DraftPersistence?
+    private var suppressDraftPersistence = false
+    /// Isolated lifecycle probe can delay handoff writes to exercise the unchanged two-second deadline.
+    var draftHandoffWriteDelayForTest: TimeInterval = 0
+    var draftHandoffRollbackReachedForTest = false
+    var draftHandoffRollbackTextLengthAfterAssignmentForTest: Int?
+    var draftHandoffRollbackTextLengthAfterChangeForTest: Int?
+    var draftHandoffRollbackWasEditableForTest: Bool?
+    var draftHandoffRollbackWasKeyScanningForTest: Bool?
+    var draftHandoffRollbackHadMarkedTextForTest: Bool?
     private var checkedOutbox = false
     private var recoveringOutbox = false
     private var recoveredOutboxIDs = Set<String>()
     private var recoveredOutboxDraft: (text: String, quotes: [MessageQuote], files: [String], images: [DraftPersistence.Image])?
+
+    var draftHasPendingLargeWriteForTest: Bool {
+        CommandLine.arguments.contains("--state-dir") && (draftPersistence?.hasPendingLargeWrite ?? false)
+    }
+
+    private func persistableDraftForHandoff(timeout: TimeInterval = 2) -> Bool {
+        guard inputBar.hasPendingInput else { return true }
+        let text = inputBar.textView.string
+        guard DraftPersistence.requiresBackground(text: text), let persistence = draftPersistence else { return flushDraft() }
+        return persistence.writeForHandoff(text: text, quotes: quotes, filePaths: inputBar.draftFilePaths,
+                                           images: inputBar.draftImages, timeout: timeout,
+                                           testWriteDelay: CommandLine.arguments.contains("--state-dir") ? draftHandoffWriteDelayForTest : 0)
+    }
 
     func configureDraftPersistence(directory: URL) {
         guard let id = conversationID else { return }
@@ -192,13 +221,24 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         session.outboxPersistence = OutboxPersistence(directory: directory, conversationID: id)
         session.onOutboxError = { [weak self] message in self?.notice(message) }
         inputBar.onDraftChange = { [weak self] in
-            DispatchQueue.main.async { self?.persistDraftSoon() }
+            guard let self, !self.suppressDraftPersistence else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.suppressDraftPersistence else { return }
+                self.persistDraftSoon()
+            }
         }
-        inputBar.onPendingInputChange = { [weak self] in self?.persistDraftSoon() }
+        inputBar.onPendingInputChange = { [weak self] in
+            guard let self, !self.suppressDraftPersistence else { return }
+            self.persistDraftSoon()
+        }
         restoreSavedDraft()
     }
 
     func removeSavedDraft() { draftPersistence?.remove() }
+
+    func cancelKeyGuardScanAfterPaneSwitch() {
+        inputBar.invalidatePendingKeyGuardScan()
+    }
 
     func restoreSavedDraftIfNeeded() {
         restoreSavedDraft()
@@ -209,14 +249,57 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     @discardableResult
     func moveDraft(to target: ChatPane) -> Bool {
         guard target !== self, inputBar.hasPendingInput else { return true }
-        guard !target.inputBar.hasPendingInput, flushDraft() else { return false }
+        let deadline = ProcessInfo.processInfo.systemUptime + 1.9
+        func remainingTime() -> TimeInterval { max(0, deadline - ProcessInfo.processInfo.systemUptime) }
+        guard !target.inputBar.hasPendingInput, persistableDraftForHandoff(timeout: remainingTime()) else { return false }
+        let targetTextView = target.inputBar.textView
+        let targetTextBefore = targetTextView.string
+        let targetAttributedTextBefore = targetTextView.textStorage.map { NSAttributedString(attributedString: $0) }
+        let targetSelectionBefore = targetTextView.selectedRange()
+        let targetTypingAttributesBefore = targetTextView.typingAttributes
+        let targetImagesBefore = target.inputBar.draftImages
+        let targetFilesBefore = target.inputBar.draftFilePaths
+        let targetQuotesBefore = target.quotes
+        let targetWasSuppressing = target.suppressDraftPersistence
+        target.suppressDraftPersistence = true
         target.inputBar.textView.string = inputBar.textView.string
         target.inputBar.textView.undoManager?.removeAllActions()
         target.inputBar.restoreImages(inputBar.draftImages)
         target.inputBar.restoreFilePaths(inputBar.draftFilePaths)
         target.inputBar.textView.didChangeText()
         target.setQuotes(quotes, syncWeb: true)
-        guard target.flushDraft() else { return false } // 存不進去時，舊的一份仍在。
+        guard target.persistableDraftForHandoff(timeout: remainingTime()) else {
+            if CommandLine.arguments.contains("--state-dir") {
+                target.draftHandoffRollbackReachedForTest = true
+                target.draftHandoffRollbackWasEditableForTest = target.inputBar.textView.isEditable
+                target.draftHandoffRollbackWasKeyScanningForTest = target.inputBar.isKeyScanInProgress
+                target.draftHandoffRollbackHadMarkedTextForTest = target.inputBar.textView.hasMarkedText()
+            }
+            target.draftPersistence?.cancelPendingWriteKeepingDisk()
+            if let storage = targetTextView.textStorage, let targetAttributedTextBefore {
+                storage.setAttributedString(targetAttributedTextBefore)
+            } else {
+                targetTextView.string = targetTextBefore
+            }
+            let restoredLength = (targetTextView.string as NSString).length
+            let selectionLocation = min(targetSelectionBefore.location, restoredLength)
+            let selectionLength = min(targetSelectionBefore.length, restoredLength - selectionLocation)
+            targetTextView.setSelectedRange(NSRange(location: selectionLocation, length: selectionLength))
+            targetTextView.typingAttributes = targetTypingAttributesBefore
+            if CommandLine.arguments.contains("--state-dir") {
+                target.draftHandoffRollbackTextLengthAfterAssignmentForTest = targetTextView.string.utf8.count
+            }
+            target.inputBar.restoreImages(targetImagesBefore)
+            target.inputBar.restoreFilePaths(targetFilesBefore)
+            target.inputBar.textView.didChangeText()
+            if CommandLine.arguments.contains("--state-dir") {
+                target.draftHandoffRollbackTextLengthAfterChangeForTest = target.inputBar.textView.string.utf8.count
+            }
+            target.setQuotes(targetQuotesBefore, syncWeb: true)
+            target.suppressDraftPersistence = targetWasSuppressing
+            return false // 目標未完整落盤時回滾目標 UI，來源原文與附件仍在。
+        }
+        target.suppressDraftPersistence = targetWasSuppressing
         inputBar.textView.string = ""
         inputBar.textView.didChangeText()
         inputBar.textView.undoManager?.removeAllActions()
@@ -306,6 +389,17 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         guard CommandLine.arguments.contains("--state-dir"), let outbox = session.outboxPersistence else { return "" }
         let responder = window?.firstResponder
         let keyWindow = NSApp.keyWindow
+        if action == "seed-key" {
+            // 07-30：使用者按「仍要送出」後的明文紀錄，加上非 Claude 引擎寫進 jsonl 的遮罩版（沒有 uuid），用來測重開後 reconcile 有沒有把它當成已送達
+            let directory = outbox.fileURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let id = UUID().uuidString.lowercased()
+            let text = "金鑰探針 \(id) nvapi-Zq8Lm3Xv9Tk2Rb7Wd4Hs6Yc1Nf5Gp0Ja 請收好"   // 測試用假格式
+            let transcript = directory.appendingPathComponent("probe-\(id).jsonl")
+            try outbox.append(id: id, text: text, wireText: text, quotes: [], filePaths: [], images: [], transcriptURLs: [transcript])
+            let row: [String: Any] = ["type": "user", "message": ["role": "user", "content": [["type": "text", "text": text]]]]
+            if let masked = Transcripts.redactedJSON(row) { try (masked + Data([0x0a])).write(to: transcript, options: .atomic) }
+        }
         if action == "seed" || action == "seed-delivered" {
             let directory = outbox.fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -322,7 +416,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
                 let row: [String: Any] = ["type": "user", "uuid": id, "message": ["role": "user", "content": [["type": "text", "text": text]]]]
                 try (JSONSerialization.data(withJSONObject: row) + Data([0x0a])).write(to: transcript, options: .atomic)
             }
-        } else if action == "recover" {
+        } else if action == "recover" || action == "seed-key" {
             checkedOutbox = false
             restoreOutboxIfNeeded()
         }
@@ -339,12 +433,23 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     }
 
     private func persistDraftSoon() {
-        guard !recoveringOutbox, let persistence = draftPersistence else { return }
+        guard !suppressDraftPersistence, !recoveringOutbox, let persistence = draftPersistence else { return }
         // 原樣復原的快照仍由寄件匣保管，避免重開後先還原已送達的舊副本。
         // 使用者修改後就走既有草稿存圖，不建立第二套圖片關聯。
         if isUneditedOutboxDraft { persistence.remove(); return }
         if inputBar.hasPendingInput {
-            persistence.schedule(text: inputBar.textView.string, quotes: quotes, filePaths: inputBar.draftFilePaths, images: inputBar.draftImages)
+            let text = inputBar.textView.string
+            let releaseIDs = recoveredOutboxIDs
+            let releaseAfterSave = !releaseIDs.isEmpty && !isUneditedOutboxDraft
+                && DraftPersistence.requiresBackground(text: text)
+            persistence.schedule(text: text, quotes: quotes, filePaths: inputBar.draftFilePaths,
+                                 images: inputBar.draftImages,
+                                 completion: releaseAfterSave ? { [weak self] saved in
+                                     guard let self, !releaseIDs.isEmpty,
+                                           self.recoveredOutboxIDs.isSuperset(of: releaseIDs) else { return }
+                                     if saved { self.removeRecoveredOutboxAfterSave(ids: releaseIDs) }
+                                     else { self.notice(L("草稿存不進去（請檢查磁碟空間），寄件匣的原文先保留")) }
+                                 } : nil)
         } else { persistence.remove() }
         releaseRecoveredOutbox()
     }
@@ -353,14 +458,23 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     /// 不然清空後下次開格子又被塞回來、改過後每次都跳「不確定有沒有送到」（agy Sonnet 11/6）
     private func releaseRecoveredOutbox() {
         guard !recoveredOutboxIDs.isEmpty, !isUneditedOutboxDraft else { return }
+        if inputBar.hasPendingInput,
+           DraftPersistence.requiresBackground(text: inputBar.textView.string) {
+            // 大草稿由 debounce 背景寫入；完成回呼成功後才刪原寄件匣。
+            return
+        }
         // 先把改過的版本存成草稿，確定寫進去了才刪寄件匣；寫不進去就留著寄件匣（agy Argon 11/6 審查）
         if inputBar.hasPendingInput, !flushDraft() {
             notice(L("草稿存不進去（請檢查磁碟空間），寄件匣的原文先保留")); return
         }
+        removeRecoveredOutboxAfterSave(ids: recoveredOutboxIDs)
+    }
+
+    private func removeRecoveredOutboxAfterSave(ids: Set<String>) {
         do {
-            try session.outboxPersistence?.remove(ids: recoveredOutboxIDs)
-            recoveredOutboxIDs.removeAll()
-            recoveredOutboxDraft = nil
+            try session.outboxPersistence?.remove(ids: ids)
+            recoveredOutboxIDs.subtract(ids)
+            if recoveredOutboxIDs.isEmpty { recoveredOutboxDraft = nil }
         } catch { notice(L("寄件匣更新失敗，已保留原檔；重開時會再對照對話紀錄。")) }
     }
 
@@ -384,6 +498,9 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         inputBar.restoreFilePaths(saved.filePaths)
         inputBar.textView.didChangeText()
         setQuotes(saved.quotes, syncWeb: true)
+        if saved.recoveredFromEmergency {
+            notice(L("上次結束時大草稿尚未完成存檔，已從隔離復原快照還原。"))
+        }
     }
 
     private func setQuotes(_ items: [MessageQuote], syncWeb: Bool = false) {
@@ -419,6 +536,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         inputBar.onTerminalButton = { (NSApp.delegate as? AppDelegate)?.toggleFloatingTerminal() }
         inputBar.onGraphButton = { (NSApp.delegate as? AppDelegate)?.toggleGraphPanel() }
         session.onModel = { [weak self] m in self?.resolvedModel = m; self?.refreshModelTitle(); self?.onResolvedModel?(m) }
+        session.onEffortNotice = { [weak self] message in self?.notice(message) }
         session.onModels = { [weak self] _ in self?.refreshModelTitle() }
         session.onCommands = { [weak self] l in self?.inputBar.commands = l }
         inputBar.onCycleMode = { [weak self] in self?.cycleMode() }
@@ -457,11 +575,14 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             guard let self else { return }
             let type = obj["type"] as? String
             self.markOwnActivity(final: type == "result")
+            if let id = self.conversationID {
+                CommanderStuck.shared.output(id, event: obj, hasUnacknowledgedInput: self.session.hasUnacknowledgedInput)
+            }
             SessionActivity.shared.observe(obj, conversation: self.conversationID, directory: self.session.directory)
-            // Gemini（agy）、ChatGPT（codex）、Copilot、本機模型自己不會猜下一句：每輪結束另外猜（NextGuess.swift；Flash 的聊天室用 Flash，其他用 Apple）
+            // Gemini（agy）、ChatGPT（codex）、Copilot、本機模型自己不會猜下一句：每輪結束另外猜（NextGuess.swift；Hydrogen 的聊天室用 Hydrogen，其他用 Apple）
             let s = self.session
             if s.agyModel != nil || s.codexModel != nil || s.copilotModel != nil || s.mlxModel != nil || s.appleModel != nil {
-                self.nextGuess.saw(obj, flash: s.agyModel?.hasPrefix("gemini-3.8-flash") == true) { [weak self] s in
+                self.nextGuess.saw(obj, useHydrogen: s.agyModel?.hasPrefix("gemini-4-hydrogen") == true) { [weak self] s in
                     guard let self, self.session.status == .idle, self.inputBar.textView.string.isEmpty else { return }
                     self.inputBar.suggestion = s
                 }
@@ -473,7 +594,10 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             }
             // Claude 讀進了使用者的訊息（--replay-user-messages 回送的那份）：排隊中的泡泡移到對話裡
             if type == "user", obj["isReplay"] as? Bool == true {
-                if let u = obj["uuid"] as? String { self.js("wb.userTaken(\(Self.jsString(u)))") }
+                if let u = obj["uuid"] as? String {
+                    self.onCommanderDispatchEvent?(u.lowercased(), obj)
+                    self.js("wb.userTaken(\(Self.jsString(u)))")
+                }
                 return
             }
             // 這一輪結束：紀錄檔到這裡都是自己寫的，同步顯示之後從這裡接（不然會把自己的訊息再貼一次）
@@ -481,6 +605,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
                let n = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
                 self.followOffset = UInt64(n); self.followPartial = Data()
             }
+            if type == "result" { self.onCommanderDispatchEvent?("", obj) }
             // Claude 收回權限詢問：畫面上那張卡也收掉，不要還能按
             if type == "control_cancel_request", let id = obj["request_id"] as? String {
                 self.removePendingControl(id)
@@ -533,6 +658,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             let who = self.agentName
             self.js("wb.resolveAllPermissions(\(Self.jsString(L("\(who) 已經結束，這個詢問作廢了"))))")
             self.js("wb.flushQueued()")
+            self.js("wb.setBackgroundCount(0)")
             if let id = self.conversationID { SessionActivity.shared.clear(id) }   // 程序沒了，還沒回答的詢問也作廢
             guard code != 0 && code != 15 else { return }
             let tail = err.split(separator: "\n").suffix(3).joined(separator: " / ")
@@ -583,6 +709,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         super.viewDidMoveToWindow()
         if window == nil {
             hiddenSince = Date()
+            clearWebEditing()
         } else {
             hiddenSince = nil
             unloadingWeb = false
@@ -597,6 +724,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     private var webCrashTimes: [Date] = []
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard web === webView else { return }
+        resetWebDocumentState()
         // 崩潰若是某段歷史內容造成，重載→ready→載歷史→又崩潰會無限循環：1 分鐘內最多重載 3 次，之後停手並告知
         let now = Date()
         webCrashTimes = webCrashTimes.filter { now.timeIntervalSince($0) < 60 } + [now]
@@ -609,9 +737,13 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         NSLog("AI 工作台：聊天網頁的 WebContent 程序結束了，重新載入")
         ready = false
         older = nil
-        webEditing = false
         lastPetInset = .zero
         webView.reload()
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard web === webView else { return }
+        resetWebDocumentState()
     }
 
     private var crashOverlay: NSView?
@@ -644,6 +776,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         crashOverlay?.removeFromSuperview(); crashOverlay = nil
         webCrashTimes = []
         ready = false
+        resetWebDocumentState()
         web?.reload()
     }
 
@@ -672,8 +805,13 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         // Markdown 裡的本機圖片仍只透過 codenv-img:// 讀取。
         config.setURLSchemeHandler(LocalImageScheme.shared, forURLScheme: LocalImageScheme.scheme)
         config.userContentController.add(WeakHandler(self), name: "wb")
+        if codeLab != nil {
+            config.userContentController.addUserScript(WKUserScript(source: Self.plainClickFocusScript,
+                                                                     injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        }
         if I18n.isEnglish { config.userContentController.addUserScript(WKUserScript(source: "window.__LOCALE=\(I18n.tableJSON);", injectionTime: .atDocumentStart, forMainFrameOnly: true)) }
         let w = DropWebView(frame: .zero, configuration: config)
+        resetWebDocumentState()
         web = w
         w.navigationDelegate = self
         w.onDrop = { [weak self] pb in self?.inputBar.takeDrop(pb) ?? false }
@@ -683,6 +821,8 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         lastPetInset = .zero
         needsLayout = true
         applyTheme(theme)
+        // 非 Claude 引擎不一定會送 system/init；在任何忙碌狀態送入前，先用 Swift 的實際引擎同步標籤。
+        syncAgent()
         w.loadFileURL(Self.chatFolder.appendingPathComponent("index.html"), allowingReadAccessTo: Self.chatFolder)
     }
 
@@ -715,6 +855,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         w.configuration.userContentController.removeScriptMessageHandler(forName: "wb")
         w.navigationDelegate = nil
         w.onDrop = nil
+        resetWebDocumentState()
         w.stopLoading()
         w.removeFromSuperview()
         crashOverlay?.removeFromSuperview(); crashOverlay = nil
@@ -722,7 +863,6 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         ready = false
         queued.removeAll()
         older = nil
-        webEditing = false
         lastPetInset = .zero
     }
 
@@ -768,6 +908,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         guard codeLab == nil else { return }
         let lab = CodeLabView(directory: directory, key: key, theme: theme)
         codeLab = lab
+        installPlainClickFocusScriptIfNeeded()
         addSubview(codeDivider)
         addSubview(lab)
         lab.onModeChange = { [weak self] in self?.needsLayout = true }
@@ -790,20 +931,25 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         codeLab?.applyTheme(t)
         theme = t
         let pal = t.palette(for: effectiveAppearance)
+        let darkAppearance = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         layer?.backgroundColor = pal.bg.cgColor
         inputBar.applyTheme(pal, mono: t.font)
         refreshMode()
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let dark = darkAppearance
         var obj: [String: Any] = ["fg": pal.fg.hex, "bg": pal.bg.hex, "ansi": pal.ansi.map(\.hex),
                                   "monoFont": t.font.fontName, "monoSize": t.font.pointSize, "dark": dark]
         // 對話文字跟終端機一樣：同一個字型、粗細；大小在預設的介面縮放下剛好等於終端機的點數
-        let termText = Prefs.shared.chatFont == "terminal"
+        let chatFont = Prefs.shared.chatFont
+        let termText = chatFont == "terminal"
         if termText {
             obj["bodyFont"] = t.font.familyName ?? t.font.fontName
             obj["bodyWeight"] = Self.cssWeight(t.font)
             obj["bodySize"] = Double(t.font.pointSize) / UIScale.defaultFactor
+        } else if chatFont == "interface" {
+            let family = InterfaceFont.effectiveFamily
+            obj["interfaceFont"] = family == "system" ? "" : family
         }
-        inputBar.textFont = termText ? t.font : nil
+        inputBar.textFont = termText ? t.font : (chatFont == "interface" ? InterfaceFont.resolvedFont : nil)
         if I18n.isEnglish { js("wb.setLocale(\(I18n.tableJSON))") }     // 英文介面：chat.js 的 L() 用同一份對照表（要在 setTheme 之前，畫面才一開始就是英文）
         if let d = try? JSONSerialization.data(withJSONObject: obj), let s = String(data: d, encoding: .utf8) { js("wb.setTheme(\(s))") }
         js(CodeColors.js(palette: pal, dark: dark))
@@ -815,36 +961,106 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     }
 
     func terminate() {
+        inputBar.invalidatePendingKeyGuardScan()
         followTimer?.invalidate()
-        flushDraft()   // 防抖還沒寫的草稿先落盤（格子要被收掉了，1 秒後的存檔可能等不到；agy Argon 11/6）
+        resetWebDocumentState()
+        let draftText = inputBar.textView.string
+        if DraftPersistence.requiresBackground(text: draftText), draftPersistence?.hasPendingLargeWrite == true {
+            draftPersistence?.preserveIncompleteLargeDraft(text: draftText, quotes: quotes,
+                                                             filePaths: inputBar.draftFilePaths, images: inputBar.draftImages)
+        } else if !DraftPersistence.requiresBackground(text: draftText) {
+            flushDraft()   // 小草稿維持原本同步收尾。
+        }
         // 跑到一半的 ! 指令：格子一關 ChatPane 就放掉了，結束的回呼（bangEnd 才存檔）永遠不會來，已經收到的輸出會整段消失。先把目前收到的存下來、標成已停止
         if isBangRunning { for i in bangRecords.indices where bangRecords[i].running { bangRecords[i].status = "stopped" }; saveBang() }
         stopBang(); session.terminate()
     }   // 跑到一半的 ! 指令也停掉，不然它的程序群組會留在背景跑到逾時
 
+    func pendingMessagesForLidInterrupt() -> LidInterruptPendingMessages {
+        session.pendingMessagesForLidInterrupt()
+    }
+
+    var isDrainingForLidInterrupt: Bool {
+        let bang = lidBangDrain ?? bangRun
+        let draining = session.isDrainingForLidInterrupt || (bang?.isDrainingForLidInterrupt ?? false)
+        if !draining { lidBangDrain = nil }
+        return draining
+    }
+
+    var lidInterruptForceKillOccurred: Bool {
+        session.lidInterruptForceKillOccurred || ((lidBangDrain ?? bangRun)?.lidInterruptForceKillOccurred ?? false)
+    }
+
+    @discardableResult
+    func forceKillDrainingForLidInterrupt() -> Bool {
+        let sessionKilled = session.forceKillDrainingForLidInterrupt()
+        let bangKilled = (lidBangDrain ?? bangRun)?.forceKillForLidInterrupt() ?? false
+        return sessionKilled || bangKilled
+    }
+
+    var lidInterruptBangDescription: String? {
+        bangRun.map { "! \($0.cmd)" }
+    }
+
+    /// 闔蓋專用：不 flush 輸入草稿、不還原寄件匣文字；! 指令與聊天室程序都在這裡終止。
+    func terminateForLidInterrupt(pendingIDs: Set<String>) {
+        session.terminateForLidInterrupt(pendingIDs: pendingIDs)
+        terminateBangForLidInterrupt()
+    }
+
+    /// 本機模型不屬於第一版終止範圍，但該聊天室正在執行的 ! 指令仍需停止。
+    func terminateBangForLidInterrupt() {
+        guard bangRun != nil else { return }
+        lidBangDrain = bangRun
+        suppressBangReplyForLidInterrupt = true
+        for i in bangRecords.indices where bangRecords[i].running { bangRecords[i].status = "stopped" }
+        saveBang()
+        bangRun?.terminateForLidInterrupt()
+    }
+
     // MARK: 模型
 
     /// 這格實際在跑的是誰（提示文字用）
     var agentName: String {
-        session.agyModel != nil ? "Gemini" : session.codexModel != nil ? "ChatGPT" : session.copilotModel != nil ? "Copilot"
+        session.agyModel != nil ? "agy" : session.codexModel != nil ? "Codex" : session.copilotModel != nil ? "Copilot"
             : session.appleModel != nil ? L("Apple 模型")
             : session.mlxModel != nil || session.localEndpoint != nil ? L("本機模型") : "Claude"
     }
 
     func refreshModelTitle() {
         refreshModelName()
+        syncAgent()
         // 沒自己選過強度就顯示預設的（跟模型面板拉桿停的位置一樣）
-        guard session.localEndpoint == nil, let e = session.effort ?? defaultEffortNow else { return }
-        // agy 只有低中高三段（換名字尾巴），從 Claude 帶來的 xhigh、max 不算數
-        let few = session.agyModel != nil ? AgyBridge.levels : session.copilotModel != nil ? CopilotBridge.levels : session.mlxModel != nil ? LocalBridge.levels(session.mlxModel)
-            : session.appleModel != nil ? [] : nil
+        guard session.localEndpoint == nil else { return }
+        let selectedEffort: String?
+        if let model = session.codexModel {
+            let levels = CodexBridge.levels(for: model)
+            selectedEffort = session.effort.flatMap { levels.contains($0) ? $0 : nil } ?? CodexBridge.defaultLevel(for: model)
+        } else {
+            selectedEffort = session.effort ?? defaultEffortNow
+        }
+        guard let e = selectedEffort else { return }
+        // agy 的強度換模型名稱尾巴；Hydrogen 另有 xhigh。
+        let few: [String]?
+        if let model = session.agyModel { few = AgyBridge.levels(for: model) }
+        else if let model = session.codexModel { few = CodexBridge.levels(for: model) }
+        else if session.copilotModel != nil { few = CopilotBridge.levels }
+        else if session.mlxModel != nil { few = LocalBridge.levels(session.mlxModel) }
+        else if session.appleModel != nil { few = [] }
+        else { few = nil }
         if few?.contains(e) ?? true { inputBar.modelTitle += " · " + Effort.name(e) }
+    }
+
+    private func syncAgent() {
+        if let data = try? JSONSerialization.data(withJSONObject: [agentName]), let encoded = String(data: data, encoding: .utf8) {
+            js("wb.setAgent(\(String(encoded.dropFirst().dropLast())))")
+        }
     }
 
     /// 沒選過強度時實際用的那段：各家的預設，Claude 看 settings.json 裡這個模型的 effortLevel
     private var defaultEffortNow: String? {
         if let m = session.agyModel { return AgyBridge.level(m) }
-        if session.codexModel != nil { return CodexBridge.defaultLevel }
+        if let model = session.codexModel { return CodexBridge.defaultLevel(for: model) }
         if session.copilotModel != nil { return CopilotBridge.defaultLevel }
         if session.appleModel != nil { return nil }
         if session.mlxModel != nil { return LocalBridge.defaultLevel(session.mlxModel) }
@@ -907,9 +1123,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         }
         panelModel.onPickModel = { [weak self] value in
             guard let self else { return }
-            self.applyModel(value)
-            self.onModelChange?(value == "default" ? nil : value)
-            self.refreshPanel()
+            self.selectModelFromMenu(value)
         }
         panelModel.onLocalSettings = { [weak self] in self?.panel?.close(); self?.openSettings?() }
         panelModel.onSetDefault = { [weak self] e in
@@ -971,14 +1185,16 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         panelModel.isLocal = session.localEndpoint != nil
         if let m = session.agyModel {
             // agy：強度在模型名字尾巴，拉桿換的是尾巴（下一則訊息生效）
-            panelModel.levels = AgyBridge.level(m) != nil ? AgyBridge.levels : []
-            panelModel.effort = session.effort.flatMap { AgyBridge.levels.contains($0) ? $0 : nil }
+            let levels = AgyBridge.levels(for: m)
+            panelModel.levels = AgyBridge.level(m) != nil ? levels : []
+            panelModel.effort = session.effort.flatMap { levels.contains($0) ? $0 : nil }
             panelModel.defaultEffort = AgyBridge.level(m)
             panelModel.sections = modelSections(currentResolved: "")
-        } else if session.codexModel != nil {
-            panelModel.levels = CodexBridge.levels
-            panelModel.effort = session.effort
-            panelModel.defaultEffort = CodexBridge.defaultLevel
+        } else if let model = session.codexModel {
+            let levels = CodexBridge.levels(for: model)
+            panelModel.levels = levels
+            panelModel.effort = session.effort.flatMap { levels.contains($0) ? $0 : nil }
+            panelModel.defaultEffort = CodexBridge.defaultLevel(for: model)
             panelModel.sections = modelSections(currentResolved: "")
         } else if session.copilotModel != nil {
             // Copilot Auto：拉桿是 Auto 的偏好（省／平衡／聰明），下一則訊息生效
@@ -1025,7 +1241,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         }
         func version(_ c: ModelChoice) -> Double { Double(c.name.split(separator: " ").dropFirst().first ?? "0") ?? 0 }
         var checkedDone = session.localEndpoint != nil || session.agyModel != nil || session.codexModel != nil || session.copilotModel != nil || session.mlxModel != nil || session.appleModel != nil
-        // 精簡清單（設定沒勾「列出全部」）：只留 Opus／Sonnet／Haiku 5.5 (cc)、Gemini 3.8 Flash、本機模型全部；這格正在用的照列
+        // 精簡清單（設定沒勾「列出全部」）：只留 Opus／Sonnet／Haiku 5.5 (cc)、Gemini 4 Hydrogen、本機模型全部；這格正在用的照列
         let all = Prefs.shared.allModels
         func keep(_ rows: [ModelRow], _ common: (ModelRow) -> Bool = { _ in false }) -> [ModelRow] {
             all ? rows : rows.filter { $0.checked || common($0) }
@@ -1050,10 +1266,10 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         }
         if !locals.isEmpty { out.append(locals) }
         // Gemini：有裝 agy（Google 的 Antigravity 命令列工具）才列
-        if AgyBridge.enabled, AgyBridge.executable != "agy" {
+        if AgyBridge.enabled, AgyBridge.installed {
             let rows = keep(AgyBridge.models.map { m in
                 ModelRow(id: "agy:" + m.id, title: m.name, tip: L("經 agy（Antigravity）· 用你的 Google AI 訂閱"), checked: session.agyModel.map(AgyBridge.base) == AgyBridge.base(m.id))
-            }) { AgyBridge.base($0.id) == "agy:gemini-3.8-flash" }
+            }) { AgyBridge.base($0.id) == "agy:gemini-4-hydrogen" }
             if !rows.isEmpty { out.append(rows) }
         }
         // ChatGPT：有裝 codex（OpenAI 的命令列工具，用 ChatGPT 帳號登入）才列
@@ -1082,13 +1298,20 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         refreshMode()
     }
     private var currentMode: String { session.permissionMode ?? Prefs.shared.permissionMode ?? "default" }
-    private func refreshMode() { inputBar.permissionMode = currentMode }
+    private func refreshMode() {
+        inputBar.permissionEngineForHint = session.agyModel != nil ? .agy : session.codexModel != nil ? .codex : session.copilotModel != nil ? .copilot : .claude
+        inputBar.permissionMode = currentMode
+    }
     private var bypassModeConfirmed = false
     /// ⇧ Tab 或按輸入框上的模式按鈕：換到下一個模式
     func cycleMode() {
         let next = PermissionMode.next(after: currentMode)
         if next == "bypassPermissions" {
             confirmBypassMode()
+            return
+        }
+        if PermissionMode.isSilentAuto(engine: inputBar.permissionEngineForHint, mode: next) {
+            confirmSilentAuto()
             return
         }
         session.setPermissionMode(next)
@@ -1101,6 +1324,16 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         confirmBypassMode()
     }
 
+    /// 確認視窗要寫的引擎名字（不能寫死 Codex：Claude／agy／Copilot／本機模型的聊天室也會跳這個視窗）
+    var bypassEngineName: String {
+        if session.codexModel != nil { return "Codex" }
+        if session.agyModel != nil { return "agy" }
+        if session.copilotModel != nil { return "Copilot" }
+        if session.mlxModel != nil || session.localEndpoint != nil { return L("本機模型") }
+        if session.appleModel != nil { return L("Apple 模型") }
+        return "Claude"
+    }
+
     private func confirmBypassMode() {
         if bypassModeConfirmed {
             session.setPermissionMode("bypassPermissions")
@@ -1110,7 +1343,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         }
         let alert = NSAlert()
         alert.messageText = L("開啟「全部不問」？")
-        alert.informativeText = L("Codex 可能執行指令或改動工作區，不會逐次詢問核准。只有在你願意自行承擔風險時才繼續。")
+        alert.informativeText = PermissionMode.bypassConfirmText(engineName: bypassEngineName)
         alert.alertStyle = .warning
         alert.addButton(withTitle: L("全部不問"))
         alert.addButton(withTitle: L("取消"))
@@ -1124,9 +1357,58 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         onPermissionModeChange?("bypassPermissions")
     }
 
+    private var silentAutoConfirmed = false
+    /// Copilot／agy 的 auto 實際是全部放行：切過去前先確認（確認過一次這個聊天室就不再問）
+    private func confirmSilentAuto() {
+        if !silentAutoConfirmed {
+            let alert = NSAlert()
+            alert.messageText = L("開啟「全都不問」？")
+            alert.informativeText = PermissionMode.confirmText
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: L("全都不問"))
+            alert.addButton(withTitle: L("取消"))
+            guard alert.runModal() == .alertFirstButtonReturn else { refreshMode(); return }
+            silentAutoConfirmed = true
+        }
+        session.setPermissionMode("auto")
+        refreshMode()
+        onPermissionModeChange?("auto")
+    }
+
     func applyEffort(_ v: String?) {
         session.setEffort(v)
         refreshModelTitle()
+    }
+
+    /// 模型選單與隔離探針共用的使用者點選入口。
+    func selectModelFromMenu(_ value: String) {
+            let previousModel = self.selectedModelIdentity
+            let wasCodex = self.session.codexModel != nil
+            self.applyModel(value)
+            self.onModelChange?(value == "default" ? nil : value)
+            self.refreshPanel()
+            if previousModel != self.selectedModelIdentity {
+                self.setModelName()
+                let name = self.inputBar.modelTitle
+                // applyModel 的跨引擎／agy／Copilot 路徑會終止程序，等下一次送出才啟動。
+                let restarts = !(wasCodex && self.session.codexModel != nil)
+                    && (self.session.codexModel != nil || self.session.agyModel != nil || self.session.copilotModel != nil
+                        || previousModel.hasPrefix("agy:") || previousModel.hasPrefix("copilot:") || previousModel.hasPrefix("codex:"))
+                self.refreshModelTitle()
+                self.notice(restarts ? L("下一則訊息起改用 \(name)（會重開）") : L("下一則訊息起改用 \(name)"))
+            }
+    }
+
+    var modelSelectionProbeNotices: [String] { lastNotices }
+
+    private var selectedModelIdentity: String {
+        if let m = session.codexModel { return "codex:" + m }
+        if let m = session.agyModel { return "agy:" + m }
+        if let m = session.copilotModel { return "copilot:" + m }
+        if let m = session.appleModel { return "local:apple:" + m }
+        if let m = session.mlxModel { return "local:mlx:" + m }
+        if let m = session.localEndpoint { return "local:" + m.id.uuidString }
+        return session.model ?? "default"
     }
 
     /// 套用對話存的模型；本機和 Claude 之間切換要重開程序（下次送出時用 --resume 接回）
@@ -1213,12 +1495,13 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             session.setModel(value == "default" ? nil : value)
         }
         refreshModelTitle()
+        refreshMode()
     }
 
     /// 回傳有沒有真的送出（被「別處進行中」「agy 沒網」擋下就是 false）。restore＝使用者從輸入框送出；失敗時輸入框保持原樣（程式代送為 false）
     private var lastBlockedNotice = Date.distantPast
     @discardableResult
-    private func send(text: String, images: [(data: Data, mediaType: String)], now: Bool = false, restore: Bool = true, onDelivery: ((Bool) -> Void)? = nil) -> Bool {
+    private func send(text: String, images: [(data: Data, mediaType: String)], now: Bool = false, messageID: String? = nil, restore: Bool = true, deliveryTimeout: TimeInterval? = 60, onDelivery: ((Bool) -> Void)? = nil, automatedSource: String? = nil) -> Bool {
         // 不在這裡清 lastNotices：網頁卸載時程式代送會把使用者還沒看到的錯誤提示清掉；放上畫面後才清
         // 送出前再確認一次：這段對話如果正在別處進行，不要兩邊同時寫同一份紀錄
         if !session.isRunning, session.forkFrom == nil, liveElsewhere() != nil {
@@ -1243,11 +1526,13 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         let selectedQuotes = restore && !isSlash ? quotes : []
         let bang = isSlash ? nil : takeBangAttachment()
         let dataURLs = images.map { "data:\($0.mediaType);base64,\($0.data.base64EncodedString())" }
-        let uuid = UUID().uuidString.lowercased()
+        let uuid = messageID?.lowercased() ?? UUID().uuidString.lowercased()
+        var takenNotice: String?
+        if !isSlash, let id = conversationID, let n = CollabBoardModel.takeNotices(for: id) { takenNotice = n }
         // Claude 還在做：先排在下面，等它真的讀進去（回送）再移進對話
         let queued = session.isRunning && session.status != .idle
-        if let d = try? JSONSerialization.data(withJSONObject: ["text": text, "images": dataURLs, "uuid": uuid, "queued": queued, "now": now, "bang": bang?.count ?? 0, "quotes": selectedQuotes.map(\.preview)] as [String: Any]), let s = String(data: d, encoding: .utf8) {
-            js("wb.localUser(\(s))")
+        if let d = try? JSONSerialization.data(withJSONObject: ["text": text, "images": dataURLs, "uuid": uuid, "queued": queued, "now": now, "bang": bang?.count ?? 0, "quotes": selectedQuotes.map(\.preview), "notice": takenNotice ?? "", "automatedSource": automatedSource ?? ""] as [String: Any]), let s = String(data: d, encoding: .utf8) {
+            js(automatedSource == nil ? "wb.localUser(\(s))" : "wb.localAutomatedNotice(\(s))")
         }
         if !sentAny { sentAny = true; onFirstMessage?(text) }
         nextGuess.sent(text, uuid: uuid)
@@ -1255,8 +1540,16 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         // 使用者自己打的字裡若有〔codenv 開頭的字樣，先中和：不然重載歷史時會被當成附加區塊的開頭，從那裡截掉
         var full = QuoteText.append(to: QuoteText.neutralize(text), quotes: selectedQuotes)
         if !isSlash, let line = codeLab?.contextLine() { full += "\n\n" + line }
-        // 看板上使用者終止了這個聊天室開的目標裡的 agy 步驟：附一行提示在最前面（CollabBoard.swift；畫面上的泡泡還是只顯示你打的字）
-        if !isSlash, let id = conversationID, let n = CollabBoardModel.takeNotices(for: id) { full = n + "\n\n" + full }
+        // 看板／監督提示仍送進同一則模型輸入，但用界標讓聊天畫面與歷史紀錄能獨立顯示。
+        if let n = takenNotice {
+            let noticeID = UUID().uuidString.lowercased()
+            full = "⟦codenv-notice:\(noticeID):begin⟧\n\(n)\n⟦codenv-notice:\(noticeID):end⟧\n\n" + full
+        }
+        if let source = automatedSource {
+            let noticeID = UUID().uuidString.lowercased()
+            let encodedSource = Data(source.utf8).base64EncodedString()
+            full = "⟦codenv-auto-notice:\(noticeID):\(encodedSource):begin⟧\n" + full + "\n⟦codenv-auto-notice:\(noticeID):end⟧"
+        }
         if let b = bang { full = b.text + full }      // 前面用 ! 跑的指令結果（只附這一次；畫面上泡泡不顯示，旁邊有小標）
         // 剛換到另一家的模型：附上交接（最近的對話＋精簡全文檔，ModelCarry.swift）。又換回原本那個就不用附。
         // 換到 Apple 模型不附（它做不了事，不用交接）
@@ -1268,11 +1561,15 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
                 full += note
             }
         }
+        // 觀察所有送訊息呼叫（包含送出失敗）；闔蓋期間此清單應保持空白。
+        Self.lidInterruptSendObserver?(session.claudeSession, text, automatedSource, now)
         if !session.send(text: full, images: images, uuid: uuid, now: now, displayText: text, quotes: selectedQuotes,
-                         filePaths: restore ? inputBar.draftFilePaths : [], imageDrafts: restore ? inputBar.draftImages : [], onDelivery: onDelivery) {
+                         filePaths: restore ? inputBar.draftFilePaths : [], imageDrafts: restore ? inputBar.draftImages : [],
+                         deliveryTimeout: deliveryTimeout, onDelivery: onDelivery) {
             // 沒送出去（啟動失敗、claude 剛好結束）：! 指令結果和模型交接還沒用掉，放回去，重送時才不會漏
             if let b = bang { for i in b.indices where i < bangRecords.count { bangRecords[i].attached = false }; saveBang(); inputBar.bangCount = bangRecords.filter { !$0.attached && !$0.running }.count }
             carryFrom = carried
+            if let n = takenNotice, let id = conversationID { CollabBoardModel.restoreNotices(for: id, text: n) }     // 看板提示已經從檔案抽走：沒送出去要放回去，不然這則提示就丟了（07-33）
             js("wb.unsend(\(Self.jsString(uuid)))")      // 剛畫的泡泡收回來（字放回輸入框，重送才不會有兩個泡泡）
             if restore, let records = try? session.outboxPersistence?.read(), records.contains(where: { $0.id == uuid }) {
                 // 管線失敗仍可能寫入了一部分：輸入框保持原樣，由已落盤的快照保管。
@@ -1299,6 +1596,8 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     // MARK: ! 指令（Bang.swift、docs/bang-command-spec.md）
 
     private var bangRun: BangRun?
+    private var lidBangDrain: BangRun?
+    private var suppressBangReplyForLidInterrupt = false
     /// ! 指令是否正在跑
     var isBangRunning: Bool { bangRun?.isRunning == true }
     private var bangRecords: [BangRecord] = []
@@ -1319,7 +1618,9 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     /// 給 chat.js 的一筆（卡片）
     private func bangDict(_ r: BangRecord) -> [String: Any] {
         ["id": r.id, "cmd": r.cmd, "ts": Self.bangISO.string(from: r.at), "status": r.status, "secs": r.secs, "truncated": r.truncated,
-         "code": r.code as Any? ?? NSNull(), "segs": r.segs.map { ["e": $0.e, "t": $0.t] }]
+         "code": r.code as Any? ?? NSNull(), "fullOutputPath": r.fullOutputPath as Any? ?? NSNull(),
+         "fullOutputSaveFailed": r.fullOutputSaveFailed ?? false,
+         "segs": r.segs.map { ["e": $0.e, "t": $0.t] }]
     }
     private func bangJSON(_ obj: Any) -> String {
         (try? JSONSerialization.data(withJSONObject: obj)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -1348,8 +1649,22 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
 
     private func bangChunk(_ id: String, _ s: String, _ isErr: Bool) {
         guard let i = bangRecords.firstIndex(where: { $0.id == id }) else { return }
-        var text = s
         let used = bangRecords[i].segs.reduce(0) { $0 + $1.t.utf8.count }
+        let streamLength = isErr ? bangRecords[i].stderr.count : bangRecords[i].stdout.count
+        let attachmentWouldClip = streamLength + s.count > Bang.attachLimit
+        let fullSegment = BangSeg(e: isErr, t: s)
+        if let path = bangRecords[i].fullOutputPath, bangRecords[i].fullOutputSaveFailed != true {
+            if !BangStore.appendFullOutput(fullSegment, to: path) { bangRecords[i].fullOutputSaveFailed = true }
+        } else if bangRecords[i].fullOutputSaveFailed != true,
+                  (used + s.utf8.count > Bang.maxBytes || attachmentWouldClip) {
+            let allOutput = bangRecords[i].segs + [fullSegment]
+            if let url = BangStore.writeFullOutput(session.claudeSession, id, segments: allOutput) {
+                bangRecords[i].fullOutputPath = url.path
+            } else {
+                bangRecords[i].fullOutputSaveFailed = true
+            }
+        }
+        var text = s
         if used >= Bang.maxBytes { bangRecords[i].truncated = true; return }
         if used + text.utf8.count > Bang.maxBytes {
             text = String(decoding: Array(text.utf8.prefix(Bang.maxBytes - used)), as: UTF8.self)
@@ -1373,6 +1688,8 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     }
 
     private func bangEnd(_ id: String, _ code: Int?, _ status: String, _ secs: Double) {
+        let suppressReply = suppressBangReplyForLidInterrupt
+        if suppressReply { suppressBangReplyForLidInterrupt = false }
         bangFlush(id)
         if let i = bangRecords.firstIndex(where: { $0.id == id }) {
             bangRecords[i].code = code; bangRecords[i].status = status; bangRecords[i].secs = secs
@@ -1382,6 +1699,12 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         inputBar.bangRunning = false
         saveBang()
         inputBar.bangCount = bangRecords.filter { !$0.attached && !$0.running }.count
+        if suppressReply { return }
+        // 一般 Enter 與 ⌘ Enter 都走同一條 ! 指令路徑；完成後立即把尚未附上的指令結果送進目前引擎。
+        // 指令卡片仍留在畫面上，訊息泡泡只說明這是剛執行的結果；Bang.attachment 會帶上命令、stdout、stderr、結束碼。
+        if send(text: L("使用者剛執行了這個指令，請看結果並回覆。"), images: [], restore: false) == false {
+            notice(L("指令已完成，但結果沒有送到模型；下一則訊息仍會附上這個結果。"))
+        }
     }
 
     func stopBang() { bangRun?.stop() }
@@ -1468,13 +1791,46 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     }
     /// 程式幫忙送一則訊息（交接的第一則）
     @discardableResult
-    func sendText(_ text: String, onDelivery: ((Bool) -> Void)? = nil) -> Bool { send(text: text, images: [], restore: false, onDelivery: onDelivery) }      // 程式代送的：被擋下不要把字塞進使用者的輸入框
+    func sendText(_ text: String, uuid: String? = nil, now: Bool = false, deliveryTimeout: TimeInterval? = 60, onDelivery: ((Bool) -> Void)? = nil) -> Bool {
+        send(text: text, images: [], now: now, messageID: uuid, restore: false, deliveryTimeout: deliveryTimeout, onDelivery: onDelivery)
+    }      // 程式代送的：被擋下不要把字塞進使用者的輸入框
+    @discardableResult
+    func sendAutomatedText(_ text: String, source: String, uuid: String? = nil, now: Bool = false, deliveryTimeout: TimeInterval? = 60, onDelivery: ((Bool) -> Void)? = nil) -> Bool {
+        send(text: text, images: [], now: now, messageID: uuid, restore: false, deliveryTimeout: deliveryTimeout, onDelivery: onDelivery, automatedSource: source)
+    }
     /// 程式幫忙送一則附圖的訊息（瀏覽器格的截圖回報）
     func sendReport(text: String, images: [(data: Data, mediaType: String)]) -> Bool { send(text: text, images: images, restore: false) }
     /// 橘色收納鈕按下去：由 Workspace 給選單（BrowserTools.swift）
     var onToolsMenu: ((NSView) -> Void)?
 
     // MARK: 網頁
+
+    /// CodeLab 左欄：只有一次純點擊（同座標按下／放開、無文字選取）才通知 Swift 取回輸入焦點。
+    private static let plainClickFocusScript = """
+    (() => {
+      if (window.__codenvPlainClickFocusInstalled) return;
+      window.__codenvPlainClickFocusInstalled = true;
+      let down = null;
+      const interactive = 'a[href],button,input,textarea,select,option,details,summary,img,.lightbox,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="switch"],[aria-haspopup],.copy,.turn-copy,.path[data-path]';
+      const isInteractive = (target) => target instanceof Element && !!target.closest(interactive);
+      window.__codenvCodeLabFocusEnabled = true;
+      document.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) { down = null; return; }
+        down = { x: e.clientX, y: e.clientY, interactive: isInteractive(e.target) };
+      }, true);
+      document.addEventListener('mouseup', (e) => {
+        const start = down;
+        down = null;
+        if (!start || e.button !== 0 || Math.hypot(start.x - e.clientX, start.y - e.clientY) > 3 ||
+            start.interactive || isInteractive(e.target)) return;
+        setTimeout(() => {
+          const selection = window.getSelection();
+          if (window.__codenvCodeLabFocusEnabled !== true || (selection && !selection.isCollapsed)) return;
+          try { window.webkit.messageHandlers.wb.postMessage({ type: 'focusInputAfterPlainClick' }); } catch (_) {}
+        }, 0);
+      });
+    })();
+    """
 
     private static let jsIdentRegex = try? NSRegularExpression(pattern: #"^[A-Za-z_$][A-Za-z0-9_$.]*"#)
 
@@ -1508,6 +1864,17 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
         guard let web, m.webView === web else { return }
         guard let o = m.body as? [String: Any], let type = o["type"] as? String else { return }
         switch type {
+        case "focusInputAfterPlainClick":
+            guard codeLab != nil else { return }
+            // mouseUp 事件完成後再到下一個主執行緒循環檢查前景，避免第一次啟用 App 的點擊被吞掉。
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let focused = self.focusInputAfterPlainConversationClick()
+                if let completion = self.focusPlainClickProbeCompletion {
+                    self.focusPlainClickProbeCompletion = nil
+                    completion(focused, self.window?.firstResponder.map { String(describing: Swift.type(of: $0)) } ?? "nil")
+                }
+            }
         case "quotes":
             guard let items = o["items"] as? [[String: Any]] else { return }
             setQuotes(items.compactMap { item in
@@ -1517,12 +1884,19 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
                 return MessageQuote(qid: qid, role: role, text: text)
             })
         case "ready":
+            let docId = (o["docId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            if let docId, docId == webDocId { return }
+            webDocId = docId
+            lastWebEditingSequence = 0
+            webEditing = false
             // 先把舊紀錄畫上去，再放行排隊中的東西（不然 wb.history 會把剛送出的訊息、權限卡片清掉）
             loadBang()
-            loadHistory { [weak self, weak web] in
-                guard let self, let web, self.web === web else { return }
+            loadHistory(docId: docId) { [weak self, weak web] in
+                guard let self, let web, self.web === web, self.webDocId == docId else { return }
                 self.ready = true
                 self.readyCountForTest += 1
+                self.refreshWebEditingFromPage()
+                self.installPlainClickFocusScriptIfNeeded()
                 let q = self.queued; self.queued = []
                 q.forEach(self.js)
                 self.setQuotes(self.quotes, syncWeb: true)
@@ -1535,6 +1909,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
                     self.js("wb.restoreAnchor(\(anchor))")
                 }
                 if self.session.status != .idle { self.js("wb.setBusy(true)") }
+                if let id = self.conversationID, let n = SessionActivity.shared.background[id]?.count, n > 0 { self.js("wb.setBackgroundCount(\(n))") }
                 self.checkLive()
                 let callbacks = self.onReadyCallbacks
                 self.onReadyCallbacks.removeAll()
@@ -1571,6 +1946,11 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             }
             if let d = try? JSONSerialization.data(withJSONObject: out), let s = String(data: d, encoding: .utf8) { js("wb.pathsChecked(\(s))") }
         case "editing":
+            guard let docId = o["docId"] as? String, !docId.isEmpty,
+                  let webDocId, docId == webDocId,
+                  let sequence = o["sequence"] as? Int,
+                  sequence > lastWebEditingSequence else { return }
+            lastWebEditingSequence = sequence
             webEditing = o["on"] as? Bool ?? false
         case "sendNow":
             if let u = o["uuid"] as? String { session.sendNow(u) }
@@ -1615,7 +1995,7 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
     private var older: ChainReader?
     private let olderQueue = DispatchQueue(label: "AI 工作台 載入紀錄")
 
-    private func loadHistory(_ done: @escaping () -> Void) {
+    private func loadHistory(docId: String?, _ done: @escaping () -> Void) {
         guard let web else { done(); return }
         let reader = ChainReader(session.allTranscripts)
         followOffset = reader.size
@@ -1633,18 +2013,19 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             let code = lines.isEmpty ? nil : "wb.history([" + lines.joined(separator: ",") + "])"
             let tPick = Date()
             DispatchQueue.main.async {
-                guard let self, let web, self.web === web else { return }
+                guard let self, let web, self.web === web, self.webDocId == docId else { return }
                 self.bangFloor = merged.lo
                 self.followOffset = reader.size
                 if let code {
                     self.sentAny = true
-                    web.evaluateJavaScript(code) { [weak self] _, err in
+                    web.evaluateJavaScript(code) { [weak self, weak web] _, err in
+                        guard let self, let web, self.web === web, self.webDocId == docId else { return }
                         if let err {
                             let ns = err as NSError
                             NSLog("AI 工作台 載入紀錄失敗：\(err.localizedDescription)")
                             EventLog.log(L("聊天畫面"), L("載入紀錄失敗（\(ns.domain) \(ns.code)）"))
                         }
-                        if more { self?.js("wb.moreAbove()") }
+                        if more { self.js("wb.moreAbove()") }
                         if debug { FileHandle.standardError.write(Data(String(format: "載入紀錄 %.0f MB：挑訊息 %.2fs、畫面 %.2fs\n", Double(reader.size) / 1e6, tPick.timeIntervalSince(t0), Date().timeIntervalSince(tPick)).utf8)) }
                         done()
                     }
@@ -1780,10 +2161,39 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
 
     /// 網頁裡正在打字（選擇題的「其他」欄位之類）：這時候按 / 不要搶走
     private(set) var webEditing = false
+    /// 目前已載入聊天文件代號；換頁或卸載期間為 nil，丟棄舊頁延遲回報。
+    private var webDocId: String?
+    private var lastWebEditingSequence = 0
+
+    /// 換頁、卸載或 WebContent 終止時清掉文件代號、序號與網頁編輯狀態，避免舊頁延遲回報或與從 0 開始的序號錯亂。
+    private func resetWebDocumentState() {
+        webDocId = nil
+        lastWebEditingSequence = 0
+        webEditing = false
+    }
+
+    func clearWebEditing() {
+        webEditing = false
+        web?.evaluateJavaScript("window.__codenvResetEditing && window.__codenvResetEditing()")
+    }
+
+    /// 選回聊天室後以頁面當下的焦點重新同步；避免 Swift 清除快取後 JS 的去重旗標仍停在 on。
+    func refreshWebEditingFromPage() {
+        guard ready else { return }
+        web?.evaluateJavaScript("window.__codenvResetEditing && window.__codenvResetEditing()")
+    }
+
+    /// 闔隔離探針使用，正式呼叫端不可改變第一回應者。
+    func makeWebFirstResponderForSlashProbe() -> Bool {
+        guard CommandLine.arguments.contains("--state-dir"), let web, let window else { return false }
+        return window.makeFirstResponder(web)
+    }
 
     /// 在這格裡點了輸入框以外（對話內容）：輸入框失效。點在輸入框、縮圖、按鈕、/ 選單上不算
     /// 每次點擊加一：點了對話內容又馬上點回輸入框時，前一次排好的「把焦點交給網頁」要作廢
     private var clickGeneration = 0
+    /// 探針只在隔離視窗收結果；正式執行時為 nil。
+    var focusPlainClickProbeCompletion: ((Bool, String) -> Void)?
     func clickedInside(_ e: NSEvent) {
         clickGeneration += 1
         let gen = clickGeneration
@@ -1794,6 +2204,20 @@ final class ChatPane: NSView, ConversationPane, WKNavigationDelegate {
             guard let self, self.clickGeneration == gen, let web = self.web, let w = self.window, w.firstResponder === self.inputBar.textView else { return }
             w.makeFirstResponder(web)
         }
+    }
+
+    /// CodeLab 左側紀錄區的純點擊：完成點擊判斷後沿用聊天輸入框的既有焦點路徑。
+    @discardableResult
+    func focusInputAfterPlainConversationClick() -> Bool {
+        guard codeLab != nil, !inputBar.isLocked, let w = window,
+              Self.allowPlainClickFocus(NSApp.isActive, w.isKeyWindow) else { return false }
+        clickGeneration += 1      // 取消 clickedInside 排定的「把焦點交回對話網頁」
+        return focusInput()
+    }
+
+    private func installPlainClickFocusScriptIfNeeded() {
+        guard codeLab != nil, ready, let web else { return }
+        web.evaluateJavaScript(Self.plainClickFocusScript)
     }
 
     /// 游標放進輸入框（鎖住時不動）

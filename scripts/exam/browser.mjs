@@ -97,12 +97,30 @@ try {
   await send('Page.navigate', { url: url.href });
   const deadline = Date.now() + 20000;
   let result, wheel = false;
+  const handledPointerRequests = new Set(), handledKeyboardRequests = new Set();
   while (Date.now() < deadline) {
     const state = await evaluate('({done:!!window.__done, exam:window.__exam})');
     if (state.exam?.stage === 'wheel' && !wheel) {
       wheel = true;
       await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 450, y: 400, deltaX: 0, deltaY: -600 });
       await evaluate('window.__wheelSent=true');
+    }
+    const pointerRequest = state.exam?.pointerRequest;
+    if (pointerRequest && Number.isInteger(pointerRequest.id) && !handledPointerRequests.has(pointerRequest.id)) {
+      handledPointerRequests.add(pointerRequest.id);
+      await send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x: pointerRequest.x, y: pointerRequest.y,
+      });
+      await evaluate(`window.__exam.pointerAck=${pointerRequest.id}`);
+    }
+    const keyboardRequest = state.exam?.keyboardRequest;
+    if (keyboardRequest && Number.isInteger(keyboardRequest.id) && !handledKeyboardRequests.has(keyboardRequest.id)) {
+      handledKeyboardRequests.add(keyboardRequest.id);
+      const modifiers = keyboardRequest.shiftKey ? 8 : 0;
+      const key = { key: keyboardRequest.key, code: keyboardRequest.key, windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers };
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', ...key });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+      await evaluate(`window.__exam.keyboardAck=${keyboardRequest.id}`);
     }
     if (state.done) { result = state.exam; break; }
     if (errors.length) throw Error('頁面錯誤：' + errors.join('\n'));

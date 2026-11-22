@@ -28,7 +28,11 @@ final class AppearanceSettings: ObservableObject {
     /// iTerm 的配色＋這裡設的字型
     var theme: Theme {
         var t = Theme.fromITerm()
-        if let f = NSFont(name: fontName, size: CGFloat(fontSize)) {
+        let systemFontName = FontChoiceCatalog.terminalSystemPostScriptName
+        let f = fontName == systemFontName
+            ? NSFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular)
+            : NSFont(name: fontName, size: CGFloat(fontSize))
+        if let f {
             t.font = f
             t.boldFont = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask)
         }
@@ -587,12 +591,23 @@ struct WindowsPage: View {
 
 struct AppearancePage: View {
     @ObservedObject var appearance: AppearanceSettings
+    @ObservedObject private var prefs = Prefs.shared
     var body: some View {
         Form {
             InterfacePrefs()
+            Section(L("介面字型")) {
+                HStack {
+                    FontSelectionPicker(selection: $prefs.interfaceFont, kind: .interface)
+                    Button(L("恢復系統字型")) { prefs.interfaceFont = "" }
+                }
+                if !InterfaceFont.postScriptName.isEmpty && !InterfaceFont.isAvailable {
+                    Text(L("找不到這個字型，目前用系統字型"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             CodeColorsSection()
             Section(L("終端機")) {
-            TextField(L("字型（PostScript 名稱）"), text: $appearance.fontName)
+            FontSelectionPicker(selection: $appearance.fontName, kind: .terminal)
             Stepper(value: $appearance.fontSize, in: 9...40, step: 1) { Text(L("大小：\(Int(appearance.fontSize))")) }
             HStack {
                 Text(L("行距"))

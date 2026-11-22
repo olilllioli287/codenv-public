@@ -59,7 +59,7 @@ extension MainWindowController {
     func showAbout(_ id: UUID) {
         guard let c = store.conversation(id), !c.isBrowser else { return }
         if let w = Self.aboutWindows[id] { w.makeKeyAndOrderFront(nil); return }
-        let folder = store.project(c.projectID)?.path ?? NSHomeDirectory()
+        let folder = store.workingDirectory(for: c)
         ContextMonitor.shared.load(c, path: folder)
         let host = NSHostingController(rootView: AboutChatView(c: c, folder: folder, transcript: ContextMonitor.transcript(c, path: folder)))
         let w = NSPanel(contentViewController: host)

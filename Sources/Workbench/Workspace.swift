@@ -5,8 +5,20 @@ final class Workspace {
     let store: Store
     var theme: Theme
     private(set) var panes: [UUID: any ConversationPane] = [:]
+    /// 送達／完成事件由 MainWindow 綁到持久化派工通知。
+    var onCommanderDispatchEvent: ((UUID, String, [String: Any]) -> Void)?
     /// 跑 Claude 的指令；測試時可以換成別的（main.swift 的 --claude）
     var claudeCommand = "claude"
+    /// 闔蓋中斷只送通知期間，略過該對話因通知本身轉 .working 而清掉琥珀旗標。
+    private var suppressInterruptedClearForAutomatedNotice: Set<UUID> = []
+
+    /// 只在同步送出「闔蓋中斷」通知期間略過一次 clearInterrupted，不改變其他 .working 清除路徑。
+    @discardableResult
+    func withoutClearingInterrupted(for id: UUID, _ body: () -> Bool) -> Bool {
+        suppressInterruptedClearForAutomatedNotice.insert(id)
+        defer { suppressInterruptedClearForAutomatedNotice.remove(id) }
+        return body()
+    }
     private var webUnloadTimer: Timer?
     private var webFeaturesObserver: NSObjectProtocol?
 
@@ -66,7 +78,7 @@ final class Workspace {
         }
         if c.terminal != true || c.sandbox == true { return chatPane(for: c) }      // 開了沙盒的聊天室不開終端機版（終端機沒包 nono，等於脫離沙盒）
         let p = TerminalPane(theme: theme)
-        let path = store.project(c.projectID)?.path ?? NSHomeDirectory()
+        let path = store.workingDirectory(for: c)
         let id = c.claudeSession.uuidString.lowercased()
         // 對話紀錄已經在就接回（--resume），沒有就用這個編號開新的（--session-id）
         let flag = Store.claudeHasSession(c.claudeSession, path: path) ? "--resume \(id)" : "--session-id \(id)"
@@ -102,13 +114,15 @@ final class Workspace {
     }
 
     private func chatPane(for c: Conversation) -> ChatPane {
-        let path = store.project(c.projectID)?.path ?? NSHomeDirectory()
+        let path = store.workingDirectory(for: c)
         let p = ChatPane(session: ChatSession(claudeSession: c.claudeSession, directory: path), theme: theme)
         let cid = c.id
         p.conversationID = cid
+        p.onCommanderDispatchEvent = { [weak self] uuid, event in self?.onCommanderDispatchEvent?(cid, uuid, event) }
         p.session.nameProvider = { [weak self] in self?.store.conversation(cid)?.title }
         p.session.topicProvider = { [weak self] in self?.store.conversation(cid)?.topic }
         p.session.roleProvider = { [weak self] in self?.store.commanderRoleNote(for: cid) }
+        p.session.isCommanderChatProvider = { [weak self] in self?.store.sessions.contains(where: { $0.chief == cid }) ?? false }
         p.session.mcpProvider = { [weak self] in McpMode.from(self?.store.conversation(cid)?.mcp) }
         p.session.conversationTag = cid.uuidString.lowercased()
         if store.wantsCodeLab(c) { p.attachCodeLab(directory: path, key: cid.uuidString) }
@@ -151,6 +165,9 @@ final class Workspace {
             guard let self, let p, (self.panes[cid] as AnyObject?) === p else { return }
             let was = self.store.status[cid]
             self.store.status[cid] = s == .idle ? nil : s
+            if s == .working, !self.suppressInterruptedClearForAutomatedNotice.contains(cid) {
+                self.store.clearInterrupted(cid)
+            }
             // 做完了而且你沒在看這段：標成未讀
             if s == .idle, was != nil, self.store.selected != cid || NSApp.isActive == false { self.store.unread.insert(cid) }
             // 非 Claude 聊天室回答完一則：更新好讀的 md（Transcripts.swift），Claude 聊天室才讀得到它說了什麼
@@ -313,8 +330,21 @@ final class Workspace {
         if let i = a.firstIndex(of: "--state-dir"), i + 1 < a.count {
             let d = URL(fileURLWithPath: a[i + 1], isDirectory: true)
             env["CODENV_STATE_DIR"] = d.path
+            if let homeIndex = a.firstIndex(of: "--claude-home"), homeIndex + 1 < a.count {
+                env["CODENV_CLAUDE_HOME"] = a[homeIndex + 1]
+            }
+            if let agyIndex = a.firstIndex(of: "--agy-bin"), agyIndex + 1 < a.count {
+                env["CODENV_TEST_AGY_BIN"] = a[agyIndex + 1]
+            }
+            if let codexIndex = a.firstIndex(of: "--codex-bin"), codexIndex + 1 < a.count {
+                env["CODENV_TEST_CODEX_BIN"] = a[codexIndex + 1]
+            }
+            if let helper = CLITools.path("handoff-prep") { env["CODENV_HANDOFF_PREP"] = helper }
             env["CODENV_COLLAB_FILE"] = d.appendingPathComponent("collab.json").path
             env["CODENV_BROWSER_DIR"] = d.appendingPathComponent("browser").path
+            env["CODENV_COMPACT_DIR"] = d.appendingPathComponent("compact-state").path
+        } else {
+            env["CODENV_COMPACT_DIR"] = Edition.support("compact-state").path
         }
         return env.map { "\($0.key)=\($0.value)" }
     }
@@ -362,6 +392,17 @@ final class DisabledWebPane: NSView, ConversationPane {
 }
 
 extension Workspace {
+    static func answeringLine(title: String, model: String?) -> String {
+        let value = (model ?? "").lowercased()
+        if value.hasPrefix("codex:") { return L("\(title)：Codex 回答中") }
+        if value.hasPrefix("agy:") { return L("\(title)：agy 回答中") }
+        if value.hasPrefix("copilot:") { return L("\(title)：Copilot 回答中") }
+        if value.hasPrefix("local:") || value.hasPrefix("mlx:") || value.hasPrefix("apple:") {
+            return L("\(title)：本機模型回答中")
+        }
+        return L("\(title)：Claude 回答中")
+    }
+
     /// 這段對話現在用的不是 Claude：把它用過的非 Claude 紀錄整理成 AI 工作台/transcripts/<聊天室名稱>.md
     func updateTranscript(_ id: UUID, done: ((URL?) -> Void)? = nil) {
         guard let p = panes[id] as? ChatPane, let c = store.conversation(id) else { done?(nil); return }
@@ -418,9 +459,9 @@ extension Workspace {
             let title = conv?.title ?? L("新對話")
             let pane = panes[id]
 
-            // 1. 主對話：Claude 回答中
+            // 1. 主對話：依聊天室引擎顯示回答狀態
             if let st = store.status[id], st != .idle {
-                result.append(L("\(title)：Claude 回答中"))
+                result.append(Self.answeringLine(title: title, model: conv?.model))
             }
 
             // 2. 背景工作與外部程序（SessionActivity）
